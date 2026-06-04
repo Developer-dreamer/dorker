@@ -1,9 +1,19 @@
 import asyncio
 
-from bot.bot import bot, dp
+from src.config.env import Env, get_envs
 
-async def main():
-    await dp.start_polling(bot)
+
+async def main() -> None:
+    await asyncio.gather(
+
+    )
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+
+    env: Env = get_envs()
+
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        print("Bot stopped")

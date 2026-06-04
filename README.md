@@ -27,3 +27,18 @@ The idea is to create a Master promt, that will be attached to each request (and
 After sending that to LLM (I will use Gemini at the start) I expect to configure it to send JSON back, with analytics about pros and cons, grade from 0 to 1 whether I should apply, and ofcourse link to the aplication page. If the application score is higher from 0.5, it will be displayed, if not - just marked as processed and stored in db to not process it again.
 
 The application info will be displayed in Telegram bot, with some funcitonality like traking, blocking specific companies, etc. Also I'll probably add a application CoverLetter or FollowUp letter generation, but based on my context, so it does not look like AI generated text, and it is under your consideration - whether to use it or not.
+
+## Internal Architecture
+```plaintext
+[ Python Process (Asyncio Loop) ]
+                                  |
+         +------------------------+------------------------+
+         |                        |                        |
+         v                        v                        v
+[ Task 1: Telegram Bot ]  [ Task 2: Scraper Engine ]  [ Task 3: Analytics (LLM) ]
+         |                        |                        |
+         +------------------------+------------------------+
+                                  |
+                                  v
+                        [ SQLite / JSON Files ]
+```

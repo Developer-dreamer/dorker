@@ -1,0 +1,43 @@
+[project]
+name = "job-analyst"
+version = "0.1.0"
+description = "Job Analyst Bot"
+dependencies = [] # Add dependencies here if needed
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+# Set of rules that Ruff will check:
+# E/W - PEP8 errors and warnings
+# F - basic Pyflakes error analysis (unused imports, variables)
+# I - import sorting (similar to goimports)
+# B - search for potential bugs (flake8-bugbear)
+# C90 - checking code cyclomatic complexity
+select = ["E", "W", "F", "I", "B", "C90"]
+
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.mypy]
+strict = true
+
+warn_return_any = true
+
+no_implicit_optional = true
+
+show_error_codes = true
+
+ignore_missing_imports = true
