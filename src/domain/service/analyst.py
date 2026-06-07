@@ -1,16 +1,7 @@
-from pydantic import BaseModel, Field
-
 from config.logger import Logger
 from domain.model.job import Job, extract_metadata, extract_question
+from domain.model.prompt import PromptStructure
 from infra.ai.gemini import GeminiFlashClient
-
-
-class PromptStructure(BaseModel):
-    user_template: str = Field(...,
-            description="Default structure for prompt with profile and job tags")
-    scraper_template: str = Field(...,
-            description="Extended structure with additional text for structured job description")
-    master_prompt: str = Field(..., description="Core instructions for LLM to match job and applicant")
 
 
 class JobAnalyst:
@@ -23,8 +14,11 @@ class JobAnalyst:
         self.prompt_template = prompt_template
         self.user_profile = profile
 
-    def _build_prompt(self, job: Job | str) -> str:
-        full_payload =  f"""{self.prompt_template.master_prompt}
+    def _build_quick_match_prompt(self, job: Job | str) -> str:
+        return ""
+
+    def _build_core_prompt(self, job: Job | str) -> str:
+        full_payload =  f"""{self.prompt_template.master_prompt_with_generation}
 
                             <candidate_context>
                             {self.user_profile}

@@ -1,14 +1,14 @@
 from os import getenv
+from pathlib import Path
 from sys import exit
 
-from pydantic import BaseModel
+from pydantic import BaseModel, FilePath
 
 
 class Paths(BaseModel):
-    master_prompt: str
-    payload_scraper: str
-    payload_user: str
-    profile: str
+    master_prompt_with_generation: FilePath
+    master_prompt_matching_only: FilePath
+    profile: FilePath
 
 class Env(BaseModel):
     bot_token: str
@@ -29,9 +29,14 @@ def get_envs() -> Env:
         exit(1)
 
 
-    MASTER_PROMPT = getenv("MASTER_PROMPT")
-    if not MASTER_PROMPT:
-        print("Error: MASTER_PROMPT variable is not set.")
+    MASTER_PROMPT_WITH_GENERATION = getenv("MASTER_PROMPT_WITH_GENERATION")
+    if not MASTER_PROMPT_WITH_GENERATION:
+        print("Error: MASTER_PROMPT_WITH_GENERATION variable is not set.")
+        exit(1)
+
+    MASTER_PROMPT_MATCHING_ONLY = getenv("MASTER_PROMPT_MATCHING_ONLY")
+    if not MASTER_PROMPT_MATCHING_ONLY:
+        print("Error: MASTER_PROMPT_MATCHING_ONLY variable is not set.")
         exit(1)
 
     PAYLOAD_BOT = getenv("PAYLOAD_BOT")
@@ -53,10 +58,9 @@ def get_envs() -> Env:
         bot_token=BOT_TOKEN,
         gemini_api_key=GEMINI_API_KEY,
         paths=Paths(
-            master_prompt=MASTER_PROMPT,
-            payload_scraper=PAYLOAD_BOT,
-            payload_user=PAYLOAD_USER,
-            profile=PROFILE
+            master_prompt_with_generation=Path(MASTER_PROMPT_WITH_GENERATION),
+            master_prompt_matching_only=Path(MASTER_PROMPT_MATCHING_ONLY),
+            profile=Path(PROFILE)
         ))
 
     return env

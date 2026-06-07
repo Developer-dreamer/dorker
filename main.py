@@ -13,6 +13,8 @@ if __name__ == "__main__":
 
     env: Env = get_envs()
 
+    
+
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
