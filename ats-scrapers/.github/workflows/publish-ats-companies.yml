@@ -1,0 +1,84 @@
+name: publish ats-companies
+
+# On every push to main that touches `ats-companies/`, mirror the
+# tenant CSVs to Cloudflare R2 under the new per-ATS layout, build
+# the aggregated `companies.{csv,parquet}`, and patch the manifest.
+# All the upload + manifest logic lives in
+# `.github/scripts/publish_companies.py`.
+#
+# Required GitHub secrets:
+#   R2_ENDPOINT_URL       https://<account-id>.r2.cloudflarestorage.com
+#   R2_ACCESS_KEY_ID      R2 API token's access key id
+#   R2_SECRET_ACCESS_KEY  matching secret
+#   R2_BUCKET             bucket name
+#
+# Optional:
+#   R2_PUBLIC_BASE_URL    public CDN base (e.g. https://storage.stapply.ai).
+#                         Defaults to https://<bucket>.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ats-companies/**"
+      - ".github/workflows/publish-ats-companies.yml"
+      - ".github/scripts/publish_companies.py"
+  workflow_dispatch:
+
+concurrency:
+  group: publish-ats-companies
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # Lock the publish to main only — workflow_dispatch from a feature
+    # branch should never overwrite the production R2 mirror. The push
+    # trigger already filters on `branches: [main]`, so this guard is
+    # belt-and-braces for the manual dispatch path.
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install boto3 pandas pyarrow
+
+      - name: Sanity-check ats-companies/
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          csvs=(ats-companies/*.csv)
+          if (( ${#csvs[@]} == 0 )); then
+            echo "::error::No CSV files found in ats-companies/"
+            exit 1
+          fi
+          printf 'Found %d CSVs\n' "${#csvs[@]}"
+
+      - name: Publish to R2 + patch manifest
+        env:
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_PUBLIC_BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL }}
+        run: python .github/scripts/publish_companies.py
+
+      - name: Summary
+        run: |
+          set -euo pipefail
+          {
+            echo "### Companies published"
+            echo ""
+            echo "| ATS | Rows | Size |"
+            echo "|---|---:|---:|"
+            for f in ats-companies/*.csv; do
+              ats=$(basename "$f" .csv)
+              rows=$(($(wc -l < "$f") - 1))
+              size=$(wc -c < "$f")
+              printf '| %s | %s | %s B |\n' "$ats" "$rows" "$size"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
