@@ -1,0 +1,165 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jobhive-py"
+version = "0.1.0"
+description = "3.2M+ live jobs from 86 000+ companies, scraped directly from ATS sources. The open dataset and toolkit for job market data."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "Kalil Bouzigues", email = "kalil.bouzigues@gmail.com" },
+]
+keywords = [
+    "jobs",
+    "job-scraper",
+    "job-search",
+    "ats",
+    "greenhouse",
+    "lever",
+    "workday",
+    "ashby",
+    "workable",
+    "smartrecruiters",
+    "hiring",
+    "recruiting",
+    "data",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+    "Topic :: Office/Business",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Typing :: Typed",
+]
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "pydantic>=2.6",
+    "pandas>=2.0",
+]
+
+[project.optional-dependencies]
+scrapers = [
+    "aiohttp>=3.9",
+    "beautifulsoup4>=4.12",
+    "html2text>=2024.0",
+    # TLS+h2 impersonation client used as the cheap fallback when an ATS
+    # load balancer 406-blocks plain httpx (Avature, JazzHR, Eightfold).
+    # 1.6.x ships fingerprint refreshes that fix recent breakages.
+    "httpcloak>=1.6",
+    # Stealth-patched Chromium used by Tesla / Meta (Akamai bot manager
+    # blocks every cheaper fingerprint — httpcloak, curl_cffi, even
+    # Browserbase Sessions). cloakbrowser ships its own binary and
+    # caches under ~/.cache/cloakbrowser, no separate playwright install.
+    "cloakbrowser>=0.3",
+]
+parquet = [
+    "pyarrow>=15.0",
+]
+publish = [
+    "boto3>=1.34",
+    "pyarrow>=15.0",
+    # Cross-ATS dedup operates on a 3M+-row keys frame and writes the
+    # global all.parquet. Polars keeps the working set Arrow-backed
+    # so peak RSS stays below 1 GB on a 7.6 GB box; pandas equivalents
+    # peaked at 5-6 GB.
+    "polars>=0.20",
+    # Cross-source fuzzy-match dedup (Phase 2): catches near-dups that
+    # the exact-key passes miss because of formatting variations
+    # between aggregators (eures NUTS-code locations vs Bundesagentur
+    # full text, trailing parenthesized occupation codes, etc.).
+    "rapidfuzz>=3.0",
+    # markdownify is the canonical HTML→markdown converter; used by
+    # scripts/normalize_descriptions.py which runs post-scrape to clean
+    # the raw HTML several scrapers (lever, ashby, greenhouse, the
+    # batch of 6 strip-html scrapers, apple's assembled body) now emit.
+    "markdownify>=0.13",
+    # linkify-it-py runs as the final pass over each normalized
+    # description: bare URLs and emails left in plain-text postings
+    # get wrapped in CommonMark autolinks (``<https://…>``) so the
+    # viewer renders them as clickable links.
+    "linkify-it-py>=2.0",
+    # zstandard backs the optional compress=True path on the persistent
+    # DescriptionCache. Workday's cache uses it to keep ~700k entries
+    # under 3 GB on disk; without this package the persistent cache
+    # raises ModuleNotFoundError on open.
+    "zstandard>=0.22",
+]
+discovery = [
+    "firecrawl-py>=1.0",
+]
+all = [
+    "jobhive-py[scrapers,parquet,publish,discovery]",
+]
+# Set to run the test suite cleanly. Pulls in every runtime extra
+# (``all``) so ``pytest`` can collect ``test_publisher.py`` (which
+# imports ``polars`` / ``boto3`` / ``rapidfuzz`` via the publisher
+# module). External CI / reviewers should install this extra rather
+# than ``publish`` alone — Kind AI flagged on PR #33 / #34 that the
+# minimal extras left the suite uncollectable.
+test = [
+    "jobhive-py[all]",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-httpx>=0.30",
+]
+dev = [
+    "jobhive-py[test]",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "pandas-stubs",
+    "types-boto3",
+]
+
+[project.urls]
+Homepage = "https://github.com/stapply-ai/ats-scrapers"
+Documentation = "https://github.com/stapply-ai/ats-scrapers#readme"
+Repository = "https://github.com/stapply-ai/ats-scrapers"
+Issues = "https://github.com/stapply-ai/ats-scrapers/issues"
+Changelog = "https://github.com/stapply-ai/ats-scrapers/blob/main/CHANGELOG.md"
+Dataset = "https://storage.stapply.ai/jobhive/v1/manifest.json"
+
+[project.scripts]
+jobhive = "jobhive.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jobhive"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/README.md",
+    "/LICENSE",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
+# RUF001/2/3: tolerate Unicode dashes/quotes that real ATS payloads contain.
+# RUF046: harmless `int(int_already)` calls happen in defensive casts.
+ignore = ["E501", "RUF001", "RUF002", "RUF003", "RUF046"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-ra --strict-markers"
