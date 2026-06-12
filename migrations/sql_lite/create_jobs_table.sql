@@ -8,7 +8,7 @@ CREATE TABLE jobs (
     title TEXT NOT NULL,
     company_slug TEXT NOT NULL,
     location TEXT,
-    is_remote INTEGER DEFAULT 0 NOT NULL, -- SQLite handles booleans as integers (0 or 1)
+    is_remote TEXT, -- SQLite handles booleans as integers (0 or 1)
     employment_type TEXT DEFAULT 'FULL_TIME',
     description TEXT NOT NULL,
     salary_min REAL,

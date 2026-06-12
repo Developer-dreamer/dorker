@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import List
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # ==========================================
 # Sub-Models for internal_analysis_cot
@@ -65,6 +65,8 @@ class ApplicationFormAnswer(BaseModel):
 # ==========================================
 
 class MatchedJob(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     internal_analysis_cot: ChainOfThought
     metadata: Metadata
     internal_scoring_breakdown: ScoringBreakdown
@@ -77,7 +79,3 @@ class MatchedJob(BaseModel):
     cv_modification_points: List[str]
     tailored_cover_letter: str
     application_form_answers: List[ApplicationFormAnswer]
-
-    class ConfigDict:
-        # Allows populating models by either the field name or the alias name
-        populate_by_name = True

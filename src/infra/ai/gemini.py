@@ -1,19 +1,109 @@
+import asyncio
+
 from google import genai
 from google.genai import types
 
+from src.config.logger import Logger
+
 
 class GeminiFlashClient:
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, logger: Logger):
         self.client = genai.Client(api_key=api_key)
+        self.logger = logger
+        self.available_models = ["gemini-3.5-flash", "gemini-3.1-flash",
+                                 "gemini-3.1-flash-lite", "gemini-2.5-flash"]
 
     async def generate_json(self, prompt: str, system_instruction: str) -> str:
-        response = await self.client.aio.models.generate_content(
-            model='gemini-3.5-flash',
-            contents=prompt,
-            config=types.GenerateContentConfig(
+        last_exception = None
+
+        for model_name in self.available_models:
+            for attempt in range(1, 4):
+                try:
+                    response = await self.client.aio.models.generate_content(
+                        model=model_name,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_instruction,
+                            response_mime_type="application/json",
+                            temperature=0.1
+                        )
+                    )
+
+                    if response and response.text:
+                        return str(response.text)
+
+                except Exception as e:
+                    last_exception = e
+                    self.logger.warning(
+                        f"Model {model_name} failed on attempt #{attempt}. Error: {str(e)}"
+                    )
+
+                    sleep_time = min(2 ** attempt, 10)
+                    self.logger.info(f"Switching fallback. Waiting {sleep_time}s before trying next model...")
+                    await asyncio.sleep(sleep_time)
+
+        self.logger.warning("All available Gemini models completely failed to respond.")
+        if last_exception:
+            raise last_exception
+        raise RuntimeError("LLM_INFRASTRUCTURE_DOWN")
+
+class GeminiProClient:
+    def __init__(self, api_key: str, logger: Logger):
+        self.client = genai.Client(api_key=api_key)
+        self.logger = logger
+        self.model = "gemini-3.1-pro-preview"
+        self.cache: types.CachedContent | None = None
+
+    def init_cache(self, data: str, system_instruction: str) -> None:
+        self.cache = self.client.caches.create(
+            model=self.model,
+            config=types.CreateCachedContentConfig(
+                display_name='candidate profile', # used to identify the cache
                 system_instruction=system_instruction,
-                response_mime_type="application/json",
-                temperature=0.0
+                contents=data,
+                ttl="60s",
             )
         )
-        return str(response.text)
+
+    def reset_cache(self) -> None:
+        if not self.cache or not self.cache.name:
+            return
+
+        self.client.caches.delete(name=self.cache.name)
+        self.cache = None
+
+    async def generate_json(self, prompt: str) -> str:
+        last_exception = None
+
+        for attempt in range(1, 4):
+            try:
+                config = types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.1,
+                    )
+                if self.cache:
+                    config.cached_content = self.cache.name
+
+                response = await self.client.aio.models.generate_content(
+                    model=self.model,
+                    contents=prompt,
+                    config=config
+                )
+
+                if response and response.text:
+                    return response.text
+
+            except Exception as e:
+                last_exception = e
+                self.logger.warning(
+                    f"Model {self.model} failed on attempt #{attempt}. Error: {str(e)}"
+                )
+
+                sleep_time = min(2 ** attempt, 10)
+                self.logger.info(f"Switching fallback. Waiting {sleep_time}s before trying next model...")
+                await asyncio.sleep(sleep_time)
+
+        self.logger.warning("All available Gemini models completely failed to respond.")
+        if last_exception:
+            raise last_exception
+        raise RuntimeError("LLM_INFRASTRUCTURE_DOWN")
