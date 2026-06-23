@@ -10,12 +10,17 @@ class JobRepository:
         self.db_path = db_path
         self.logger = logger
 
-    async def get_relevant_jobs(self, batch_size: int = 10) -> AsyncGenerator[dict[str, Any], None]:
+    async def get_relevant_jobs(self, user_id: int, batch_size: int = 10) -> AsyncGenerator[dict[str, Any], None]:
         query = """
                 SELECT j.id, jobs_fts.title, j.company_slug, j.location, jobs_fts.description, j.url, j.posted_at, j.is_remote
                 FROM jobs_fts
                         JOIN jobs j ON j.id = jobs_fts.ROWID
-                WHERE (
+                WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM matches m
+                        WHERE m.job_id = j.id AND m.user_id = ?
+                    )
+                AND (
                     j.is_remote = 'KEEP_GLOBAL' OR
                     j.is_remote = 'KEEP_PURE' OR
                     j.is_remote = 'POTENTIAL_PURE')
@@ -39,7 +44,7 @@ class JobRepository:
             async with aiosqlite.connect(self.db_path) as db:
                 db.row_factory = aiosqlite.Row
 
-                params = (last_posted_at, last_posted_at, last_id, batch_size)
+                params = (user_id, last_posted_at, last_posted_at, last_id, batch_size)
 
                 self.logger.info("Executing query", query=query)
                 async with db.execute(query, params) as cursor:

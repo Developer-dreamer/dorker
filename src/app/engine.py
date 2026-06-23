@@ -26,7 +26,23 @@ class ApplicationEngine:
             asyncio.create_task(self._listen_user_commands())
         ]
 
-        await asyncio.gather(*execution_tasks)
+        try:
+            # Drop out of the await state the microsecond the bot polling stops (on SIGINT)
+            await asyncio.wait(
+                execution_tasks,
+                return_when=asyncio.FIRST_COMPLETED
+            )
+        finally:
+            self.logger.info("Execution state altered. Forcefully shutting down background workers...")
+
+            # Terminate the infinite consumer loop cleanly
+            for task in execution_tasks:
+                if not task.done():
+                    task.cancel()
+
+            # Await task cancellation states to ensure zero orphaned task leaks
+            await asyncio.gather(*execution_tasks, return_exceptions=True)
+            self.logger.info("Application Engine runtime infrastructure cleanly terminated.")
 
     async def _listen_user_commands(self) -> None:
         """

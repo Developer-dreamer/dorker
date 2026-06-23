@@ -29,7 +29,7 @@ class MatchRepository:
                     tailored_cover_letter,
                     application_form_answers,
                     internal_analysis_cot,
-                    internal_scoring_breakdown,
+                    internal_scoring_breakdown
                 ) VALUES (
                     :job_id,
                     :user_id,

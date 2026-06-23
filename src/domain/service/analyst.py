@@ -1,17 +1,17 @@
 from typing import Any
 
 from src.config.logger import Logger
+from src.domain.interface.abc_ai_client import AIClient
 from src.domain.model.job import Job, extract_metadata, extract_questions
 from src.domain.model.match import MatchedJob
 from src.domain.model.prompt import PromptStructure
-from src.infra.ai.gemini import GeminiProClient
 from src.infra.db.sql_lite.job_repository import JobRepository
 from src.infra.db.sql_lite.match_repository import MatchRepository
 
 
 class JobAnalyst:
 
-    def __init__(self, logger: Logger, ai_client: GeminiProClient, job_repo: JobRepository,
+    def __init__(self, logger: Logger, ai_client: AIClient, job_repo: JobRepository,
                  match_repo: MatchRepository,
                  prompt_template: PromptStructure,
                  profile: str):
@@ -23,17 +23,16 @@ class JobAnalyst:
         self.match_repository = match_repo
 
     async def find_top_matches(self) -> list[tuple[(str, MatchedJob)]]:
-        try:
+        profile = f"<candidate_context>{self.user_profile}</candidate_context>"
 
-            profile = f"<candidate_context>{self.user_profile}</candidate_context>"
+        self.ai_client.model_init(system_instruction=self.prompt_template.master_prompt_with_generation)
 
-            self.ai_client.init_cache(data=profile,
-                                        system_instruction=self.prompt_template.master_prompt_with_generation)
+        matched_jobs: list[tuple[(str, MatchedJob)]] = []
 
-            matched_jobs: list[tuple[(str, MatchedJob)]] = []
-
-            async for job in self.job_repository.get_relevant_jobs():
+        async for job in self.job_repository.get_relevant_jobs(user_id=1):
+            try:
                 job_payload = f"""
+                        {profile}
                         Here is a job. Match it according to master prompt and candidate's context
                         <job_payload>
                         # Source: user
@@ -53,12 +52,12 @@ class JobAnalyst:
 
                 matched_jobs.append((job["url"], matched_job))
 
-            return matched_jobs
+            except Exception as e:
+                self.logger.info("Find top matches failed with exception:", exc_info=e)
+                self.ai_client.model_reset()
+                break
 
-        except Exception as e:
-            self.logger.info("Find top matches failed with exception:", exception=e)
-            self.ai_client.reset_cache()
-            return []
+        return matched_jobs
 
 
     def _build_quick_match_prompt(self, job: Job | str) -> str:

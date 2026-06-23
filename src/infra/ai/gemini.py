@@ -4,16 +4,28 @@ from google import genai
 from google.genai import types
 
 from src.config.logger import Logger
+from src.domain.interface.abc_ai_client import AIClient
 
 
-class GeminiFlashClient:
+class GeminiFlashClient(AIClient):
     def __init__(self, api_key: str, logger: Logger):
         self.client = genai.Client(api_key=api_key)
         self.logger = logger
-        self.available_models = ["gemini-3.5-flash", "gemini-3.1-flash",
+        self.available_models = ["gemini-3.5-flash",
                                  "gemini-3.1-flash-lite", "gemini-2.5-flash"]
 
-    async def generate_json(self, prompt: str, system_instruction: str) -> str:
+        self.system_instruction = ""
+
+    def model_init(self, system_instruction: str, data: str = "") -> None:
+        self.system_instruction = system_instruction
+
+    def model_reset(self) -> None:
+        self.system_instruction = ""
+
+    async def generate_json(self, prompt: str) -> str:
+        if self.system_instruction == "":
+            raise ValueError("System instruction was not set. Call model_init() first.")
+
         last_exception = None
 
         for model_name in self.available_models:
@@ -23,7 +35,7 @@ class GeminiFlashClient:
                         model=model_name,
                         contents=prompt,
                         config=types.GenerateContentConfig(
-                            system_instruction=system_instruction,
+                            system_instruction=self.system_instruction,
                             response_mime_type="application/json",
                             temperature=0.1
                         )
@@ -47,14 +59,19 @@ class GeminiFlashClient:
             raise last_exception
         raise RuntimeError("LLM_INFRASTRUCTURE_DOWN")
 
-class GeminiProClient:
+class GeminiProClient(AIClient):
     def __init__(self, api_key: str, logger: Logger):
         self.client = genai.Client(api_key=api_key)
         self.logger = logger
         self.model = "gemini-3.1-pro-preview"
         self.cache: types.CachedContent | None = None
+        self.system_instruction = ""
 
-    def init_cache(self, data: str, system_instruction: str) -> None:
+    def model_init(self, system_instruction: str, data: str = "") -> None:
+        if data == "":
+            self.system_instruction = system_instruction
+            return
+
         self.cache = self.client.caches.create(
             model=self.model,
             config=types.CreateCachedContentConfig(
@@ -65,7 +82,7 @@ class GeminiProClient:
             )
         )
 
-    def reset_cache(self) -> None:
+    def model_reset(self) -> None:
         if not self.cache or not self.cache.name:
             return
 
@@ -73,6 +90,9 @@ class GeminiProClient:
         self.cache = None
 
     async def generate_json(self, prompt: str) -> str:
+        if not self.cache and self.system_instruction == "":
+            raise ValueError("System instruction was not set. Call model_init() first.")
+
         last_exception = None
 
         for attempt in range(1, 4):

@@ -44,7 +44,7 @@ class ScoringBreakdown(BaseModel):
 
 class ApplicationStatus(str, Enum):
     SUITABLE = "SUITABLE"
-    STRETCH = "STRECH"
+    STRETCH = "STRETCH"
     RUNWAY = "RUNWAY"
     REJECTED = "REJECTED"
 
