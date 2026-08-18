@@ -1,40 +1,87 @@
 import asyncio
-import logging
-import os
-import pathlib
-import sys
-from datetime import datetime
+import csv
 
-# ===== CONFIGURATION =====
-
-DATASET_URL = "https://storage.stapply.ai/jobhive/v1/all.parquet"
-LOCAL_TMP_FILE = pathlib.Path("./all_jobs_temp.parquet")
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
-logger = logging.getLogger(__name__)
+from src.analytics.pipeline import rank, reject
+from src.database.sqlite import run_migrations
+from src.scraping.normalize_descriptions import normalize_one
+from src.scraping.scraper import AshbyScraper
 
 
+def run_mvp(input_csv: str, output_csv: str) -> None:
+    with open(input_csv, newline='', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        row = next(reader)
 
+    slug = (row.get("slug") or "").strip() or (row.get("name") or "").strip()
 
-async def main() -> None:
-    await init_sqlite_db()
+    scraper = AshbyScraper(slug)
 
-    start_time = datetime.utcnow()
-    try:
-        await download_dataset_streamed(DATASET_URL, LOCAL_TMP_FILE)
-        await execute_batch_ingestion(LOCAL_TMP_FILE)
-    except Exception as e:
-        logger.critical(f"Pipeline crashed: {e}", exc_info=True)
-        sys.exit(1)
-    finally:
-        if LOCAL_TMP_FILE.exists():
-            logger.info("Cleaning up temporary local Parquet storage...")
-            LOCAL_TMP_FILE.unlink()
+    jobs = scraper.fetch()
 
-    duration = (datetime.utcnow() - start_time).total_seconds()
-    logger.info(f"Done! Pipeline execution completed in {duration:.1f} seconds.")
+    results = []
+
+    fieldnames = [
+        "title", "url", "description", "ai_relevant",
+        "is_match", "technical_capability_score", "strategic_value_score",
+        "application_status", "strategic_reason", "pros", "cons", "warnings"
+    ]
+
+    for job in jobs:
+        job.description = scraper.get_description(job)
+        job.description = normalize_one(job.description)
+
+        ai_result = reject(job)
+
+        rank_data = {
+            "is_match": "",
+            "technical_capability_score": "",
+            "strategic_value_score": "",
+            "application_status": "",
+            "strategic_reason": "",
+            "pros": "",
+            "cons": "",
+            "warnings": ""
+        }
+
+        if ai_result:
+            ai_rank = rank(job)
+
+            rank_data = {
+                "is_match": ai_rank.is_match,
+                "technical_capability_score": ai_rank.technical_capability_score,
+                "strategic_value_score": ai_rank.strategic_value_score,
+                "application_status": ai_rank.application_status.value, # Extract string from Enum
+                "strategic_reason": ai_rank.strategic_reason,
+                "pros": " | ".join(ai_rank.analytics.pros),
+                "cons": " | ".join(ai_rank.analytics.cons),
+                "warnings": " | ".join(ai_rank.analytics.warnings)
+            }
+
+        row_data = {
+            "title": job.title,
+            "url": str(job.url),
+            "description": job.description,
+            "ai_relevant": ai_result,
+        }
+
+        row_data.update(rank_data)
+
+        results.append(row_data)
+
+        if ai_result:
+            break
+
+    with open(output_csv, "w", newline="", encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(results)
 
 if __name__ == "__main__":
 
-    OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-    asyncio.run(main())
+    # apply migrations:
+    DB_FILE = "app.db"
+    MIGRATIONS_FOLDER = "./migrations/sql_lite/sql"
+
+    asyncio.run(run_migrations(DB_FILE, MIGRATIONS_FOLDER))
+
+
