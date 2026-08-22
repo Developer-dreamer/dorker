@@ -461,6 +461,10 @@ class Job(BaseModel):
             "exceeds it."
         ),
     )
+    is_normalized: bool = Field(
+        default=False,
+        description="Tells wether description was normalized"
+    )
     posted_at: datetime | None = Field(
         default=None,
         description=(

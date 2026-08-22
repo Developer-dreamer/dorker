@@ -11,8 +11,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from .base import BaseScraper, ScraperRegistry
-from .models import ATSType, Job
+from src.scraping.models import ATSType, Job
+from src.scraping.scrapers.base import BaseScraper, ScraperRegistry
 
 if TYPE_CHECKING:
     from typing import Any

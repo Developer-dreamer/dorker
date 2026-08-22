@@ -1,11 +1,7 @@
 from enum import Enum
 from typing import List
 
-from pydantic import BaseModel, ConfigDict, Field
-
-
-class GatekeeperDecision(BaseModel):
-    is_relevant: bool
+from pydantic import BaseModel, ConfigDict
 
 
 class ApplicationStatus(str, Enum):
@@ -34,3 +30,9 @@ class MatchedJob(BaseModel):
     application_status: ApplicationStatus
     strategic_reason: str
     analytics: Analytics
+
+
+
+
+class OpenAIBatch(BaseModel):
+    pass

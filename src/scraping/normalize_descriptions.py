@@ -11,9 +11,15 @@ Workflow:
 """
 from __future__ import annotations
 
+import argparse
+import csv
 import html
+import multiprocessing
 import re
-from typing import Any
+import sys
+import tempfile
+import time
+from pathlib import Path
 
 _MD = None
 def _md_lazy():
@@ -94,7 +100,7 @@ BLANK_RUN_RE = re.compile(r"\n{3,}")
 WS_RUN_RE = re.compile(r"\s+")
 
 
-def normalize_one(s: str) -> str:
+def normalize_one(s: str) -> str | None:
     """Pipeline: route to markdownify / strip-unescape / fast-path, then
     apply autolink to whatever ended up in the output. Bare URLs and
     emails that survived earlier branches become CommonMark autolinks.
@@ -125,3 +131,132 @@ def normalize_one(s: str) -> str:
         return autolink(out) or None
     return autolink(s)
 
+
+def _normalize_descs(descs):
+    """Worker: list[str|None] → list[str|None]."""
+    return [normalize_one(d) for d in descs]
+
+
+def _positive_int(value: str) -> int:
+    """argparse type that rejects 0 and negative values. Used for
+    ``--chunk`` and ``-j`` because both feed into denominators in the
+    progress logger and worker fan-out — a non-positive value would
+    raise ZeroDivisionError or spawn 0 workers."""
+    try:
+        ivalue = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected integer, got {value!r}") from exc
+    if ivalue < 1:
+        raise argparse.ArgumentTypeError(
+            f"must be >= 1 (got {ivalue})"
+        )
+    return ivalue
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("csv_path", type=Path)
+    p.add_argument("-j", "--workers", type=_positive_int,
+                   default=max(1, multiprocessing.cpu_count() - 1))
+    p.add_argument("--chunk", type=_positive_int, default=2000)
+    p.add_argument("--column", default="description")
+    args = p.parse_args()
+
+    if not args.csv_path.exists():
+        print(f"missing {args.csv_path}", file=sys.stderr)
+        return 1
+
+    csv.field_size_limit(sys.maxsize)
+    print(f"normalize {args.csv_path} (-j {args.workers}, chunk={args.chunk}, column={args.column})", flush=True)
+    t0 = time.time()
+    counts = {"unchanged": 0, "shrunk": 0, "nulled": 0, "grew": 0, "newly_set": 0}
+    total = 0
+
+    # The streaming-write design needs the handle to live past the
+    # open() call; we close + atomically rename in the finally below.
+    tmp = tempfile.NamedTemporaryFile(  # noqa: SIM115
+        "w", newline="", delete=False,
+        dir=args.csv_path.parent,
+        prefix=f".{args.csv_path.name}.normalizing.",
+    )
+    tmp_path = Path(tmp.name)
+
+    pool = multiprocessing.Pool(args.workers)
+
+    success = False
+    try:
+        with args.csv_path.open(newline="") as f:
+            reader = csv.DictReader(f)
+            fieldnames = reader.fieldnames or []
+            if args.column not in fieldnames:
+                print(f"column '{args.column}' missing", file=sys.stderr)
+                return 2
+            writer = csv.DictWriter(tmp, fieldnames=fieldnames)
+            writer.writeheader()
+
+            buffer_rows = []
+            for row in reader:
+                buffer_rows.append(row)
+                if len(buffer_rows) >= args.chunk:
+                    _process_chunk(buffer_rows, args.column, pool, writer, counts)
+                    total += len(buffer_rows)
+                    buffer_rows = []
+                    if total % (args.chunk * 10) == 0:
+                        elapsed = time.time() - t0
+                        rate = total / max(elapsed, 0.001)
+                        print(f"  {total:,} rows · {rate:,.0f}/s · "
+                              f"unchanged={counts['unchanged']:,} shrunk={counts['shrunk']:,} "
+                              f"grew={counts['grew']:,} nulled={counts['nulled']:,}",
+                              flush=True)
+
+            if buffer_rows:
+                _process_chunk(buffer_rows, args.column, pool, writer, counts)
+                total += len(buffer_rows)
+            success = True
+    finally:
+        pool.close()
+        pool.join()
+        tmp.close()
+        # Always clean up the half-written temp on any non-happy path
+        # (missing column, exception in a worker, ctrl-c). The atomic
+        # rename below only fires on the success path, so leaving the
+        # file behind here would litter the workday/ directory with
+        # ``.jobs.csv.normalizing.*`` orphans across reruns.
+        if not success:
+            tmp_path.unlink(missing_ok=True)
+
+    tmp_path.replace(args.csv_path)
+    elapsed = time.time() - t0
+    print(f"DONE total={total:,} in {elapsed:.1f}s · {counts}", flush=True)
+    return 0
+
+
+def _process_chunk(rows, column, pool, writer, counts) -> None:
+    """Normalize the column for `rows` (in-place) and write them out."""
+    descs = [r.get(column) for r in rows]
+    # Process the descs through the pool. We split into N sub-batches for
+    # parallelism within this chunk.
+    n_workers = pool._processes
+    sub_size = max(1, len(descs) // n_workers + 1)
+    sub_batches = [descs[i:i+sub_size] for i in range(0, len(descs), sub_size)]
+    results = pool.map(_normalize_descs, sub_batches)
+    # Flatten
+    normalized = [d for sub in results for d in sub]
+    for row, new_desc in zip(rows, normalized, strict=True):
+        old = row.get(column)
+        if new_desc == old:
+            counts["unchanged"] += 1
+        elif new_desc is None:
+            counts["nulled"] += 1
+        elif old is None or old == "":
+            counts["newly_set"] += 1
+        elif len(new_desc) < len(old):
+            counts["shrunk"] += 1
+        else:
+            counts["grew"] += 1
+        row[column] = new_desc or ""
+        writer.writerow(row)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

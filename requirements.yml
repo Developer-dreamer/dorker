@@ -24,3 +24,4 @@ dependencies:
       - tenacity==9.1.4
       - openai==2.49.0
       - linkify-it-py==2.1.0
+      - zstandard=0.25.0

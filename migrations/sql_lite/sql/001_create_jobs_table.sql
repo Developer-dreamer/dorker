@@ -12,7 +12,6 @@ CREATE TABLE ats (
 CREATE TABLE jobs (
     id TEXT PRIMARY KEY,
 
-    ats_name TEXT NOT NULL,
     ats_type TEXT NOT NULL,
     ats_id TEXT NOT NULL,
 
@@ -31,15 +30,16 @@ CREATE TABLE jobs (
     salary_max REAL,
     salary_currency TEXT,
 
-    application_questions TEXT, -- Stored as string-serialized JSON text in SQLite
+    is_normalized INTEGER NOT NULL DEFAULT 0,
 
     posted_at TEXT, -- SQLite stores datetimes as ISO8601 strings
     fetched_at TEXT NOT NULL,
 
-    FOREIGN KEY (ats_name, company_slug) REFERENCES ats (ats_name, company_slug)
+    FOREIGN KEY (ats_type, company_slug) REFERENCES ats (ats_name, company_slug)
         ON UPDATE CASCADE
         ON DELETE CASCADE
 );
 
 -- Native deduplication constraint barrier
 CREATE UNIQUE INDEX idx_jobs_ats_composite ON jobs (ats_type, ats_id);
+CREATE INDEX idx_jobs_unnormalized ON jobs (id) WHERE is_normalized = 0;
