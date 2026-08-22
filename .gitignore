@@ -1,6 +1,7 @@
 # User sensitive data
 prompt/
 app.db*
+batches/
 
 # IDE config
 .vscode/
