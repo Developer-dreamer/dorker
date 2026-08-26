@@ -42,3 +42,14 @@ The application info will be displayed in Telegram bot, with some funcitonality 
                                   v
                         [ SQLite / JSON Files ]
 ```
+
+
+
+## License
+
+This project is licensed under the **GNU Affero General Public License v3.0 (AGPLv3)** - see the [LICENSE](LICENSE) file for details.
+
+### Commercial Licensing
+If you wish to use this software in a proprietary or closed-source environment without adhering to the AGPLv3 requirements, commercial licenses and enterprise support options are available.
+
+Contact us at: `podolancukserafim@gmail.com`
