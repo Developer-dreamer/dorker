@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS idx_matches_job_id ON matches(job_id);

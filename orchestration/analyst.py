@@ -1,7 +1,12 @@
-from src.analytics.openai import OpenAIClient
-import aiosqlite
-from src.scraping.models import Job
 import asyncio
+
+import aiosqlite
+
+from src.analytics.batch_repo import BatchRepository
+from src.analytics.openai import OpenAIClient
+from src.database.sqlite import get_db_connection
+from src.scraping.models import Job
+from src.scraping.normalize_descriptions import normalize_one
 
 
 async def run() -> None:
@@ -17,29 +22,39 @@ async def run() -> None:
     with open("/Users/serafym/Developer/dorker.space/intelligence_core/prompt/ranking_prompt.md", "r") as f:
         prompts["ranking"] = f.read()
 
-
-    ai = OpenAIClient(prompts)
-
     db_path = "/Users/serafym/Developer/dorker.space/intelligence_core/app.db"
+    conn = await get_db_connection(db_path)
     query = """
                 SELECT j.*, j.company_slug AS company
                 FROM jobs AS j
-                LEFT JOIN matches AS m ON j.id = m.job_id
+                    LEFT JOIN matches m ON j.id = m.job_id
+                    LEFT JOIN openai_batch_items obi ON j.id = obi.job_id
                 WHERE m.job_id IS NULL
-                LIMIT 100;
+                AND obi.job_id IS NULL
+                LIMIT 10000;
             """
 
-    jobs = []
-    async with aiosqlite.connect(db_path) as conn:
-        conn.row_factory = aiosqlite.Row
-        async with conn.execute(query) as cursor:
-            rows = await cursor.fetchall()
-            jobs = [Job.model_validate(dict(row)) for row in rows]
+    # conn.row_factory = aiosqlite.Row
+    # async with conn.execute(query) as cursor:
+    #     rows = await cursor.fetchall()
+    #     jobs = [Job.model_validate(dict(row)) for row in rows]
 
 
-    batch_file = ai.reject_batch(jobs)
+    ai = OpenAIClient(prompts,
+                        "/Users/serafym/Developer/dorker.space/intelligence_core/batches",
+                        BatchRepository(conn))
 
-    print(batch_file)
+
+    # await ai.reject_batch(jobs)
+    # await conn.commit()
+
+    batch = await ai.monitor_batch()
+
+    await ai.retreive_batch(batch, conn)
+
+    await conn.commit()
+    await conn.close()
+
 
 
 

@@ -6,6 +6,14 @@ CREATE TABLE openai_batches (
     output_file_id TEXT,                           -- Successful results file ID
     error_file_id TEXT,                            -- Errors file ID (if failures occurred)
     
+    purpose TEXT NOT NULL CHECK (
+        purpose IN (
+            'REJECT',
+            'RANK',
+            'GENERATE'
+        )
+    ),
+    
     -- Status & Lifecycle
     status TEXT NOT NULL CHECK (
         status IN (

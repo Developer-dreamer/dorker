@@ -1,9 +1,12 @@
 import asyncio
+import heapq
+import itertools
 import sqlite3
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncGenerator, Tuple
 
 import aiosqlite
 
@@ -14,13 +17,59 @@ from src.scraping.run import _pipeline_lock, run
 DB_PATH = Path("/Users/serafym/Developer/dorker.space/intelligence_core/app.db")
 SLEEP_INTERVAL_HOURS = 6
 
-def get_active_ats_platforms() -> list[str]:
+
+class PrioritySemaphore:
+    def __init__(self, value: int = 5):
+        if value < 0:
+            raise ValueError("Semaphore value must be >= 0")
+        self._value = value
+        self._waiters = []
+        self._counter = itertools.count()
+
+    async def acquire(self, priority: int) -> bool:
+        if self._value > 0 and not self._waiters:
+            self._value -= 1
+            return True
+
+        event = asyncio.Event()
+        # Entry structure: [priority, tie_breaker, event, is_cancelled]
+        waiter_entry = [priority, next(self._counter), event, False]
+        heapq.heappush(self._waiters, waiter_entry)
+
+        try:
+            await event.wait()
+        except asyncio.CancelledError:
+            waiter_entry[3] = True # Mark as cancelled to prevent release consumption
+            if event.is_set():
+                self.release()
+            raise
+
+        return False
+    def release(self) -> None:
+        while self._waiters:
+            waiter_entry = heapq.heappop(self._waiters)
+            if not waiter_entry[3]:  # If not cancelled
+                waiter_entry[2].set()
+                return
+        self._value += 1
+
+    @asynccontextmanager
+    async def request(self, priority: int) -> AsyncGenerator["PrioritySemaphore"]:
+        await self.acquire(priority)
+        try:
+            yield self
+        finally:
+            self.release()
+
+
+def get_active_ats_platforms() -> list[Tuple[int, str]]:
     """Retrieve distinct ATS platforms present in your SQLite database."""
     with sqlite3.connect(DB_PATH) as conn:
-        rows = conn.execute("SELECT DISTINCT ats_name FROM ats ORDER BY tier").fetchall()
-        db_ats = {row[0] for row in rows}
+        rows = conn.execute("SELECT DISTINCT ats_name, tier FROM ats ORDER BY tier ASC").fetchall()
+        db_ats = {row for row in rows}
     # Only run platforms that exist both in the database and CONFIGS
-    return [ats for ats in CONFIGS.keys() if ats in db_ats or CONFIGS[ats].get("singleton")]
+    cfg_keys = CONFIGS.keys()
+    return [(tier, ats) for ats, tier in db_ats if ats in cfg_keys or CONFIGS[ats].get("singleton")]
 
 def _job_to_db_params(job: Job) -> dict[str, Any]:
     return {
@@ -122,16 +171,19 @@ async def db_writer_worker(
         finally:
             await flush()
 
-async def run_single_ats(ats: str, queue: asyncio.Queue[Job | None]) -> None:
-    # Use existing file-lock to prevent overlapping cron/script instances
-    with _pipeline_lock(ats) as acquired:
-        if not acquired:
-            return
-        print(f"\n=== Starting scrape for ATS: {ats} ===")
-        # Default concurrency: 8, max_tenants: None (all), timeout: 30s
-        code = await run(ats=ats, db_path=DB_PATH, queue=queue, concurrency=8, max_tenants=None, timeout=30.0)
-        if code != 0:
-            print("Ahh, failed nigga.")
+async def run_single_ats(semaphore: PrioritySemaphore, tier: int, ats: str, queue: asyncio.Queue[Job | None]) -> None:
+    async with semaphore.request(tier):
+        print(f"Worker {ats} (Priority {tier}) acquired.")
+
+        # Use existing file-lock to prevent overlapping cron/script instances
+        with _pipeline_lock(ats) as acquired:
+            if not acquired:
+                return
+            print(f"\n=== Starting scrape for ATS: {ats} ===")
+            # Default concurrency: 8, max_tenants: None (all), timeout: 30s
+            code = await run(ats=ats, db_path=DB_PATH, queue=queue, concurrency=8, max_tenants=None, timeout=30.0)
+            if code != 0:
+                print("Ahh, failed nigga.")
 
 
 
@@ -144,17 +196,11 @@ async def main_loop() -> None:
         queue: asyncio.Queue[Job | None] = asyncio.Queue(maxsize=1000)
         writer_task = asyncio.create_task(db_writer_worker(DB_PATH, queue, batch_size=10))
 
-        ats_sem = asyncio.Semaphore(5)
+        sem = PrioritySemaphore(5)
 
-        async def run_guarded_ats(ats: str) -> None:
-            async with ats_sem:
-                try:
-                    await run_single_ats(ats, queue)
-                except Exception as e:
-                    print(f"[Orchestrator] Failed {ats}: {type(e).__name__}: {e}")
 
         # Launch all ATS scrapers concurrently
-        await asyncio.gather(*(run_guarded_ats(ats) for ats in ats_list))
+        await asyncio.gather(*(run_single_ats(sem, tier, ats, queue) for tier, ats in ats_list))
 
         await queue.join()
 

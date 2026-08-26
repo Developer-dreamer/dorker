@@ -1,9 +1,10 @@
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import aiosqlite
+import uuid6
 
 from src.analytics.models import MatchedJob
 from src.scraping.models import Job
@@ -20,6 +21,8 @@ async def run_migrations(db_path: str | Path, migrations_dir: str | Path) -> Non
     migration_files = sorted(migrations_path.glob("*.sql"))
 
     async with aiosqlite.connect(db_path) as db:
+        await db.execute("PRAGMA journal_mode=WAL;")
+
         # 1. Initialize migration tracking table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -54,6 +57,15 @@ async def run_migrations(db_path: str | Path, migrations_dir: str | Path) -> Non
                     # Rollback implicitly handled if not committed, 
                     # but explicit log/raise is required to stop the pipeline
                     raise RuntimeError(f"Migration failed on {filename}: {e}")
+
+async def get_db_connection(db_path: str) -> aiosqlite.Connection:
+    conn = await aiosqlite.connect(db_path, timeout=20.0)
+
+    await conn.execute("PRAGMA journal_mode=WAL;")
+    await conn.execute("PRAGMA synchronous=NORMAL;")
+
+    return conn
+
 
 async def get_companies_from_ats_randomly(
         db_path: str | Path,
@@ -161,67 +173,64 @@ async def job_exists(db_path: str, global_id: str) -> bool:
             row = await cursor.fetchone()
             return row is not None
 
-async def save_match(
-    db_path: str,
+async def save_technical_match(
+    db: aiosqlite.Connection,
     job_id: str,
-    match: MatchedJob,
     pipeline_status: str = "PENDING",
-) -> None:
+) -> str:
     query = """
     INSERT INTO matches (
+        id,
         job_id,
-        is_match,
-        suitability_tier,
+        is_technical,
         pipeline_status,
         technical_capability_score,
         strategic_value_score,
-        strategic_reason,
         analytics
     ) VALUES (
+        :id,
         :job_id,
-        :is_match,
-        :suitability_tier,
+        :is_technical,
         :pipeline_status,
         :technical_capability_score,
         :strategic_value_score,
-        :strategic_reason,
         :analytics
     );
     """
-
+    uuid = str(uuid6.uuid7())
     params = {
+        "id": uuid,
         "job_id": job_id,
-        "is_match": int(match.is_match),
-        "suitability_tier": match.application_status.value,
+        "is_technical": 1,
         "pipeline_status": pipeline_status,
-        "technical_capability_score": match.technical_capability_score,
-        "strategic_value_score": match.strategic_value_score,
-        "strategic_reason": match.strategic_reason,
-        "analytics": match.analytics.model_dump_json(),
+        "technical_capability_score": 0.0,
+        "strategic_value_score": 0.0,
+        "analytics": json.dumps({"pros": [], "cons": [], "warnings": []}),
     }
 
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute(query, params)
-        await db.commit()
+    await db.execute(query, params)
+    await db.commit()
+
+    return uuid
 
 async def save_unmatch(
-    db_path: str,
+    db: aiosqlite.Connection,
     job_id: str,
-) -> None:
+) -> str:
     query = """
     INSERT INTO matches (
+        id,
         job_id,
-        is_match,
-        suitability_tier,
+        is_technical,
         pipeline_status,
         technical_capability_score,
         strategic_value_score,
         strategic_reason,
         analytics
     ) VALUES (
+        :id,
         :job_id,
-        :is_match,
-        :suitability_tier,
+        :is_technical,
         :pipeline_status,
         :technical_capability_score,
         :strategic_value_score,
@@ -229,11 +238,11 @@ async def save_unmatch(
         :analytics
     );
     """
-
+    uuid =  str(uuid6.uuid7())
     params = {
+        "id": uuid,
         "job_id": job_id,
-        "is_match": 0,
-        "suitability_tier": "REJECTED",
+        "is_technical": 0,
         "pipeline_status": "DECLINED",
         "technical_capability_score": 0.0,
         "strategic_value_score": 0.0,
@@ -241,6 +250,8 @@ async def save_unmatch(
         "analytics": json.dumps({"pros": [], "cons": [], "warnings": []}),
     }
 
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute(query, params)
-        await db.commit()
+    await db.execute(query, params)
+    await db.commit()
+
+    return uuid
+
