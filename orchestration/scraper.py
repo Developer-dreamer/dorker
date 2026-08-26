@@ -1,14 +1,20 @@
 import asyncio
 import heapq
 import itertools
+import logging
 import sqlite3
 import time
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncGenerator, Tuple
 
 import aiosqlite
+from rich.console import Group
+from rich.live import Live
+from rich.progress import BarColumn, Progress, TextColumn
+from rich.text import Text
 
 from src.scraping.configuration_manager import CONFIGS
 from src.scraping.models import Job
@@ -16,6 +22,79 @@ from src.scraping.run import _pipeline_lock, run
 
 DB_PATH = Path("/Users/serafym/Developer/dorker.space/intelligence_core/app.db")
 SLEEP_INTERVAL_HOURS = 6
+
+# Configure file-only logging
+logging.basicConfig(
+    filename="scraper.log",
+    filemode="a",
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+logger = logging.getLogger("orchestrator")
+
+
+@dataclass
+class ATSState:
+    current: int = 0
+    total: int = 0
+    slug: str = ""
+    found: int = 0
+    queued: int = 0
+    dupes: int = 0
+
+
+class Dashboard:
+    def __init__(self, ats_list: list[str]):
+        self.pending = ats_list.copy()
+        self.working: dict[str, ATSState] = {}
+        self.finished: list[str] = []
+        self.start_time = time.time()
+        self.total_ats = len(ats_list)
+
+    def generate_layout(self) -> Group:
+        completed = len(self.finished)
+        total = self.total_ats
+
+        progress = Progress(
+            BarColumn(bar_width=60, complete_style="green", finished_style="green"),
+            TextColumn("{task.completed} / {task.total} ({task.percentage:>3.0f}%)", style="green")
+        )
+        progress.add_task("", total=total, completed=completed)
+
+        pending_str = ", ".join(self.pending[:5]) + (" ..." if len(self.pending) > 5 else "")
+        pending_text = Text(f"Pending list: [ {pending_str} ]", style="white")
+
+        working_lines = [Text("Working:", style="orange3")]
+        for ats, state in self.working.items():
+            line = f"- {ats} [{state.current}/{state.total}] | {state.slug} | {state.found} found, {state.queued} queued, {state.dupes} dupes"
+            working_lines.append(Text(line, style="orange3"))
+        if not self.working:
+            working_lines.append(Text("- (none)", style="orange3"))
+
+        finished_str = ", ".join(self.finished[-5:]) + (" ..." if len(self.finished) > 5 else "")
+        finished_text = Text(f"Finished: [ {finished_str} ]", style="green")
+
+        elapsed_sec = int(time.time() - self.start_time)
+        hours, rem = divmod(elapsed_sec, 3600)
+        minutes, seconds = divmod(rem, 60)
+
+        parts = []
+        if hours > 0:
+            parts.append(f"{hours}h")
+        if minutes > 0 or hours > 0:
+            parts.append(f"{minutes}m")
+        parts.append(f"{seconds}s")
+
+        formatted_time = " ".join(parts)
+        elapsed_text = Text(f"Elapsed: {formatted_time}", style="deep_sky_blue1")
+
+        return Group(
+            progress,
+            pending_text,
+            *working_lines,
+            finished_text,
+            elapsed_text
+        )
 
 
 class PrioritySemaphore:
@@ -32,23 +111,23 @@ class PrioritySemaphore:
             return True
 
         event = asyncio.Event()
-        # Entry structure: [priority, tie_breaker, event, is_cancelled]
         waiter_entry = [priority, next(self._counter), event, False]
         heapq.heappush(self._waiters, waiter_entry)
 
         try:
             await event.wait()
         except asyncio.CancelledError:
-            waiter_entry[3] = True # Mark as cancelled to prevent release consumption
+            waiter_entry[3] = True
             if event.is_set():
                 self.release()
             raise
 
         return False
+
     def release(self) -> None:
         while self._waiters:
             waiter_entry = heapq.heappop(self._waiters)
-            if not waiter_entry[3]:  # If not cancelled
+            if not waiter_entry[3]:
                 waiter_entry[2].set()
                 return
         self._value += 1
@@ -63,13 +142,25 @@ class PrioritySemaphore:
 
 
 def get_active_ats_platforms() -> list[Tuple[int, str]]:
-    """Retrieve distinct ATS platforms present in your SQLite database."""
+    """Retrieve distinct ATS platforms ordered by tier."""
     with sqlite3.connect(DB_PATH) as conn:
+        # Fetch rows already sorted by tier
         rows = conn.execute("SELECT DISTINCT ats_name, tier FROM ats ORDER BY tier ASC").fetchall()
-        db_ats = {row for row in rows}
-    # Only run platforms that exist both in the database and CONFIGS
+
     cfg_keys = CONFIGS.keys()
-    return [(tier, ats) for ats, tier in db_ats if ats in cfg_keys or CONFIGS[ats].get("singleton")]
+
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    result: list[Tuple[int, str]] = []
+
+    for ats, tier in rows:
+        if ats not in seen and (ats in cfg_keys or CONFIGS[ats].get("singleton")):
+            seen.add(ats)
+            result.append((tier, ats))
+
+    # Explicitly sort by tier to guarantee lower tier numbers run first
+    result.sort(key=lambda x: x[0])
+    return result
 
 def _job_to_db_params(job: Job) -> dict[str, Any]:
     return {
@@ -93,48 +184,21 @@ def _job_to_db_params(job: Job) -> dict[str, Any]:
         "fetched_at": (job.fetched_at or datetime.now(timezone.utc)).isoformat(),
     }
 
+
 SAVE_JOBS_BATCH_QUERY = """
-        INSERT INTO jobs (
-            id,
-            ats_type,
-            ats_id,
-            url,
-            apply_url,
-            title,
-            company_slug,
-            location,
-            country_iso,
-            region,
-            employment_type,
-            description,
-            salary_min,
-            salary_max,
-            salary_currency,
-            is_normalized,
-            posted_at,
-            fetched_at
-        ) VALUES (
-            :id,
-            :ats_type,
-            :ats_id,
-            :url,
-            :apply_url,
-            :title,
-            :company_slug,
-            :location,
-            :country_iso,
-            :region,
-            :employment_type,
-            :description,
-            :salary_min,
-            :salary_max,
-            :salary_currency,
-            :is_normalized,
-            :posted_at,
-            :fetched_at
-        )
-        ON CONFLICT (ats_type, ats_id) DO NOTHING;
-    """
+    INSERT INTO jobs (
+        id, ats_type, ats_id, url, apply_url, title, company_slug, location,
+        country_iso, region, employment_type, description, salary_min,
+        salary_max, salary_currency, is_normalized, posted_at, fetched_at
+    ) VALUES (
+        :id, :ats_type, :ats_id, :url, :apply_url, :title, :company_slug,
+        :location, :country_iso, :region, :employment_type, :description,
+        :salary_min, :salary_max, :salary_currency, :is_normalized,
+        :posted_at, :fetched_at
+    )
+    ON CONFLICT (ats_type, ats_id) DO NOTHING;
+"""
+
 
 async def db_writer_worker(
     db_path: Path,
@@ -157,7 +221,7 @@ async def db_writer_worker(
         try:
             while True:
                 job = await queue.get()
-                if job is None:  # Shutdown sentinel
+                if job is None:
                     await flush()
                     queue.task_done()
                     break
@@ -165,53 +229,101 @@ async def db_writer_worker(
                 buffer.append(_job_to_db_params(job))
                 queue.task_done()
 
-                # Flush if threshold met or no more items immediately waiting in queue
                 if len(buffer) >= batch_size or (queue.empty() and buffer):
                     await flush()
         finally:
             await flush()
 
-async def run_single_ats(semaphore: PrioritySemaphore, tier: int, ats: str, queue: asyncio.Queue[Job | None]) -> None:
-    async with semaphore.request(tier):
-        print(f"Worker {ats} (Priority {tier}) acquired.")
 
-        # Use existing file-lock to prevent overlapping cron/script instances
+async def ui_worker(ui_queue: asyncio.Queue, dashboard: Dashboard, live: Live) -> None:
+    while True:
+        msg = await ui_queue.get()
+        if msg is None:
+            ui_queue.task_done()
+            break
+
+        msg_type = msg.get("type")
+        ats = msg.get("ats")
+
+        if msg_type == "start":
+            if ats in dashboard.pending:
+                dashboard.pending.remove(ats)
+            dashboard.working[ats] = ATSState()
+        elif msg_type == "progress":
+            if ats in dashboard.working:
+                state = dashboard.working[ats]
+                state.current = msg.get("current", 0)
+                state.total = msg.get("total", 0)
+                state.slug = msg.get("slug", "")
+                state.found = msg.get("found", 0)
+                state.queued = msg.get("queued", 0)
+                state.dupes = msg.get("dupes", 0)
+        elif msg_type == "finish":
+            if ats in dashboard.working:
+                del dashboard.working[ats]
+            if ats not in dashboard.finished:
+                dashboard.finished.append(ats)
+
+        live.update(dashboard.generate_layout())
+        ui_queue.task_done()
+
+
+async def run_single_ats(
+    semaphore: PrioritySemaphore,
+    tier: int,
+    ats: str,
+    queue: asyncio.Queue[Job | None],
+    ui_queue: asyncio.Queue
+) -> None:
+    async with semaphore.request(tier):
+        logger.debug(f"Worker {ats} (Priority {tier}) acquired.")
+        ui_queue.put_nowait({"type": "start", "ats": ats})
+
         with _pipeline_lock(ats) as acquired:
             if not acquired:
+                ui_queue.put_nowait({"type": "finish", "ats": ats})
                 return
-            print(f"\n=== Starting scrape for ATS: {ats} ===")
-            # Default concurrency: 8, max_tenants: None (all), timeout: 30s
-            code = await run(ats=ats, db_path=DB_PATH, queue=queue, concurrency=8, max_tenants=None, timeout=30.0)
-            if code != 0:
-                print("Ahh, failed nigga.")
 
+            logger.info(f"=== Starting scrape for ATS: {ats} ===")
+            code = await run(
+                ats=ats,
+                db_path=DB_PATH,
+                queue=queue,
+                concurrency=8,
+                max_tenants=None,
+                timeout=30.0,
+                ui_queue=ui_queue
+            )
+            if code != 0:
+                logger.error(f"Scraper {ats} failed with code {code}.")
+
+        ui_queue.put_nowait({"type": "finish", "ats": ats})
 
 
 async def main_loop() -> None:
-    while True:
-        cycle_start = time.time()
-        ats_list = get_active_ats_platforms()
-        print(f"[Orchestrator] Starting cycle across {len(ats_list)} platforms.")
+    ats_list = get_active_ats_platforms()
+    ats_names = [ats for _, ats in ats_list]
+    logger.info(f"[Orchestrator] Starting cycle across {len(ats_list)} platforms.")
 
+    ui_queue: asyncio.Queue = asyncio.Queue()
+    dashboard = Dashboard(ats_names)
+
+    with Live(dashboard.generate_layout(), refresh_per_second=4) as live:
         queue: asyncio.Queue[Job | None] = asyncio.Queue(maxsize=1000)
-        writer_task = asyncio.create_task(db_writer_worker(DB_PATH, queue, batch_size=10))
+        writer_task = asyncio.create_task(db_writer_worker(DB_PATH, queue))
+        ui_task = asyncio.create_task(ui_worker(ui_queue, dashboard, live))
 
         sem = PrioritySemaphore(5)
 
-
-        # Launch all ATS scrapers concurrently
-        await asyncio.gather(*(run_single_ats(sem, tier, ats, queue) for tier, ats in ats_list))
+        await asyncio.gather(*(run_single_ats(sem, tier, ats, queue, ui_queue) for tier, ats in ats_list))
 
         await queue.join()
-
-        # 4. Stop writer worker cleanly
         await queue.put(None)
         await writer_task
 
-        elapsed = time.time() - cycle_start
-        sleep_seconds = max(0.0, (SLEEP_INTERVAL_HOURS * 3600) - elapsed)
-        print(f"[Orchestrator] Cycle finished in {elapsed:.0f}s. Sleeping for {sleep_seconds/3600:.1f}h...")
-        await asyncio.sleep(sleep_seconds)
+        await ui_queue.put(None)
+        await ui_task
+
 
 if __name__ == "__main__":
     asyncio.run(main_loop())

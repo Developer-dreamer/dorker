@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import fcntl
 import json
+import logging
 import os
 import sqlite3
 import tempfile
@@ -37,6 +38,7 @@ from .configuration_manager import CONFIGS
 from .exceptions import CompanyNotFoundError
 from .models import Job
 
+logger = logging.getLogger(__name__)
 DATA_ROOT = Path(__file__).resolve().parent.parent  # → repo root
 
 
@@ -74,7 +76,7 @@ def _pipeline_lock(ats: str) -> Iterator[bool]:
         except BlockingIOError:
             fh.seek(0)
             owner = fh.read().strip() or "unknown pid"
-            print(f"[{ats}] another run is already active ({owner}); skipping.")
+            logger.warning(f"[{ats}] another run is already active ({owner}); skipping.")
             yield False
             return
         fh.seek(0)
@@ -87,34 +89,11 @@ def _pipeline_lock(ats: str) -> Iterator[bool]:
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
-# Schema layout version stored in SQLite's PRAGMA user_version. Bumping
-# this number tells the cache to refuse opening an older file whose row
-# format we no longer know how to decode (e.g. legacy ``description
-# TEXT`` rows that would silently come back as ``str`` through the BLOB
-# read path and crash zstd decompression).
 _CACHE_SCHEMA_VERSION = 2
 
 
 class DescriptionCache:
-    """Disk-backed description cache, optionally persistent and zstd-compressed.
-
-    Two modes:
-
-    - **Ephemeral** (default): ``DescriptionCache()`` creates a tempfile that
-      gets removed on :meth:`close`. Behavior matches the legacy single-run
-      cache rebuilt each pipeline invocation via :meth:`load_csv`.
-
-    - **Persistent**: ``DescriptionCache(path=Path("...sqlite3"))`` opens (or
-      creates) the named file and keeps it across runs. Use for ATSes where
-      rebuilding from CSV every day is wasteful — e.g. Workday at ~700k
-      entries. New fetches accumulate in-place via :meth:`set`.
-
-    ``compress=True`` stores the description column as zstd-compressed BLOB.
-    Cuts disk footprint by ~70% on typical HTML/markdown text. Read overhead
-    is single-digit milliseconds per lookup, which is dwarfed by the network
-    fetch cost it replaces.
-    """
-
+    """Disk-backed description cache, optionally persistent and zstd-compressed."""
     def __init__(self, db_path: Path, ats_name: str, compress: bool = False) -> None:
         self.conn: sqlite3.Connection | None = None
         self.compress = compress
@@ -133,26 +112,16 @@ class DescriptionCache:
             self.path = Path(tmp.name)
         self._owns_tempfile = True
 
-
         try:
             self.conn = sqlite3.connect(self.path)
             if self._owns_tempfile:
-                # Ephemeral tempfile cache — favor raw insert speed over crash
-                # safety (file is discarded on close anyway).
                 self.conn.execute("PRAGMA journal_mode=OFF")
                 self.conn.execute("PRAGMA synchronous=OFF")
             else:
-                # Persistent cache — WAL gives concurrent reader safety while
-                # writes stay durable. NORMAL sync is sufficient for our
-                # daily-replay-on-loss model.
                 self.conn.execute("PRAGMA journal_mode=WAL")
                 self.conn.execute("PRAGMA synchronous=NORMAL")
             self.conn.execute("PRAGMA temp_store=MEMORY")
-            # Schema-version pragma. Bump when the table layout or encoding
-            # changes incompatibly so an older persistent file fails loudly
-            # at open instead of silently mixing schemas. Version 1 is the
-            # original ``description TEXT`` layout; version 2 introduced
-            # ``description BLOB`` to carry optionally-zstd-compressed bytes.
+
             current_user_version = self.conn.execute(
                 "PRAGMA user_version"
             ).fetchone()[0]
@@ -166,9 +135,6 @@ class DescriptionCache:
                     "SELECT COUNT(*) FROM descriptions"
                 ).fetchone()[0]
             if existing_rows > 0 and current_user_version != _CACHE_SCHEMA_VERSION:
-                # Bail loudly rather than try to interpret an unknown layout
-                # — silently returning TEXT bytes through the BLOB path
-                # leaks ``str`` rows that then crash _decode().
                 if self.conn is not None:
                     self.conn.close()
                     self.conn = None
@@ -224,7 +190,6 @@ class DescriptionCache:
 
     def _load_sql(self, db_path: Path, ats_name: str) -> None:
         batch: list[tuple[str, str, bytes]] = []
-
         uri = f"{db_path.resolve().as_uri()}?mode=ro"
 
         try:
@@ -263,13 +228,6 @@ class DescriptionCache:
         ).fetchone()[0]
 
     def _insert_many(self, rows: list[tuple[str, str, bytes]], *, replace: bool = False) -> int:
-        """Bulk insert. ``replace=True`` overwrites existing rows
-        (used by :meth:`set` so an updated description from a fresh
-        scrape supersedes the previous-day cached one); the default
-        ``replace=False`` keeps the existing row, which is what
-        :meth:`load_csv` wants when seeding from a CSV that may have
-        the same URL listed multiple times.
-        """
         verb = "INSERT OR REPLACE" if replace else "INSERT OR IGNORE"
         cur = self.conn.executemany(
             f"""
@@ -291,7 +249,7 @@ class DescriptionCache:
                 (kind, key),
             ).fetchone()
             if row:
-                print(f"[{job.ats_type}] [INFO] Cache HIT ")
+                logger.debug(f"[{job.ats_type}] [INFO] Cache HIT ")
                 return self._decode(row[0])
         return None
 
@@ -300,12 +258,6 @@ class DescriptionCache:
         rows = [(*key, blob) for key in _description_keys(job)]
         if not rows:
             return
-        # Single-row updates from _ensure_description must replace any
-        # existing entry — that's the whole point of writing back when
-        # the freshly-scraped body is longer than the cached one. The
-        # rowcount returned by executemany with INSERT OR REPLACE counts
-        # both new inserts and updates, so we only bump ``count`` by
-        # the genuine new keys (those not already present).
         new_keys = 0
         existing = self.conn.execute(
             "SELECT COUNT(*) FROM descriptions WHERE (kind, cache_key) IN ("
@@ -375,19 +327,9 @@ async def _ensure_description(
     cached = _cached_description(job, cache)
     fresh = job.description
     if cached:
-        # Prefer the longer description. The cache is the previous run's
-        # jobs.csv (or a persistent SQLite). When the scraper has already
-        # populated ``job.description`` from the current API (e.g. lever,
-        # which assembles ``description`` + ``lists[]`` in _parse_job,
-        # or apple which hydrates per-job detail pages), a recent code
-        # update may produce a fuller body than the previously-cached
-        # one. Trust whichever has more content; ties go to fresh.
         if not fresh or len(cached) > len(fresh):
             job.description = cached
             return "cache"
-        # Fresh is at least as long — keep it AND write it back to the
-        # cache so the next run picks up the improvement immediately
-        # instead of recomputing it.
         cache.set(job, fresh)
         return "present"
     if fresh:
@@ -395,9 +337,8 @@ async def _ensure_description(
     try:
         description = await asyncio.to_thread(scraper.get_description, job)
     except Exception as exc:
-        print(
-            "  description fetch failed for "
-            f"{job.url}: {type(exc).__name__}: {str(exc)[:200]}"
+        logger.error(
+            f"  description fetch failed for {job.url}: {type(exc).__name__}: {str(exc)[:200]}"
         )
         return "error"
     if description:
@@ -424,7 +365,6 @@ async def _run_scraper(
     *,
     include_descriptions: bool = True,
 ) -> tuple[str, BaseScraper | None, list[Job], str | None]:
-    """Run one scraper in a thread (most are sync)."""
     extra = kwargs or {}
 
     def _run() -> tuple[BaseScraper, list[Job]]:
@@ -448,6 +388,7 @@ async def run(
     concurrency: int,
     max_tenants: int | None,
     timeout: float,
+    ui_queue: asyncio.Queue | None = None,
 ) -> int:
     cfg = CONFIGS[ats]
     concurrency = _bounded_concurrency(cfg, concurrency)
@@ -467,7 +408,7 @@ async def run(
             ).fetchall()
 
         if not rows:
-            print(f"[{ats}] [WARN] No active tenants found in SQLite ({db_path}); skipping run.")
+            logger.warning(f"[{ats}] [WARN] No active tenants found in SQLite ({db_path}); skipping run.")
             return 0
 
         kwargs_factory = cfg.get("kwargs")
@@ -485,7 +426,7 @@ async def run(
         if cfg.get("fail_closed_on_any_error"):
             omitted_required_shards = configured_target_count - len(targets)
 
-    print(
+    logger.info(
         f"[{ats}] [INFO] Starting pipeline: {len(targets)} targets "
         f"(concurrency={concurrency}, desc_concurrency={cfg.get('description_concurrency', concurrency)}, "
         f"timeout={timeout}s, singleton={bool(cfg.get('singleton'))})"
@@ -499,7 +440,6 @@ async def run(
     tenant_delay = float(cfg.get("tenant_delay_seconds", 0))
     description_delay = float(cfg.get("description_delay_seconds", 0))
 
-    # Metric counters
     counts = {
         "success": 0,
         "not_found": 0,
@@ -524,25 +464,24 @@ async def run(
     )
     cache_compress = bool(cfg.get("description_cache_compress"))
 
-    print(f"[{ats}] [CACHE] Initializing description cache from {db_path}...")
+    logger.info(f"[{ats}] [CACHE] Initializing description cache from {db_path}...")
     description_cache = DescriptionCache(db_path, ats, compress=cache_compress)
     if description_cache.count:
         location = "persistent" if persistent_path else "ephemeral"
-        print(
+        logger.info(
             f"[{ats}] [CACHE] Loaded {description_cache.count:,} warm description keys "
             f"({location} cache at {description_cache.path})"
         )
     else:
-        print(f"[{ats}] [CACHE] Description cache initialized empty.")
+        logger.info(f"[{ats}] [CACHE] Description cache initialized empty.")
 
     seen_keys: set[tuple[str, str]] = set()
     tenants_completed = 0
     t0 = time.time()
 
     try:
-        # ---- Streaming execution branch ----
         if uses_streaming:
-            print(f"[{ats}] [STREAM] Executing streaming scraper...")
+            logger.info(f"[{ats}] [STREAM] Executing streaming scraper...")
             scraper = cfg["scraper"](ats, timeout=timeout)
             pending_descriptions: set[asyncio.Task[Job]] = set()
 
@@ -551,10 +490,22 @@ async def run(
                 counts["jobs_scraped"] += 1
                 counts["jobs_queued"] += 1
 
+                if ui_queue:
+                    ui_queue.put_nowait({
+                        "type": "progress",
+                        "ats": ats,
+                        "current": counts["jobs_queued"],
+                        "total": counts["jobs_queued"],
+                        "slug": "streaming...",
+                        "found": counts["jobs_scraped"],
+                        "queued": counts["jobs_queued"],
+                        "dupes": counts["jobs_deduped"]
+                    })
+
                 if counts["jobs_queued"] % 5_000 == 0:
                     elapsed = time.time() - t0
                     rate = counts["jobs_queued"] / max(1.0, elapsed)
-                    print(
+                    logger.info(
                         f"  [{ats}] [STREAM PROGRESS] {counts['jobs_queued']:,} jobs queued "
                         f"in {elapsed:.0f}s ({rate:.1f} jobs/s) | Pending tasks: {len(pending_descriptions)}"
                     )
@@ -600,17 +551,24 @@ async def run(
                 for task in pending_descriptions:
                     task.cancel()
                 counts["not_found"] = 1
-                print(f"[{ats}] [WARN] Streaming target company not found.")
+                logger.warning(f"[{ats}] [WARN] Streaming target company not found.")
             except Exception as exc:
                 for task in pending_descriptions:
                     task.cancel()
                 counts["error"] = 1
-                print(f"[{ats}] [ERROR] Streaming failed: {type(exc).__name__}: {str(exc)[:300]}")
+                logger.error(f"[{ats}] [ERROR] Streaming failed: {type(exc).__name__}: {str(exc)[:300]}")
 
-        # ---- Batched tenant execution branch ----
         else:
             async def scrape_tenant(slug: str, kw: dict[str, Any]) -> None:
                 nonlocal tenants_completed
+
+                if not CONFIGS.is_enabled(ats):
+                    logger.warning(f"[{ats}] Scraper disabled mid-run via ats_config.json. Skipping tenant {slug}.")
+                    return
+
+                current_cfg = CONFIGS.get(ats)
+                active_tenant_delay = float(current_cfg.get("tenant_delay_seconds", 0))
+
                 started = time.time()
                 jobs: list[Job] = []
                 scraper = None
@@ -632,67 +590,73 @@ async def run(
                     except Exception as e:
                         err = f"Unhandled {type(e).__name__}: {str(e)[:150]}"
                     finally:
-                        if tenant_delay:
-                            await asyncio.sleep(tenant_delay)
+                        if active_tenant_delay:
+                            await asyncio.sleep(active_tenant_delay)
 
                 elapsed = time.time() - started
                 tenants_completed += 1
 
                 if err == "not_found":
                     counts["not_found"] += 1
-                    print(f"  [{ats}] [{tenants_completed}/{len(targets)}] 404 Not Found: '{slug}' ({elapsed:.1f}s)")
-                    return
-
-                if err:
+                    logger.warning(f"  [{ats}] [{tenants_completed}/{len(targets)}] 404 Not Found: '{slug}' ({elapsed:.1f}s)")
+                elif err:
                     counts["error"] += 1
-                    print(f"  [{ats}] [{tenants_completed}/{len(targets)}] FAILED: '{slug}' after {elapsed:.1f}s -> {err}")
-                    return
+                    logger.error(f"  [{ats}] [{tenants_completed}/{len(targets)}] FAILED: '{slug}' after {elapsed:.1f}s -> {err}")
+                else:
+                    counts["success"] += 1
 
-                counts["success"] += 1
                 tenant_desc_stats = {
-                    "cache": 0,
-                    "present": 0,
-                    "fetched": 0,
-                    "missing": 0,
-                    "error": 0,
+                    "cache": 0, "present": 0, "fetched": 0, "missing": 0, "error": 0,
                 }
                 tenant_queued = 0
                 tenant_deduped = 0
 
-                for job in jobs:
-                    counts["jobs_scraped"] += 1
-                    key = _job_dedupe_key(job, cfg)
-                    if key in seen_keys:
-                        counts["jobs_deduped"] += 1
-                        tenant_deduped += 1
-                        continue
-                    seen_keys.add(key)
+                if not err and err != "not_found":
+                    for job in jobs:
+                        counts["jobs_scraped"] += 1
+                        key = _job_dedupe_key(job, cfg)
+                        if key in seen_keys:
+                            counts["jobs_deduped"] += 1
+                            tenant_deduped += 1
+                            continue
+                        seen_keys.add(key)
 
-                    if scraper is not None and not cfg.get("skip_description_enrichment"):
-                        if _cached_description(job, description_cache) or job.description:
-                            desc_status = await _ensure_description(
-                                scraper, job, description_cache
-                            )
-                        else:
-                            async with description_sem:
-                                try:
-                                    desc_status = await _ensure_description(
-                                        scraper, job, description_cache
-                                    )
-                                finally:
-                                    if description_delay:
-                                        await asyncio.sleep(description_delay)
-                        tenant_desc_stats[desc_status] += 1
-                        total_desc_stats[desc_status] += 1
+                        if scraper is not None and not cfg.get("skip_description_enrichment"):
+                            if _cached_description(job, description_cache) or job.description:
+                                desc_status = await _ensure_description(
+                                    scraper, job, description_cache
+                                )
+                            else:
+                                async with description_sem:
+                                    try:
+                                        desc_status = await _ensure_description(
+                                            scraper, job, description_cache
+                                        )
+                                    finally:
+                                        if description_delay:
+                                            await asyncio.sleep(description_delay)
+                            tenant_desc_stats[desc_status] += 1
+                            total_desc_stats[desc_status] += 1
 
-                    await queue.put(job)
-                    counts["jobs_queued"] += 1
-                    tenant_queued += 1
+                        await queue.put(job)
+                        counts["jobs_queued"] += 1
+                        tenant_queued += 1
 
-                # Incremental tenant feedback
+                if ui_queue:
+                    ui_queue.put_nowait({
+                        "type": "progress",
+                        "ats": ats,
+                        "current": tenants_completed,
+                        "total": len(targets),
+                        "slug": slug,
+                        "found": len(jobs),
+                        "queued": tenant_queued,
+                        "dupes": tenant_deduped
+                    })
+
                 is_slow = elapsed >= float(cfg.get("slow_tenant_log_seconds", 300))
                 tag = "SLOW TENANT" if is_slow else "OK"
-                print(
+                logger.info(
                     f"  [{ats}] [{tenants_completed}/{len(targets)}] [{tag}] '{slug}' in {elapsed:.1f}s: "
                     f"{len(jobs)} found -> {tenant_queued} queued, {tenant_deduped} dupes "
                     f"(desc: {tenant_desc_stats['fetched']} fetched, {tenant_desc_stats['cache']} cached, "
@@ -703,14 +667,14 @@ async def run(
             for i in range(0, len(targets), batch_size):
                 batch = targets[i:i + batch_size]
                 batch_t0 = time.time()
-                print(
+                logger.info(
                     f"[{ats}] [BATCH] Dispatching tenants {i + 1} to {min(i + batch_size, len(targets))} "
                     f"of {len(targets)}..."
                 )
                 await asyncio.gather(*(scrape_tenant(s, kw) for s, kw in batch))
                 batch_elapsed = time.time() - batch_t0
                 total_elapsed = time.time() - t0
-                print(
+                logger.info(
                     f"[{ats}] [MILESTONE] Processed {min(i + batch_size, len(targets))}/{len(targets)} tenants "
                     f"(batch: {batch_elapsed:.1f}s, total: {total_elapsed:.0f}s) | "
                     f"Counts: {counts['success']} OK, {counts['not_found']} 404, {counts['error']} ERR | "
@@ -719,27 +683,28 @@ async def run(
 
         elapsed = time.time() - t0
         rate = counts["jobs_queued"] / max(1.0, elapsed)
-        print("\n" + "=" * 60)
-        print(f"[{ats}] RUN SUMMARY:")
-        print(f"  Duration:         {elapsed:.1f}s (~{elapsed / 60:.1f} min)")
-        print(f"  Tenants:          {counts['success']} success, {counts['not_found']} not found, {counts['error']} failed / {len(targets)} total")
-        print(f"  Jobs Processed:   {counts['jobs_scraped']:,} scraped -> {counts['jobs_queued']:,} queued ({counts['jobs_deduped']:,} deduped)")
-        print(f"  Throughput:       {rate:.1f} jobs/sec")
-        print(
+        
+        summary = (
+            f"\n{'=' * 60}\n"
+            f"[{ats}] RUN SUMMARY:\n"
+            f"  Duration:         {elapsed:.1f}s (~{elapsed / 60:.1f} min)\n"
+            f"  Tenants:          {counts['success']} success, {counts['not_found']} not found, {counts['error']} failed / {len(targets)} total\n"
+            f"  Jobs Processed:   {counts['jobs_scraped']:,} scraped -> {counts['jobs_queued']:,} queued ({counts['jobs_deduped']:,} deduped)\n"
+            f"  Throughput:       {rate:.1f} jobs/sec\n"
             f"  Descriptions:     {total_desc_stats['fetched']} fetched over HTTP, "
             f"{total_desc_stats['cache']} cache hits, {total_desc_stats['present']} present in payload, "
-            f"{total_desc_stats['missing']} missing, {total_desc_stats['error']} failed"
+            f"{total_desc_stats['missing']} missing, {total_desc_stats['error']} failed\n"
+            f"{'=' * 60}\n"
         )
-        print("=" * 60 + "\n")
+        logger.info(summary)
 
-        # Failure threshold validations
         failure_threshold = max(1, (len(targets) + 1) // 2)
         if uses_streaming and counts["error"] > 0:
-            print(f"[{ats}] [FAILURE] Streaming scrape terminated with fatal error.")
+            logger.error(f"[{ats}] [FAILURE] Streaming scrape terminated with fatal error.")
             return 1
 
         if bool(cfg.get("fail_closed_on_empty")) and bool(targets) and counts["jobs_queued"] == 0:
-            print(f"[{ats}] [FAILURE] fail_closed_on_empty triggered: 0 jobs queued from {len(targets)} tenants.")
+            logger.error(f"[{ats}] [FAILURE] fail_closed_on_empty triggered: 0 jobs queued from {len(targets)} tenants.")
             return 1
 
         required_not_found = (
@@ -756,7 +721,7 @@ async def run(
             required_failures = (
                 counts["error"] + omitted_required_shards + required_not_found
             )
-            print(
+            logger.error(
                 f"[{ats}] [FAILURE] Required shards failed: {required_failures}/{configured_target_count} "
                 f"failures (errors={counts['error']}, omitted={omitted_required_shards}, not_found={required_not_found})."
             )
@@ -768,14 +733,14 @@ async def run(
             and counts["error"] >= failure_threshold
         )
         if catastrophic_failure:
-            print(
+            logger.error(
                 f"[{ats}] [FAILURE] Catastrophic failure: 0 jobs produced and "
                 f"{counts['error']}/{len(targets)} tenant errors exceeded threshold ({failure_threshold})."
             )
             return 1
 
         if counts["error"] >= failure_threshold:
-            print(f"[{ats}] [WARN] Kept partial data but {counts['error']}/{len(targets)} tenants failed.")
+            logger.warning(f"[{ats}] [WARN] Kept partial data but {counts['error']}/{len(targets)} tenants failed.")
             return 1
 
         return 0
