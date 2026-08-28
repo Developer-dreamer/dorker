@@ -9,6 +9,7 @@ from openai import OpenAI
 from openai.lib._pydantic import to_strict_json_schema
 from pydantic import BaseModel
 
+ROOT = Path(__file__).resolve().parent
 
 class SegmentedBlock(BaseModel):
     text: str
@@ -18,99 +19,102 @@ class SegmentedBlock(BaseModel):
         "COMPENSATION_LOCATION",
         "COMPANY_PROFILE",
         "BENEFITS_PERKS",
-        "LEGAL_BOILERPLATE_EEO"
+        "LEGAL_BOILERPLATE_EEO",
     ]
     confidence: float
+
 
 class JobDescriptionAnnotation(BaseModel):
     blocks: List[SegmentedBlock]
 
 
-def build_batch_line(model: str,
-                    master_prompt: str,
-                    job_id: str,
-                    job_payload: str,
-                    schema: Type[BaseModel]) -> Tuple[str,int]:
-        batch_entry = {
-            "custom_id": job_id,
-            "method": "POST",
-            "url": "/v1/chat/completions",
-            "body": {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": master_prompt},
-                    {"role": "user", "content": job_payload},
-                ],
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": schema.__name__,
-                        "strict": True,
-                        "schema": to_strict_json_schema(schema),
-                    },
+def build_batch_line(
+    model: str, master_prompt: str, job_id: str, job_payload: str, schema: Type[BaseModel]
+) -> Tuple[str, int]:
+    batch_entry = {
+        "custom_id": job_id,
+        "method": "POST",
+        "url": "/v1/chat/completions",
+        "body": {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": master_prompt},
+                {"role": "user", "content": job_payload},
+            ],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema.__name__,
+                    "strict": True,
+                    "schema": to_strict_json_schema(schema),
                 },
             },
-        }
+        },
+    }
 
-        batch_entry_str = json.dumps(batch_entry, ensure_ascii=False)
-        byte_size = len(batch_entry_str.encode("utf-8")) + 1
+    batch_entry_str = json.dumps(batch_entry, ensure_ascii=False)
+    byte_size = len(batch_entry_str.encode("utf-8")) + 1
 
-        return batch_entry_str, byte_size
+    return batch_entry_str, byte_size
 
 
-MAX_BYTES_PER_BATCH = 2e+8 # 200 MB per request
-MAX_REQUESTS_PER_BATCH = 50_000 # 50 000 separate questions to AI model
+MAX_BYTES_PER_BATCH = 2e8  # 200 MB per request
+MAX_REQUESTS_PER_BATCH = 50_000  # 50 000 separate questions to AI model
 
-def create_batch_file(batch_id: str,
-                       model: str,
-                       jobs: List[Tuple[str,str]],
-                       output_dir: Path) -> Tuple[Path, List[str]]:
 
-        output_dir.mkdir(parents=True, exist_ok=True)
-        file_path = output_dir / f"batch_{batch_id}.jsonl"
+def create_batch_file(
+    batch_id: str, model: str, jobs: List[Tuple[str, str]], output_dir: Path
+) -> Tuple[Path, List[str]]:
 
-        with open("/Users/serafym/Developer/dorker.space/intelligence_core/prompt/labeling_prompt_chatgpt.md", "r") as f:
-             master_prompt = f.read()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    file_path = output_dir / f"batch_{batch_id}.jsonl"
 
-        current_lines: List[str] = []
-        current_bytes = 0
-        current_count = 0
-        line_bytes = 0
+    prompt_path = ROOT / "prompt" / "labeling_prompt_chatgpt.md"
+    with open(
+        prompt_path,
+        "r",
+    ) as f:
+        master_prompt = f.read()
 
-        processed_jobs: List[str] = []
-        for job in jobs:
+    current_lines: List[str] = []
+    current_bytes = 0
+    current_count = 0
+    line_bytes = 0
 
-            json_str, line_bytes = build_batch_line(
-                model=model,
-                master_prompt=master_prompt,
-                job_id=job[0],
-                job_payload=job[1],
-                schema=JobDescriptionAnnotation,
-            )
+    processed_jobs: List[str] = []
+    for job in jobs:
+        json_str, line_bytes = build_batch_line(
+            model=model,
+            master_prompt=master_prompt,
+            job_id=job[0],
+            job_payload=job[1],
+            schema=JobDescriptionAnnotation,
+        )
 
-            if (current_bytes + line_bytes > MAX_BYTES_PER_BATCH
-                or current_count + 1 > MAX_REQUESTS_PER_BATCH):
-
-                with open(file_path, "a", encoding="utf-8") as f:
-                    f.write("\n".join(current_lines) + "\n")
-
-                return file_path, processed_jobs
-
-            current_lines.append(json_str)
-            processed_jobs.append(job[0])
-
-            current_bytes += line_bytes
-            current_count += 1
-
-        if current_lines:
+        if (
+            current_bytes + line_bytes > MAX_BYTES_PER_BATCH
+            or current_count + 1 > MAX_REQUESTS_PER_BATCH
+        ):
             with open(file_path, "a", encoding="utf-8") as f:
                 f.write("\n".join(current_lines) + "\n")
 
+            return file_path, processed_jobs
 
-        return file_path, processed_jobs
+        current_lines.append(json_str)
+        processed_jobs.append(job[0])
 
-async def run() -> None:
-    db_path = 'app.db'
+        current_bytes += line_bytes
+        current_count += 1
+
+    if current_lines:
+        with open(file_path, "a", encoding="utf-8") as f:
+            f.write("\n".join(current_lines) + "\n")
+
+    return file_path, processed_jobs
+
+
+async def run_batch_upload() -> None:
+    db_path = "app.db"
 
     query = """
             WITH matched_ids AS (SELECT rowid,
@@ -154,18 +158,26 @@ async def run() -> None:
     # print(f'[INFO] Batch file created. Path: {path}')
 
     client = OpenAI()
-    
-    batch_input_file = client.files.create(
-        file=open(Path("/Users/serafym/Developer/dorker.space/intelligence_core/ml/batch_2026-08-26T15:04:34.625737+00:00.jsonl"), "rb"), purpose="batch"
-    )
-    print(f'[INFO] Batch file sent to OpenAI API. ID: {batch_input_file.id}')
 
-    batch = client.batches.create(
-        input_file_id=batch_input_file.id,
-        endpoint="/v1/chat/completions",
-        completion_window="24h",
-    )
-    print(f'[INFO] Batch created. ID: {batch.id}, Status: {batch.status}, Jobs sent: {len(ids)}.')
+    # batch_file_path = ROOT / "ml" / "batch_2026-08-26T15:04:34.625737+00:00.jsonl"
+    # batch_input_file = client.files.create(
+    #     file=open(
+    #         batch_file_path,
+    #         "rb",
+    #     ),
+    #     purpose="batch",
+    # )
+    # print(f"[INFO] Batch file sent to OpenAI API. ID: {batch_input_file.id}")
 
-if __name__=="__main__":
-     asyncio.run(run())
+    # batch = client.batches.create(
+    #     input_file_id=batch_input_file.id,
+    #     endpoint="/v1/chat/completions",
+    #     completion_window="24h",
+    # )
+    # print(f"[INFO] Batch created. ID: {batch.id}, Status: {batch.status}, Jobs sent: {len(ids)}.")
+
+
+
+
+if __name__ == "__main__":
+    asyncio.run(run())

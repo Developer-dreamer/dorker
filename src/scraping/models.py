@@ -552,3 +552,54 @@ class Job(BaseModel):
             max_amount=self.salary_max,
             summary=self.salary_summary,
         )
+
+
+
+class JobDB(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    ats_type: ATSType
+    ats_id: str | None
+
+    url: HttpUrl
+    apply_url: HttpUrl | None
+
+    title: str
+    company_id: int
+    location: str | None
+    country_iso: str | None
+    region: str | None
+    employment_type: EmploymentType | None
+    description: str | None
+
+    salary_min: float | None
+    salary_max: float | None
+    salary_currency: str | None
+
+    is_normalized: bool = False
+
+    posted_at: datetime | None
+    fetched_at: datetime | None
+
+    @classmethod
+    def from_domain(self,company_id: int, job: Job) -> "JobDB":
+        return self(
+            id=job.global_id,
+            ats_type=job.ats_type,
+            ats_id=job.ats_id,
+            url=job.url,
+            apply_url=job.apply_url,
+            title=job.title,
+            company_id=company_id,
+            location=job.location,
+            country_iso=job.country_iso,
+            region=job.region,
+            employment_type=job.employment_type,
+            description=job.description,
+            salary_min=job.salary_min,
+            salary_max=job.salary_max,
+            salary_currency=job.salary_currency,
+            posted_at=job.posted_at,
+            fetched_at=job.fetched_at
+        )

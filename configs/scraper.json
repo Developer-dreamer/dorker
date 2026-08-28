@@ -17,17 +17,19 @@
     "kwargs_extractor": "none"
   },
   "workable": {
-    "enabled": true,
+    "enabled": false,
     "max_concurrency": 2,
     "tenant_delay_seconds": 0.5,
     "description_concurrency": 2,
     "description_delay_seconds": 0.5,
-    "slug_extractor": "workable"
+    "slug_extractor": "workable",
+    "paused": false
   },
   "bamboohr": {
     "enabled": true,
     "max_concurrency": 4,
-    "slug_extractor": "default"
+    "slug_extractor": "default",
+    "paused": false
   },
   "adp": {
     "enabled": true,
@@ -41,7 +43,8 @@
     "fail_closed_on_any_error": true,
     "fail_closed_on_empty": true,
     "slug_extractor": "url",
-    "kwargs_extractor": "company_name"
+    "kwargs_extractor": "company_name",
+    "paused": false
   },
   "workday": {
     "enabled": true,
@@ -50,70 +53,86 @@
     "description_cache_path": "workday/descriptions.sqlite3",
     "description_cache_compress": true,
     "slug_extractor": "url",
-    "kwargs_extractor": "workday"
+    "kwargs_extractor": "workday",
+    "paused": false
   },
   "icims": {
     "enabled": true,
     "dedupe_by_url": true,
     "slug_extractor": "icims",
-    "kwargs_extractor": "company_name_legacy"
+    "kwargs_extractor": "company_name_legacy",
+    "paused": false
   },
   "greenhouse": {
     "enabled": true,
-    "slug_extractor": "greenhouse"
+    "slug_extractor": "greenhouse",
+    "paused": false
   },
   "lever": {
     "enabled": true,
-    "slug_extractor": "lever"
+    "slug_extractor": "lever",
+    "paused": false
   },
   "ashby": {
     "enabled": true,
-    "slug_extractor": "ashby"
+    "slug_extractor": "ashby",
+    "paused": false
   },
   "personio": {
     "enabled": true,
-    "slug_extractor": "personio"
+    "slug_extractor": "personio",
+    "paused": false
   },
   "pinpoint": {
     "enabled": true,
-    "slug_extractor": "slug_or_name_or_url"
+    "slug_extractor": "slug_or_name_or_url",
+    "paused": false
   },
   "recruitee": {
     "enabled": true,
-    "slug_extractor": "recruitee"
+    "slug_extractor": "recruitee",
+    "paused": false
   },
   "rippling": {
     "enabled": true,
-    "slug_extractor": "rippling"
+    "slug_extractor": "rippling",
+    "paused": false
   },
   "smartrecruiters": {
     "enabled": true,
-    "slug_extractor": "default"
+    "slug_extractor": "default",
+    "paused": false
   },
   "teamtailor": {
     "enabled": true,
-    "slug_extractor": "default"
+    "slug_extractor": "default",
+    "paused": false
   },
   "breezy": {
     "enabled": true,
-    "slug_extractor": "slug_or_name"
+    "slug_extractor": "slug_or_name",
+    "paused": false
   },
   "gem": {
     "enabled": true,
-    "slug_extractor": "gem"
+    "slug_extractor": "gem",
+    "paused": false
   },
   "jazzhr": {
     "enabled": true,
-    "slug_extractor": "default"
+    "slug_extractor": "default",
+    "paused": false
   },
   "join_com": {
-    "enabled": true,
-    "slug_extractor": "join_com"
+    "enabled": false,
+    "slug_extractor": "join_com",
+    "paused": false
   },
   "mercor": {
     "enabled": true,
     "singleton": true,
-    "slug_extractor": "fixed_mercor"
+    "slug_extractor": "fixed_mercor",
+    "paused": false
   },
   "softgarden": {
     "enabled": true,
@@ -121,19 +140,22 @@
     "dedupe_by_ats_id": true,
     "fail_closed_on_empty": true,
     "fail_closed_on_any_error": true,
-    "slug_extractor": "slug_or_url"
+    "slug_extractor": "slug_or_url",
+    "paused": false
   },
   "cornerstone": {
     "enabled": true,
     "slug_extractor": "slug_or_url_or_name",
-    "kwargs_extractor": "company_name"
+    "kwargs_extractor": "company_name",
+    "paused": false
   },
   "dayforce": {
     "enabled": true,
     "fail_closed_on_any_error": true,
     "fail_closed_on_empty": true,
     "slug_extractor": "slug_or_url",
-    "kwargs_extractor": "company_name"
+    "kwargs_extractor": "company_name",
+    "paused": false
   },
   "jobvite": {
     "enabled": true,
@@ -141,20 +163,23 @@
     "fail_closed_on_not_found": true,
     "fail_closed_on_empty": true,
     "slug_extractor": "default",
-    "kwargs_extractor": "company_name"
+    "kwargs_extractor": "company_name",
+    "paused": false
   },
   "oracle": {
     "enabled": true,
     "dedupe_by_ats_id": true,
     "slug_extractor": "oracle",
-    "kwargs_extractor": "company_name"
+    "kwargs_extractor": "company_name",
+    "paused": false
   },
   "pageup": {
     "enabled": true,
     "fail_closed_on_any_error": true,
     "fail_closed_on_empty": true,
     "slug_extractor": "default",
-    "kwargs_extractor": "company_name"
+    "kwargs_extractor": "company_name",
+    "paused": false
   },
   "paycom": {
     "enabled": true,
@@ -163,7 +188,8 @@
     "fail_closed_on_any_error": true,
     "fail_closed_on_empty": true,
     "slug_extractor": "slug_or_url",
-    "kwargs_extractor": "company_name"
+    "kwargs_extractor": "company_name",
+    "paused": false
   },
   "paylocity": {
     "enabled": true,
@@ -172,20 +198,24 @@
     "fail_closed_on_not_found": true,
     "fail_closed_on_empty": true,
     "slug_extractor": "slug_or_url",
-    "kwargs_extractor": "company_name"
+    "kwargs_extractor": "company_name",
+    "paused": false
   },
   "recruiterbox": {
     "enabled": true,
-    "slug_extractor": "slug_or_name_or_url"
+    "slug_extractor": "slug_or_name_or_url",
+    "paused": false
   },
   "successfactors": {
     "enabled": true,
     "slug_extractor": "successfactors",
-    "kwargs_extractor": "company_name"
+    "kwargs_extractor": "company_name",
+    "paused": false
   },
   "taleo": {
     "enabled": true,
-    "slug_extractor": "taleo"
+    "slug_extractor": "taleo",
+    "paused": false
   },
   "ukg": {
     "enabled": true,
@@ -193,41 +223,45 @@
     "fail_closed_on_not_found": true,
     "fail_closed_on_empty": true,
     "slug_extractor": "slug_or_url",
-    "kwargs_extractor": "company_name"
+    "kwargs_extractor": "company_name",
+    "paused": false
   },
   "avature": {
     "enabled": true,
-    "slug_extractor": "avature"
+    "slug_extractor": "avature",
+    "paused": false
   },
-  "amazon": { "enabled": true, "singleton": true },
-  "apple": { "enabled": true, "singleton": true },
+  "amazon": { "enabled": true, "singleton": true, "paused": false },
+  "apple": { "enabled": true, "singleton": true, "paused": false },
   "bytedance": {
     "enabled": true,
     "singleton": true,
-    "fail_closed_on_empty": true
+    "fail_closed_on_empty": true,
+    "paused": false
   },
-  "google": { "enabled": true, "singleton": true },
-  "meta": { "enabled": true, "singleton": true },
-  "tesla": { "enabled": true, "singleton": true },
-  "tiktok": { "enabled": true, "singleton": true },
-  "uber": { "enabled": true, "singleton": true },
-  "ycombinator": { "enabled": true, "singleton": true },
-  "bundesagentur": { "enabled": true, "singleton": true },
-  "arbetsformedlingen": { "enabled": true, "singleton": true },
+  "google": { "enabled": true, "singleton": true, "paused": false },
+  "meta": { "enabled": true, "singleton": true, "paused": false },
+  "tesla": { "enabled": true, "singleton": true, "paused": false },
+  "tiktok": { "enabled": true, "singleton": true, "paused": false },
+  "uber": { "enabled": true, "singleton": true, "paused": false },
+  "ycombinator": { "enabled": true, "singleton": true, "paused": false },
+  "bundesagentur": { "enabled": true, "singleton": true, "paused": false },
+  "arbetsformedlingen": { "enabled": true, "singleton": true, "paused": false },
   "eures": {
     "enabled": true,
     "singleton": true,
-    "skip_description_cache_if_max_len_lte": 500
+    "skip_description_cache_if_max_len_lte": 500,
+    "paused": false
   },
-  "builtin": { "enabled": true, "singleton": true },
-  "remoteok": { "enabled": true, "singleton": true },
-  "thehub": { "enabled": true, "singleton": true },
-  "weworkremotely": { "enabled": true, "singleton": true },
+  "builtin": { "enabled": true, "singleton": true, "paused": false },
+  "remoteok": { "enabled": true, "singleton": true, "paused": false },
+  "thehub": { "enabled": true, "singleton": true, "paused": false },
+  "weworkremotely": { "enabled": true, "singleton": true, "paused": false },
   "eightfold": {
     "enabled": true,
     "slug_extractor": "eightfold",
     "kwargs_extractor": "eightfold",
-    "output": "eightfold/jobs.csv"
+    "paused": false
   },
-  "wellfound": { "enabled": false, "singleton": true }
+  "wellfound": { "enabled": false, "singleton": true, "paused": false }
 }

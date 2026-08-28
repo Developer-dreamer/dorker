@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from .scrapers.base import ScraperRegistry
 
 logger = logging.getLogger(__name__)
-CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "configs" / "ats_config.json"
+CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "configs" / "scraper.json"
 
 
 # --- Extraction Helpers ---

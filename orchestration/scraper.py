@@ -1,34 +1,37 @@
 import asyncio
-import heapq
-import itertools
 import logging
 import sqlite3
 import time
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, AsyncGenerator, Tuple
+from typing import Any, Tuple
 
-import aiosqlite
+import asyncpg
 from rich.console import Group
 from rich.live import Live
 from rich.progress import BarColumn, Progress, TextColumn
 from rich.text import Text
 
 from src.scraping.configuration_manager import CONFIGS
-from src.scraping.models import Job
+from src.scraping.models import JobDB
 from src.scraping.run import _pipeline_lock, run
+from src.shared.types.priority_semaphore import PrioritySemaphore
 
-DB_PATH = Path("/Users/serafym/Developer/dorker.space/intelligence_core/app.db")
+ROOT = Path(__file__).resolve().parent.parent
+
+DB_PATH = ROOT / "cache" / "descriptions.db"
 SLEEP_INTERVAL_HOURS = 6
+PG_DSN = "postgresql://postgres:password@localhost:5432/dorker_db"
+
+LOG_PATH = ROOT / "logs" / f"scraper_{datetime.now(timezone.utc).isoformat()}.log"
 
 # Configure file-only logging
 logging.basicConfig(
-    filename="scraper.log",
+    filename=LOG_PATH,
     filemode="a",
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+    level=logging.INFO,
 )
 logger = logging.getLogger("orchestrator")
 
@@ -57,7 +60,7 @@ class Dashboard:
 
         progress = Progress(
             BarColumn(bar_width=60, complete_style="green", finished_style="green"),
-            TextColumn("{task.completed} / {task.total} ({task.percentage:>3.0f}%)", style="green")
+            TextColumn("{task.completed} / {task.total} ({task.percentage:>3.0f}%)", style="green"),
         )
         progress.add_task("", total=total, completed=completed)
 
@@ -88,152 +91,134 @@ class Dashboard:
         formatted_time = " ".join(parts)
         elapsed_text = Text(f"Elapsed: {formatted_time}", style="deep_sky_blue1")
 
-        return Group(
-            progress,
-            pending_text,
-            *working_lines,
-            finished_text,
-            elapsed_text
-        )
+        return Group(progress, pending_text, *working_lines, finished_text, elapsed_text)
 
 
-class PrioritySemaphore:
-    def __init__(self, value: int = 5):
-        if value < 0:
-            raise ValueError("Semaphore value must be >= 0")
-        self._value = value
-        self._waiters = []
-        self._counter = itertools.count()
-
-    async def acquire(self, priority: int) -> bool:
-        if self._value > 0 and not self._waiters:
-            self._value -= 1
-            return True
-
-        event = asyncio.Event()
-        waiter_entry = [priority, next(self._counter), event, False]
-        heapq.heappush(self._waiters, waiter_entry)
-
-        try:
-            await event.wait()
-        except asyncio.CancelledError:
-            waiter_entry[3] = True
-            if event.is_set():
-                self.release()
-            raise
-
-        return False
-
-    def release(self) -> None:
-        while self._waiters:
-            waiter_entry = heapq.heappop(self._waiters)
-            if not waiter_entry[3]:
-                waiter_entry[2].set()
-                return
-        self._value += 1
-
-    @asynccontextmanager
-    async def request(self, priority: int) -> AsyncGenerator["PrioritySemaphore"]:
-        await self.acquire(priority)
-        try:
-            yield self
-        finally:
-            self.release()
-
-
-def get_active_ats_platforms() -> list[Tuple[int, str]]:
+async def get_active_ats_platforms() -> list[Tuple[int, str]]:
     """Retrieve distinct ATS platforms ordered by tier."""
-    with sqlite3.connect(DB_PATH) as conn:
+    conn = await asyncpg.connect(PG_DSN)
+    try:
         # Fetch rows already sorted by tier
-        rows = conn.execute("SELECT DISTINCT ats_name, tier FROM ats ORDER BY tier ASC").fetchall()
+            rows = await conn.fetch("SELECT DISTINCT ats, tier FROM companies ORDER BY tier ASC")
 
-    cfg_keys = CONFIGS.keys()
+            cfg_keys = CONFIGS.keys()
 
-    # Deduplicate while preserving order
-    seen: set[str] = set()
-    result: list[Tuple[int, str]] = []
+            # Deduplicate while preserving order
+            seen: set[str] = set()
+            result: list[Tuple[int, str]] = []
 
-    for ats, tier in rows:
-        if ats not in seen and (ats in cfg_keys or CONFIGS[ats].get("singleton")):
-            seen.add(ats)
-            result.append((tier, ats))
+            for ats, tier in rows:
+                if ats not in seen and (ats in cfg_keys or CONFIGS[ats].get("singleton")):
+                    seen.add(ats)
+                    result.append((tier, ats))
 
-    # Explicitly sort by tier to guarantee lower tier numbers run first
-    result.sort(key=lambda x: x[0])
-    return result
+            # Explicitly sort by tier to guarantee lower tier numbers run first
+            result.sort(key=lambda x: x[0])
+            return result
+    finally:
+        await conn.close()
 
-def _job_to_db_params(job: Job) -> dict[str, Any]:
-    return {
-        "id": job.global_id,
-        "ats_type": job.ats_type.value,
-        "ats_id": job.ats_id or job.global_id,
-        "url": str(job.url),
-        "apply_url": str(job.apply_url) if job.apply_url else None,
-        "title": job.title,
-        "company_slug": job.company,
-        "location": job.location,
-        "country_iso": job.country_iso,
-        "region": job.region,
-        "employment_type": job.employment_type or "FULL_TIME",
-        "description": job.description or "",
-        "salary_min": job.salary_min,
-        "salary_max": job.salary_max,
-        "salary_currency": job.salary_currency,
-        "is_normalized": False,
-        "posted_at": job.posted_at.isoformat() if job.posted_at else None,
-        "fetched_at": (job.fetched_at or datetime.now(timezone.utc)).isoformat(),
-    }
+def _job_to_db_params(job: JobDB) -> tuple[Any, ...]:
+    return (
+        job.id,
+        job.ats_type.value,
+        job.ats_id,
+        str(job.url),
+        str(job.apply_url) if job.apply_url else None,
+        job.title,
+        job.company_id,
+        job.location,
+        job.country_iso,
+        job.region,
+        job.employment_type or "FULL_TIME",
+        job.description or "",
+        job.salary_min,
+        job.salary_max,
+        job.salary_currency,
+        job.is_normalized,
+        job.posted_at,
+        job.fetched_at or datetime.now(timezone.utc),
+    )
 
 
 SAVE_JOBS_BATCH_QUERY = """
     INSERT INTO jobs (
-        id, ats_type, ats_id, url, apply_url, title, company_slug, location,
+        id, ats_type, ats_id, url, apply_url, title, company_id, location,
         country_iso, region, employment_type, description, salary_min,
         salary_max, salary_currency, is_normalized, posted_at, fetched_at
     ) VALUES (
-        :id, :ats_type, :ats_id, :url, :apply_url, :title, :company_slug,
-        :location, :country_iso, :region, :employment_type, :description,
-        :salary_min, :salary_max, :salary_currency, :is_normalized,
-        :posted_at, :fetched_at
+        $1, $2, $3, $4, $5, $6, $7, $8,
+        $9, $10, $11, $12, $13, $14, $15, $16,
+        $17, $18
     )
-    ON CONFLICT (ats_type, ats_id) DO NOTHING;
+    ON CONFLICT (id) DO NOTHING;
 """
 
+def sanitize_record(record: tuple | list) -> tuple:
+    return tuple(
+        val.replace("\x00", "") if isinstance(val, str) else val
+        for val in record
+    )
 
 async def db_writer_worker(
-    db_path: Path,
-    queue: asyncio.Queue[Job | None],
-    batch_size: int = 500
+    queue: asyncio.Queue[JobDB | None], batch_size: int = 500
 ) -> None:
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute("PRAGMA journal_mode=WAL;")
-        await db.execute("PRAGMA synchronous=NORMAL;")
+    db = await asyncpg.connect(PG_DSN)
+    buffer: list[tuple[Any, ...]] = []
 
-        buffer: list[dict[str, Any]] = []
-
-        async def flush() -> None:
-            if not buffer:
-                return
-            await db.executemany(SAVE_JOBS_BATCH_QUERY, buffer)
-            await db.commit()
-            buffer.clear()
+    async def flush() -> None:
+        if not buffer:
+            return
+        sanitized_buffer = [sanitize_record(row) for row in buffer]
 
         try:
-            while True:
-                job = await queue.get()
-                if job is None:
-                    await flush()
-                    queue.task_done()
-                    break
-
-                buffer.append(_job_to_db_params(job))
-                queue.task_done()
-
-                if len(buffer) >= batch_size or (queue.empty() and buffer):
-                    await flush()
+            # Attempt fast batch insert
+            async with db.transaction():
+                await db.executemany(SAVE_JOBS_BATCH_QUERY, sanitized_buffer)
+        except asyncpg.PostgresError as exc:
+            logger.warning(
+                f"[DB Writer] Batch insert failed ({type(exc).__name__}). Falling back to row-by-row insert."
+            )
+            # Fallback: process individually to isolate and drop problematic records
+            for row in sanitized_buffer:
+                try:
+                    async with db.transaction():
+                        await db.execute(SAVE_JOBS_BATCH_QUERY, *row)
+                except asyncpg.ForeignKeyViolationError as fk_err:
+                    logger.error(
+                        f"[DB Writer] Dropping job record due to invalid foreign key: {fk_err.detail} | Job URL: {row[3]}"
+                    )
+                except asyncpg.PostgresError as row_err:
+                    logger.error(
+                        f"[DB Writer] Dropping job record due to DB error: {row_err} | Job URL: {row[3]}"
+                    )
+        except Exception as unhandled:
+            logger.critical(
+                f"[DB Writer] Unexpected error during flush: {unhandled}", exc_info=True
+            )
         finally:
-            await flush()
+            buffer.clear()
 
+    try:
+        while True:
+            job = await queue.get()
+            if job is None:
+                await flush()
+                queue.task_done()
+                break
+
+            buffer.append(_job_to_db_params(job))
+            queue.task_done()
+
+            if len(buffer) >= batch_size or (queue.empty() and buffer):
+                await flush()
+    except asyncio.CancelledError:
+        await flush()
+    except Exception as exc:
+        logger.critical(f"[DB Writer] Fatal error in worker loop: {exc}", exc_info=True)
+    finally:
+        await flush()
+        await db.close()
 
 async def ui_worker(ui_queue: asyncio.Queue, dashboard: Dashboard, live: Live) -> None:
     while True:
@@ -272,10 +257,13 @@ async def run_single_ats(
     semaphore: PrioritySemaphore,
     tier: int,
     ats: str,
-    queue: asyncio.Queue[Job | None],
-    ui_queue: asyncio.Queue
+    queue: asyncio.Queue[JobDB | None],
+    ui_queue: asyncio.Queue,
+    pool: asyncpg.Pool,
 ) -> None:
-    async with semaphore.request(tier):
+    await semaphore.acquire(tier)
+    conn = await asyncpg.connect(PG_DSN)
+    try:
         logger.debug(f"Worker {ats} (Priority {tier}) acquired.")
         ui_queue.put_nowait({"type": "start", "ats": ats})
 
@@ -285,44 +273,55 @@ async def run_single_ats(
                 return
 
             logger.info(f"=== Starting scrape for ATS: {ats} ===")
+
             code = await run(
                 ats=ats,
-                db_path=DB_PATH,
+                tier=tier,
+                pg_db=pool,
+                description_cache_db=DB_PATH,
                 queue=queue,
+                semaphore=semaphore,
                 concurrency=8,
                 max_tenants=None,
                 timeout=30.0,
-                ui_queue=ui_queue
+                ui_queue=ui_queue,
             )
             if code != 0:
                 logger.error(f"Scraper {ats} failed with code {code}.")
 
+
+    finally:
+        semaphore.release()
+        await conn.close()
         ui_queue.put_nowait({"type": "finish", "ats": ats})
 
 
+
 async def main_loop() -> None:
-    ats_list = get_active_ats_platforms()
+    ats_list = await get_active_ats_platforms()
     ats_names = [ats for _, ats in ats_list]
     logger.info(f"[Orchestrator] Starting cycle across {len(ats_list)} platforms.")
 
     ui_queue: asyncio.Queue = asyncio.Queue()
     dashboard = Dashboard(ats_names)
+    async with asyncpg.create_pool(PG_DSN) as pool:
+        with Live(dashboard.generate_layout(), refresh_per_second=4) as live:
+            queue: asyncio.Queue[JobDB | None] = asyncio.Queue(maxsize=1000)
+            writer_task = asyncio.create_task(db_writer_worker(queue))
+            ui_task = asyncio.create_task(ui_worker(ui_queue, dashboard, live))
 
-    with Live(dashboard.generate_layout(), refresh_per_second=4) as live:
-        queue: asyncio.Queue[Job | None] = asyncio.Queue(maxsize=1000)
-        writer_task = asyncio.create_task(db_writer_worker(DB_PATH, queue))
-        ui_task = asyncio.create_task(ui_worker(ui_queue, dashboard, live))
+            sem = PrioritySemaphore(5)
 
-        sem = PrioritySemaphore(5)
+            await asyncio.gather(
+                *(run_single_ats(sem, tier, ats, queue, ui_queue, pool) for tier, ats in ats_list)
+            )
 
-        await asyncio.gather(*(run_single_ats(sem, tier, ats, queue, ui_queue) for tier, ats in ats_list))
+            await queue.join()
+            await queue.put(None)
+            await writer_task
 
-        await queue.join()
-        await queue.put(None)
-        await writer_task
-
-        await ui_queue.put(None)
-        await ui_task
+            await ui_queue.put(None)
+            await ui_task
 
 
 if __name__ == "__main__":

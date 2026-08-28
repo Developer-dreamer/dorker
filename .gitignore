@@ -2,6 +2,9 @@
 prompt/
 app.db*
 batches/
+logs/
+backups*
+*.jsonl
 
 # IDE config
 .vscode/

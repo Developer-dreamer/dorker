@@ -1,5 +1,6 @@
 import asyncio
 from typing import List, Tuple
+
 import aiosqlite
 import joblib
 import torch
@@ -18,17 +19,12 @@ def get_device() -> str:
     return "cpu"
 
 
-async def save_matches(
-    conn: aiosqlite.Connection, matches: List[Tuple[str, bool]]
-) -> None:
+async def save_matches(conn: aiosqlite.Connection, matches: List[Tuple[str, bool]]) -> None:
     query = """
         INSERT INTO matches (id, job_id, is_technical) 
         VALUES (?, ?, ?);
     """
-    records = [
-        (str(uuid6.uuid7()), job_id, int(is_technical))
-        for job_id, is_technical in matches
-    ]
+    records = [(str(uuid6.uuid7()), job_id, int(is_technical)) for job_id, is_technical in matches]
     await conn.executemany(query, records)
 
 
@@ -55,26 +51,26 @@ async def run() -> None:
             EXCEPT
             SELECT job_id FROM matches;
         """)
-        
+
         rows = await cursor.fetchall()
         unprocessed_ids = [row[0] for row in rows]
-        
+
         if not unprocessed_ids:
             print("No unprocessed jobs remaining.")
             return
-            
+
         print(f"Discovered {len(unprocessed_ids):,} unclassified jobs.")
-        
+
         total_processed = 0
 
         # 2. Process exact chunks using IN clauses
         for i in range(0, len(unprocessed_ids), CHUNK_SIZE):
             chunk_ids = unprocessed_ids[i : i + CHUNK_SIZE]
-            
+
             # Generate exactly enough placeholders for the current chunk
             placeholders = ",".join("?" for _ in chunk_ids)
             query = f"SELECT id, title FROM jobs WHERE id IN ({placeholders})"
-            
+
             cursor = await db.execute(query, chunk_ids)
             jobs_data = await cursor.fetchall()
 
@@ -92,10 +88,7 @@ async def run() -> None:
 
             probs = classifier.predict_proba(embeddings)[:, 1]
 
-            buffer = [
-                (job_id, bool(prob >= threshold))
-                for job_id, prob in zip(job_ids, probs)
-            ]
+            buffer = [(job_id, bool(prob >= threshold)) for job_id, prob in zip(job_ids, probs)]
 
             await save_matches(db, buffer)
             await db.commit()

@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
-import json
 import logging
 import os
 import sqlite3
@@ -31,31 +30,52 @@ from pathlib import Path
 from typing import Any, Iterator
 from urllib.parse import urlparse
 
+import asyncpg
 from pydantic import ValidationError
+
+from src.shared.types.priority_semaphore import PrioritySemaphore
 
 from .base import BaseScraper
 from .configuration_manager import CONFIGS
 from .exceptions import CompanyNotFoundError
-from .models import Job
+from .models import Job, JobDB
 
 logger = logging.getLogger(__name__)
 DATA_ROOT = Path(__file__).resolve().parent.parent  # → repo root
 
 
 def _jobs_output_root() -> Path:
-    configured = os.environ.get("ATS_SCRAPERS_JOBS_ROOT") or os.environ.get(
-        "JOBHIVE_JOBS_ROOT"
-    )
+    configured = os.environ.get("ATS_SCRAPERS_JOBS_ROOT") or os.environ.get("JOBHIVE_JOBS_ROOT")
     return Path(configured).expanduser() if configured else DATA_ROOT
 
 
 JOB_CSV_FIELDS = [
-    "url", "title", "company", "ats_type", "ats_id", "location",
-    "country_iso", "region", "language", "lat", "lon",
-    "is_remote", "salary_min", "salary_max", "salary_currency",
-    "salary_period", "salary_summary", "employment_type",
-    "department", "team", "description", "posted_at",
-    "requisition_id", "apply_url", "commitment", "raw",
+    "url",
+    "title",
+    "company",
+    "ats_type",
+    "ats_id",
+    "location",
+    "country_iso",
+    "region",
+    "language",
+    "lat",
+    "lon",
+    "is_remote",
+    "salary_min",
+    "salary_max",
+    "salary_currency",
+    "salary_period",
+    "salary_summary",
+    "employment_type",
+    "department",
+    "team",
+    "description",
+    "posted_at",
+    "requisition_id",
+    "apply_url",
+    "commitment",
+    "raw",
 ]
 STREAM_DESCRIPTION_CONCURRENCY = 8
 
@@ -81,7 +101,9 @@ def _pipeline_lock(ats: str) -> Iterator[bool]:
             return
         fh.seek(0)
         fh.truncate()
-        fh.write(f"pid={os.getpid()} started_at={time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n")
+        fh.write(
+            f"pid={os.getpid()} started_at={time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n"
+        )
         fh.flush()
         try:
             yield True
@@ -94,6 +116,7 @@ _CACHE_SCHEMA_VERSION = 2
 
 class DescriptionCache:
     """Disk-backed description cache, optionally persistent and zstd-compressed."""
+
     def __init__(self, db_path: Path, ats_name: str, compress: bool = False) -> None:
         self.conn: sqlite3.Connection | None = None
         self.compress = compress
@@ -101,6 +124,7 @@ class DescriptionCache:
         self._decompressor = None
         if compress:
             import zstandard
+
             self._compressor = zstandard.ZstdCompressor(level=3)
             self._decompressor = zstandard.ZstdDecompressor()
 
@@ -122,18 +146,13 @@ class DescriptionCache:
                 self.conn.execute("PRAGMA synchronous=NORMAL")
             self.conn.execute("PRAGMA temp_store=MEMORY")
 
-            current_user_version = self.conn.execute(
-                "PRAGMA user_version"
-            ).fetchone()[0]
+            current_user_version = self.conn.execute("PRAGMA user_version").fetchone()[0]
             existing_rows = 0
             existing_table = self.conn.execute(
-                "SELECT name FROM sqlite_master "
-                "WHERE type='table' AND name='descriptions'"
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='descriptions'"
             ).fetchone()
             if existing_table is not None:
-                existing_rows = self.conn.execute(
-                    "SELECT COUNT(*) FROM descriptions"
-                ).fetchone()[0]
+                existing_rows = self.conn.execute("SELECT COUNT(*) FROM descriptions").fetchone()[0]
             if existing_rows > 0 and current_user_version != _CACHE_SCHEMA_VERSION:
                 if self.conn is not None:
                     self.conn.close()
@@ -158,12 +177,8 @@ class DescriptionCache:
                 )
                 """
             )
-            self.conn.execute(
-                f"PRAGMA user_version = {_CACHE_SCHEMA_VERSION}"
-            )
-            self.count = self.conn.execute(
-                "SELECT COUNT(*) FROM descriptions"
-            ).fetchone()[0]
+            self.conn.execute(f"PRAGMA user_version = {_CACHE_SCHEMA_VERSION}")
+            self.count = self.conn.execute("SELECT COUNT(*) FROM descriptions").fetchone()[0]
 
             self._load_sql(db_path, ats_name)
         except Exception:
@@ -203,7 +218,7 @@ class DescriptionCache:
                     AND description IS NOT NULL
                     AND description != ''
                     """,
-                    (ats_name,)
+                    (ats_name,),
                 )
                 for raw_row in cursor:
                     row = dict(raw_row)
@@ -223,9 +238,7 @@ class DescriptionCache:
             self.conn.execute("DELETE FROM descriptions")
             self.conn.commit()
 
-        self.count = self.conn.execute(
-            "SELECT COUNT(*) FROM descriptions"
-        ).fetchone()[0]
+        self.count = self.conn.execute("SELECT COUNT(*) FROM descriptions").fetchone()[0]
 
     def _insert_many(self, rows: list[tuple[str, str, bytes]], *, replace: bool = False) -> int:
         verb = "INSERT OR REPLACE" if replace else "INSERT OR IGNORE"
@@ -290,10 +303,7 @@ def _job_dedupe_key(
 ) -> tuple[str, str]:
     if config.get("dedupe_by_url"):
         parsed = urlparse(str(job.url))
-        canonical_url = (
-            f"{(parsed.hostname or '').casefold()}"
-            f"{parsed.path.rstrip('/').casefold()}"
-        )
+        canonical_url = f"{(parsed.hostname or '').casefold()}{parsed.path.rstrip('/').casefold()}"
         return "", canonical_url
     ats_id = job.ats_id or ""
     if config.get("dedupe_by_ats_id"):
@@ -383,8 +393,11 @@ async def _run_scraper(
 
 async def run(
     ats: str,
-    db_path: Path,
-    queue: asyncio.Queue[Job | None],
+    tier: int,
+    pg_db: asyncpg.Pool,
+    description_cache_db: Path,
+    queue: asyncio.Queue[JobDB | None],
+    semaphore: PrioritySemaphore,
     concurrency: int,
     max_tenants: int | None,
     timeout: float,
@@ -396,28 +409,30 @@ async def run(
     if isinstance(configured_max_concurrency, int):
         concurrency = min(concurrency, max(1, configured_max_concurrency))
 
-    targets: list[tuple[str, dict[str, Any]]] = []
+    targets: list[tuple[int, str, dict[str, Any]]] = []
     if cfg.get("singleton"):
-        targets = [(ats, {})]
+        # Assign 0 as the ID for singletons since they bypass the companies table state tracking
+        targets = [(0, ats, {})]
     else:
-        with sqlite3.connect(db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                "SELECT ats_name, company_slug as slug, company_name as name, url, tier FROM ats WHERE ats_name = ?",
-                (ats,),
-            ).fetchall()
-
-        if not rows:
-            logger.warning(f"[{ats}] [WARN] No active tenants found in SQLite ({db_path}); skipping run.")
-            return 0
+        # State Machine: Only select companies that are active
+        async with pg_db.acquire() as conn:
+            rows = await conn.fetch(
+                        """
+                        SELECT id, ats, name, slug, url 
+                        FROM companies
+                        WHERE ats = $1 AND is_active = TRUE
+                        """,
+                        ats,
+                    )
 
         kwargs_factory = cfg.get("kwargs")
         for r in rows:
             row_dict = dict(r)
+            company_id = int(row_dict.get("id"))
             slug = cfg["slug"](row_dict)
             if slug:
                 kw = kwargs_factory(row_dict) if kwargs_factory else {}
-                targets.append((slug, kw))
+                targets.append((company_id, slug, kw))
 
     configured_target_count = len(targets)
     omitted_required_shards = 0
@@ -459,13 +474,12 @@ async def run(
     jobs_output_root = _jobs_output_root()
     uses_streaming = bool(cfg.get("singleton") and hasattr(cfg["scraper"], "fetch_stream"))
     persistent_path_rel = cfg.get("description_cache_path")
-    persistent_path = (
-        jobs_output_root / persistent_path_rel if persistent_path_rel else None
-    )
+    persistent_path = jobs_output_root / persistent_path_rel if persistent_path_rel else None
     cache_compress = bool(cfg.get("description_cache_compress"))
 
-    logger.info(f"[{ats}] [CACHE] Initializing description cache from {db_path}...")
-    description_cache = DescriptionCache(db_path, ats, compress=cache_compress)
+    # Assuming description_cache init stays as-is (passing pg_db or db_path to DescriptionCache if required)
+    logger.info(f"[{ats}] [CACHE] Initializing description cache...")
+    description_cache = DescriptionCache(description_cache_db, ats, compress=cache_compress)
     if description_cache.count:
         location = "persistent" if persistent_path else "ephemeral"
         logger.info(
@@ -486,21 +500,24 @@ async def run(
             pending_descriptions: set[asyncio.Task[Job]] = set()
 
             async def write_streamed_job(job: Job) -> None:
-                await queue.put(job)
+                db_job = JobDB.from_domain(company_id, job)
+                await queue.put(db_job)
                 counts["jobs_scraped"] += 1
                 counts["jobs_queued"] += 1
 
                 if ui_queue:
-                    ui_queue.put_nowait({
-                        "type": "progress",
-                        "ats": ats,
-                        "current": counts["jobs_queued"],
-                        "total": counts["jobs_queued"],
-                        "slug": "streaming...",
-                        "found": counts["jobs_scraped"],
-                        "queued": counts["jobs_queued"],
-                        "dupes": counts["jobs_deduped"]
-                    })
+                    ui_queue.put_nowait(
+                        {
+                            "type": "progress",
+                            "ats": ats,
+                            "current": counts["jobs_queued"],
+                            "total": counts["jobs_queued"],
+                            "slug": "streaming...",
+                            "found": counts["jobs_scraped"],
+                            "queued": counts["jobs_queued"],
+                            "dupes": counts["jobs_deduped"],
+                        }
+                    )
 
                 if counts["jobs_queued"] % 5_000 == 0:
                     elapsed = time.time() - t0
@@ -520,9 +537,7 @@ async def run(
                     return
                 done, pending_descriptions = await asyncio.wait(
                     pending_descriptions,
-                    return_when=(
-                        asyncio.ALL_COMPLETED if all_tasks else asyncio.FIRST_COMPLETED
-                    ),
+                    return_when=(asyncio.ALL_COMPLETED if all_tasks else asyncio.FIRST_COMPLETED),
                 )
                 for task in done:
                     await write_streamed_job(task.result())
@@ -556,14 +571,19 @@ async def run(
                 for task in pending_descriptions:
                     task.cancel()
                 counts["error"] = 1
-                logger.error(f"[{ats}] [ERROR] Streaming failed: {type(exc).__name__}: {str(exc)[:300]}")
+                logger.error(
+                    f"[{ats}] [ERROR] Streaming failed: {type(exc).__name__}: {str(exc)[:300]}"
+                )
 
         else:
-            async def scrape_tenant(slug: str, kw: dict[str, Any]) -> None:
+
+            async def scrape_tenant(company_id: int, slug: str, kw: dict[str, Any]) -> None:
                 nonlocal tenants_completed
 
                 if not CONFIGS.is_enabled(ats):
-                    logger.warning(f"[{ats}] Scraper disabled mid-run via ats_config.json. Skipping tenant {slug}.")
+                    logger.warning(
+                        f"[{ats}] Scraper disabled mid-run via ats_config.json. Skipping tenant {slug}."
+                    )
                     return
 
                 current_cfg = CONFIGS.get(ats)
@@ -581,9 +601,7 @@ async def run(
                             slug,
                             kw,
                             timeout,
-                            include_descriptions=not bool(
-                                cfg.get("defer_descriptions_to_cache")
-                            ),
+                            include_descriptions=not bool(cfg.get("defer_descriptions_to_cache")),
                         )
                     except ValidationError as e:
                         err = f"ValidationError: {e.errors()}"
@@ -595,23 +613,64 @@ async def run(
 
                 elapsed = time.time() - started
                 tenants_completed += 1
+                duration_ms = int(elapsed * 1000)
+                is_success = err is None and err != "not_found"
+
+                # State Machine Record Update
+                if company_id > 0:
+                    async with pg_db.acquire() as conn:
+                        await conn.execute(
+                            """
+                            UPDATE companies
+                            SET 
+                                last_attempt_at = CURRENT_TIMESTAMP,
+                                last_success_at = CASE WHEN $1::boolean THEN CURRENT_TIMESTAMP ELSE last_success_at END,
+                                last_scrape_duration_ms = $2::integer,
+                                consecutive_errors = CASE WHEN $1::boolean THEN 0 ELSE consecutive_errors + 1 END,
+                                last_error_message = $3::text,
+                                last_job_count = CASE WHEN $1::boolean THEN $4::integer ELSE last_job_count END,
+                                consecutive_zero_jobs = CASE 
+                                    WHEN NOT $1::boolean THEN consecutive_zero_jobs 
+                                    WHEN $4::integer = 0 THEN consecutive_zero_jobs + 1 
+                                    ELSE 0 
+                                END,
+                                is_active = CASE 
+                                    WHEN NOT $1::boolean AND (consecutive_errors + 1) >= 3 THEN FALSE 
+                                    ELSE is_active 
+                                END
+                            WHERE id = $5::integer;
+                            """,
+                            is_success,
+                            duration_ms,
+                            err if not is_success else None,
+                            len(jobs) if is_success else 0,
+                            company_id
+                        )
 
                 if err == "not_found":
                     counts["not_found"] += 1
-                    logger.warning(f"  [{ats}] [{tenants_completed}/{len(targets)}] 404 Not Found: '{slug}' ({elapsed:.1f}s)")
+                    logger.warning(
+                        f"  [{ats}] [{tenants_completed}/{len(targets)}] 404 Not Found: '{slug}' ({elapsed:.1f}s)"
+                    )
                 elif err:
                     counts["error"] += 1
-                    logger.error(f"  [{ats}] [{tenants_completed}/{len(targets)}] FAILED: '{slug}' after {elapsed:.1f}s -> {err}")
+                    logger.error(
+                        f"  [{ats}] [{tenants_completed}/{len(targets)}] FAILED: '{slug}' after {elapsed:.1f}s -> {err}"
+                    )
                 else:
                     counts["success"] += 1
 
                 tenant_desc_stats = {
-                    "cache": 0, "present": 0, "fetched": 0, "missing": 0, "error": 0,
+                    "cache": 0,
+                    "present": 0,
+                    "fetched": 0,
+                    "missing": 0,
+                    "error": 0,
                 }
                 tenant_queued = 0
                 tenant_deduped = 0
 
-                if not err and err != "not_found":
+                if is_success:
                     for job in jobs:
                         counts["jobs_scraped"] += 1
                         key = _job_dedupe_key(job, cfg)
@@ -638,21 +697,24 @@ async def run(
                             tenant_desc_stats[desc_status] += 1
                             total_desc_stats[desc_status] += 1
 
-                        await queue.put(job)
+                        db_job = JobDB.from_domain(company_id, job)
+                        await queue.put(db_job)
                         counts["jobs_queued"] += 1
                         tenant_queued += 1
 
                 if ui_queue:
-                    ui_queue.put_nowait({
-                        "type": "progress",
-                        "ats": ats,
-                        "current": tenants_completed,
-                        "total": len(targets),
-                        "slug": slug,
-                        "found": len(jobs),
-                        "queued": tenant_queued,
-                        "dupes": tenant_deduped
-                    })
+                    ui_queue.put_nowait(
+                        {
+                            "type": "progress",
+                            "ats": ats,
+                            "current": tenants_completed,
+                            "total": len(targets),
+                            "slug": slug,
+                            "found": len(jobs),
+                            "queued": tenant_queued,
+                            "dupes": tenant_deduped,
+                        }
+                    )
 
                 is_slow = elapsed >= float(cfg.get("slow_tenant_log_seconds", 300))
                 tag = "SLOW TENANT" if is_slow else "OK"
@@ -665,13 +727,42 @@ async def run(
 
             batch_size = 50
             for i in range(0, len(targets), batch_size):
-                batch = targets[i:i + batch_size]
+
+                if semaphore is not None and CONFIGS.get(ats).get("paused", False):
+                    logger.info(f"[{ats}] Paused via config at tenant {i}/{len(targets)}. Releasing semaphore slot...")
+                    semaphore.release()
+
+                    while CONFIGS.get(ats).get("paused", False):
+                        await asyncio.sleep(10)
+
+                    current_tier = CONFIGS.get(ats).get("tier", tier)
+                    logger.info(f"[{ats}] Resuming. Re-acquiring semaphore slot with Tier {current_tier}...")
+                    await semaphore.acquire(current_tier)
+
+                # 2. LIVE YIELD / DEMOTE CHECK
+                elif semaphore is not None and CONFIGS.get(ats).get("yield_slot", False):
+                    current_tier = CONFIGS.get(ats).get("tier", 99)
+                    logger.info(f"[{ats}] Yielding semaphore slot at tenant {i}/{len(targets)} to re-queue at Tier {current_tier}...")
+                    semaphore.release()
+
+                    # Reset yield trigger in memory/config
+                    CONFIGS.get(ats)["yield_slot"] = False
+
+                    # Re-enters priority heap; lower tiers will execute first
+                    await semaphore.acquire(current_tier)
+
+                # 3. LIVE DISABLE CHECK
+                if not CONFIGS.is_enabled(ats):
+                    logger.warning(f"[{ats}] Scraper disabled mid-run. Aborting at tenant {i}/{len(targets)}.")
+                    break
+
+                batch = targets[i : i + batch_size]
                 batch_t0 = time.time()
                 logger.info(
                     f"[{ats}] [BATCH] Dispatching tenants {i + 1} to {min(i + batch_size, len(targets))} "
                     f"of {len(targets)}..."
                 )
-                await asyncio.gather(*(scrape_tenant(s, kw) for s, kw in batch))
+                await asyncio.gather(*(scrape_tenant(c_id, s, kw) for c_id, s, kw in batch))
                 batch_elapsed = time.time() - batch_t0
                 total_elapsed = time.time() - t0
                 logger.info(
@@ -683,7 +774,7 @@ async def run(
 
         elapsed = time.time() - t0
         rate = counts["jobs_queued"] / max(1.0, elapsed)
-        
+
         summary = (
             f"\n{'=' * 60}\n"
             f"[{ats}] RUN SUMMARY:\n"
@@ -704,23 +795,18 @@ async def run(
             return 1
 
         if bool(cfg.get("fail_closed_on_empty")) and bool(targets) and counts["jobs_queued"] == 0:
-            logger.error(f"[{ats}] [FAILURE] fail_closed_on_empty triggered: 0 jobs queued from {len(targets)} tenants.")
+            logger.error(
+                f"[{ats}] [FAILURE] fail_closed_on_empty triggered: 0 jobs queued from {len(targets)} tenants."
+            )
             return 1
 
-        required_not_found = (
-            counts["not_found"] if cfg.get("fail_closed_on_not_found") else 0
-        )
+        required_not_found = counts["not_found"] if cfg.get("fail_closed_on_not_found") else 0
         sharded_failure = (
-            (
-                bool(cfg.get("fail_closed_on_any_error"))
-                and (counts["error"] > 0 or omitted_required_shards > 0)
-            )
-            or required_not_found > 0
-        )
+            bool(cfg.get("fail_closed_on_any_error"))
+            and (counts["error"] > 0 or omitted_required_shards > 0)
+        ) or required_not_found > 0
         if sharded_failure:
-            required_failures = (
-                counts["error"] + omitted_required_shards + required_not_found
-            )
+            required_failures = counts["error"] + omitted_required_shards + required_not_found
             logger.error(
                 f"[{ats}] [FAILURE] Required shards failed: {required_failures}/{configured_target_count} "
                 f"failures (errors={counts['error']}, omitted={omitted_required_shards}, not_found={required_not_found})."
@@ -728,9 +814,7 @@ async def run(
             return 1
 
         catastrophic_failure = (
-            bool(targets)
-            and counts["jobs_queued"] == 0
-            and counts["error"] >= failure_threshold
+            bool(targets) and counts["jobs_queued"] == 0 and counts["error"] >= failure_threshold
         )
         if catastrophic_failure:
             logger.error(
@@ -740,7 +824,9 @@ async def run(
             return 1
 
         if counts["error"] >= failure_threshold:
-            logger.warning(f"[{ats}] [WARN] Kept partial data but {counts['error']}/{len(targets)} tenants failed.")
+            logger.warning(
+                f"[{ats}] [WARN] Kept partial data but {counts['error']}/{len(targets)} tenants failed."
+            )
             return 1
 
         return 0
