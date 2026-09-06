@@ -5,8 +5,8 @@
 **Under an active development**. 
 
 Current tasks:
-- Migration from SQLite to PostgreSQL for concurrency writes
 - Developing local ML matching pipeline
+  - Optimizing entity extraction and deterministic job scoring
 
 ## Description
 This app is an application engine, which is responsible for scraping public ATS systems (forked from: [kalil0321/ats-scrapers](https://github.com/kalil0321/ats-scrapers), so go check it up supported scrapers there) and application matching.
