@@ -6,6 +6,15 @@ logs/
 backups*
 *.jsonl
 
+# Ignore all files inside prompt/ and any nested directories
+prompt/**
+
+# Whitelist any directory so Git can traverse down to inspect files
+!prompt/**/
+
+# Re-include files containing "example" anywhere in their name
+!prompt/**/*example*
+
 # IDE config
 .vscode/
 
