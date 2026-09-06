@@ -46,7 +46,7 @@ CREATE TABLE openai_batch_items (
     id TEXT PRIMARY KEY,
     batch_id TEXT NOT NULL,
     job_id TEXT NOT NULL,
-    match_id TEXT,
+    match_id UUID,
 
     status TEXT NOT NULL DEFAULT 'PENDING' CHECK (
         status IN ('PENDING', 'COMPLETED', 'FAILED', 'CANCELLED')

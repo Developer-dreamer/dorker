@@ -79,6 +79,9 @@ from src.scraping.scrapers.weworkremotely import WeWorkRemotelyScraper
 from src.scraping.scrapers.workable import WorkableScraper
 from src.scraping.scrapers.workday import WorkdayScraper
 from src.scraping.scrapers.ycombinator import YCombinatorScraper
+from src.scraping.scrapers.dou_ua import DOUScraper
+from src.scraping.scrapers.djinni import DjinniScraper
+
 
 __all__ = [
     "ADPWorkforceNowScraper",
@@ -154,4 +157,6 @@ __all__ = [
     "YCombinatorScraper",
     "get_scraper",
     "iCIMSScraper",
+    "DOUScraper",
+    "DjinniScraper",
 ]

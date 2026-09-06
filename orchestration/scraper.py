@@ -100,7 +100,6 @@ async def get_active_ats_platforms() -> list[Tuple[int, str]]:
     try:
         # Fetch rows already sorted by tier
             rows = await conn.fetch("SELECT DISTINCT ats, tier FROM companies ORDER BY tier ASC")
-
             cfg_keys = CONFIGS.keys()
 
             # Deduplicate while preserving order

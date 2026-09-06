@@ -5,7 +5,7 @@ from openai.types import Batch
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class ApplicationStatus(str, Enum):
+class SuitabilityTier(str, Enum):
     SUITABLE = "SUITABLE"
     STRETCH = "STRETCH"
     RUNWAY = "RUNWAY"
@@ -13,9 +13,9 @@ class ApplicationStatus(str, Enum):
 
 
 class Analytics(BaseModel):
-    pros: List[str]
-    cons: List[str]
-    warnings: List[str]
+    pros: List[str] = []
+    cons: List[str] = []
+    warnings: List[str] = []
 
 
 # ==========================================
@@ -25,11 +25,15 @@ class Analytics(BaseModel):
 class MatchedJob(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    technical_capability_score: float
-    strategic_value_score: float
-    application_status: ApplicationStatus
-    strategic_reason: str
-    analytics: Analytics
+    technical_capability_score: float = 0.0
+    strategic_value_score: float = 0.0
+    confidence_score: float = 0.0
+    suitability_tier: SuitabilityTier = "REJECTED"
+    strategic_reason: str = ""
+    rejection_reason: str = ""
+
+    analytics: Analytics = Analytics()
+    internal_analysis_cot: Optional[str] = None
 
 
 class Purpose(str, Enum):

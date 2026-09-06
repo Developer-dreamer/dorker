@@ -101,6 +101,8 @@ class ATSType(StrEnum):
     INFOJOBSES = "infojobs_es"
     JOBBANKCA = "jobbankca"
     SEEK = "seek"
+    DOU = "dou"
+    DJINNI = "djinni"
     # Additional multi-tenant ATSes (post-0.1)
     BAMBOOHR = "bamboohr"
     BREEZY = "breezy"

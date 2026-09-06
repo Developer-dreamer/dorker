@@ -17,7 +17,7 @@
     "kwargs_extractor": "none"
   },
   "workable": {
-    "enabled": false,
+    "enabled": true,
     "max_concurrency": 2,
     "tenant_delay_seconds": 0.5,
     "description_concurrency": 2,
@@ -124,7 +124,7 @@
     "paused": false
   },
   "join_com": {
-    "enabled": false,
+    "enabled": true,
     "slug_extractor": "join_com",
     "paused": false
   },
@@ -263,5 +263,15 @@
     "kwargs_extractor": "eightfold",
     "paused": false
   },
-  "wellfound": { "enabled": false, "singleton": true, "paused": false }
+  "wellfound": { "enabled": false, "singleton": true, "paused": false },
+  "dou": {
+    "enabled": false,
+    "singleton": true,
+    "paused": false
+  },
+  "djinni": {
+    "enabled": false,
+    "singleton": true,
+    "paused": false
+  }
 }

@@ -117,7 +117,8 @@ _CACHE_SCHEMA_VERSION = 2
 class DescriptionCache:
     """Disk-backed description cache, optionally persistent and zstd-compressed."""
 
-    def __init__(self, db_path: Path, ats_name: str, compress: bool = False) -> None:
+    def __init__(self, db_path: Path,
+                ats_name: str, compress: bool = False) -> None:
         self.conn: sqlite3.Connection | None = None
         self.compress = compress
         self._compressor = None
@@ -412,13 +413,22 @@ async def run(
     targets: list[tuple[int, str, dict[str, Any]]] = []
     if cfg.get("singleton"):
         # Assign 0 as the ID for singletons since they bypass the companies table state tracking
-        targets = [(0, ats, {})]
+        async with pg_db.acquire() as conn:
+            singleton_id = await conn.fetchval(
+                "SELECT id FROM companies WHERE ats = $1 LIMIT 1", ats
+            )
+
+        if singleton_id is None:
+            logger.fatal(f"No company found for ATS: {ats}")
+            return -1
+
+        targets = [(singleton_id, ats, {})]
     else:
         # State Machine: Only select companies that are active
         async with pg_db.acquire() as conn:
             rows = await conn.fetch(
                         """
-                        SELECT id, ats, name, slug, url 
+                        SELECT id, ats, name, slug, url
                         FROM companies
                         WHERE ats = $1 AND is_active = TRUE
                         """,

@@ -301,6 +301,9 @@ async def main() -> int:
                                 f"updated={total - counts['unchanged']:,} unchanged={counts['unchanged']:,}",
                                 flush=True,
                             )
+
+                await write_conn.execute("UPDATE jobs SET is_normalized = TRUE WHERE is_normalized = FALSE;")
+
     finally:
         await pool.close()
 

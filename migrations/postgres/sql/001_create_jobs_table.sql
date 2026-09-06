@@ -48,7 +48,7 @@ CREATE TABLE jobs (
 
     is_normalized BOOLEAN NOT NULL DEFAULT FALSE,
 
-    ADD COLUMN searchable tsvector 
+    searchable tsvector 
     GENERATED ALWAYS AS (
         setweight(to_tsvector('simple', coalesce(title, '')), 'A') ||
         setweight(to_tsvector('simple', coalesce(location, '')), 'B') ||
@@ -70,3 +70,7 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 -- Index title and description with trigrams
 CREATE INDEX idx_jobs_title_trgm ON jobs USING GIN (title gin_trgm_ops);
 CREATE INDEX idx_jobs_desc_trgm ON jobs USING GIN (description gin_trgm_ops);
+CREATE INDEX idx_jobs_location_trgm ON jobs USING GIN (location gin_trgm_ops);
+
+CREATE INDEX idx_jobs_effective_date
+    ON jobs ((COALESCE(posted_at, fetched_at)) DESC);
