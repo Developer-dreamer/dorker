@@ -1,5 +1,4 @@
 # User sensitive data
-prompt/
 app.db*
 batches/
 logs/
