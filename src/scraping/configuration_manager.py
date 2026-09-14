@@ -1,18 +1,14 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import re
+from logging import Logger
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .scrapers.base import ScraperRegistry
-
-logger = logging.getLogger(__name__)
-CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "configs" / "scraper.json"
-
 
 # --- Extraction Helpers ---
 
@@ -197,7 +193,8 @@ KWARGS_EXTRACTORS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
 # --- Dynamic Manager Singleton ---
 
 class DynamicConfigManager:
-    def __init__(self, config_path: Path = CONFIG_PATH):
+    def __init__(self, logger: Logger, config_path: Path):
+        self.logger = logger
         self._config_path = config_path
         self._last_mtime: float = 0.0
         self._cached_configs: dict[str, dict[str, Any]] = {}
@@ -205,7 +202,7 @@ class DynamicConfigManager:
 
     def reload(self) -> None:
         if not self._config_path.exists():
-            logger.error(f"Configuration file not found: {self._config_path}")
+            self.logger.error(f"Configuration file not found: {self._config_path}")
             return
         try:
             mtime = os.path.getmtime(self._config_path)
@@ -238,9 +235,9 @@ class DynamicConfigManager:
 
             self._cached_configs = resolved
             self._last_mtime = mtime
-            logger.info("DynamicConfigManager successfully reloaded ats_config.json")
+            self.logger.info("DynamicConfigManager successfully reloaded ats_config.json")
         except Exception as e:
-            logger.error(f"Failed to reload configuration: {e}")
+            self.logger.error(f"Failed to reload configuration: {e}")
 
     def get(self, ats: str) -> dict[str, Any]:
         self.reload()
@@ -249,6 +246,14 @@ class DynamicConfigManager:
     def is_enabled(self, ats: str) -> bool:
         self.reload()
         return bool(self._cached_configs.get(ats, {}).get("enabled", False))
+
+    def is_paused(self, ats: str) -> bool:
+        self.reload()
+        return bool(self._cached_configs.get(ats, {}).get("paused", False))
+
+    def is_yielded( self, ats: str) -> bool:
+        self.reload()
+        return bool(self._cached_configs.get(ats, {}).get("yield_slot", False))
 
     def all_configs(self) -> dict[str, dict[str, Any]]:
         self.reload()
@@ -260,7 +265,3 @@ class DynamicConfigManager:
     def keys(self) -> Any:
         self.reload()
         return self._cached_configs.keys()
-
-
-# Global exported proxy instance
-CONFIGS = DynamicConfigManager()

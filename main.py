@@ -7,6 +7,7 @@ from typing import Any, Literal
 import aiohttp
 import asyncpg
 import joblib
+from uuid import UUID
 import uuid6
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sentence_transformers import SentenceTransformer
@@ -25,7 +26,8 @@ logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent
 PG_DSN = "postgresql://postgres:password@localhost:5432/dorker_db"
 
-PIPELINE_VERSION = 'v0.1.2'
+PIPELINE_VERSION = "v0.1.2"
+
 
 def filter_job_description_optimized(raw_text: str, clf: Any, embedder: Any) -> str:
     blocks = [b.strip() for b in raw_text.split("\n\n") if b.strip()]
@@ -87,31 +89,49 @@ async def fetch_matching_raw_jobs(pool: asyncpg.Pool) -> list[asyncpg.Record]:
         records = await conn.fetch(query)
         return records
 
+async def fetch_golden_set(pool: asyncpg.Pool) -> list[asyncpg.Record]:
+    query = """
+            SELECT j.id,
+                    j.title,
+                    j.location,
+                    j.description,
+                    j.salary_min,
+                    j.salary_max,
+                    j.salary_currency
+                FROM jobs j
+               WHERE EXISTS (
+                    SELECT 1
+                    FROM jobs_fact_sheets jfs
+                    WHERE jfs.job_id = j.id AND jfs.model = 'golden_set_manual'
+                )
+                ORDER BY j.posted_at DESC;
+        """
+
+    async with pool.acquire() as conn:
+        records = await conn.fetch(query)
+        return records
 
 class JobFactSheet(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    id: uuid6.UUID = uuid6.uuid7()
+    id: UUID = Field(default_factory=uuid6.uuid7)
     job_id: str
     # --- 1. Location & Legal Constraints ---
     job_family: Literal[
-        'BACKEND',
-        'FRONTEND',
-        'FULLSTACK',
-        'QA_SDET',
-        'DEVOPS_PLATFORM',
-        'DATA_AI',
-        'MOBILE',
-        'NON_TECHNICAL',
-        'OTHER'
-    ] = Field(
-        ...,
-        description=("Literal representing job alignment. Names speaks for themselves.")
-    )
+        "BACKEND",
+        "FRONTEND",
+        "FULLSTACK",
+        "QA_SDET",
+        "DEVOPS_PLATFORM",
+        "DATA_AI",
+        "MOBILE",
+        "NON_TECHNICAL",
+        "OTHER",
+    ] = Field(..., description=("Literal representing job alignment. Names speaks for themselves."))
     geographic_scope: Literal[
         "UNKNOWN",
         "DOMESTIC",
-        "REGIONAL"
+        "REGIONAL",
         "GLOBAL",
     ] = Field(
         ...,
@@ -132,13 +152,17 @@ class JobFactSheet(BaseModel):
     )
     target_jurisdiction: str | None = Field(
         default=None,
-        description=("Country ISO code if DOMESTIC and clear country specified: US, UA, GB. Region code if"
-                     "legal region specified (e.g., EU). Leave empty if geographic_scope IS NOT 'DOMESTIC'")
+        description=(
+            "Country ISO code if DOMESTIC and clear country specified: US, UA, GB. Region code if"
+            "legal region specified (e.g., EU). Leave empty if geographic_scope IS NOT 'DOMESTIC'"
+        ),
     )
-    region: str | None = Field(
+    region: Literal["EMEA", "LATAM", "APAC", "AMER", "APJ", "CEE", "MENA", "SEA"] | None = Field(
         default=None,
-        description=("Regional abbreviation of operational timezone requirement: EMEA, APAC, LATAM."
-                     "Leave empty if geographic_scope IS NOT 'REGIONAL'")
+        description=(
+            "Regional abbreviation of operational timezone requirement: EMEA, APAC, LATAM."
+            "Leave empty if geographic_scope IS NOT 'REGIONAL'"
+        ),
     )
     timezone_overlap_requested: str | None = Field(
         default=None,
@@ -205,15 +229,27 @@ class JobFactSheet(BaseModel):
 # Candidate skill profile definitions for matching
 CANDIDATE_PRIMARY_LANGUAGES = {"go", "golang", "python", "c#", ".net", "dotnet", "c++", "c"}
 CANDIDATE_SECONDARY_TOOLS = {
-    "postgresql", "postgres", "docker", "linux", "git", 
-    "terraform", "gcp", "redis", "ef core", "entity framework",
-    "opentelemetry", "webrtc", "firestore", "rest", "grpc"
+    "postgresql",
+    "postgres",
+    "docker",
+    "linux",
+    "git",
+    "terraform",
+    "gcp",
+    "redis",
+    "ef core",
+    "entity framework",
+    "opentelemetry",
+    "webrtc",
+    "firestore",
+    "rest",
+    "grpc",
 }
 
 
 def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
     """
-    Deterministically evaluates an extracted JobFactSheet against candidate 
+    Deterministically evaluates an extracted JobFactSheet against candidate
     hard gates, technical capabilities, and strategic scoring rules.
     """
     pros: list[str] = []
@@ -223,14 +259,14 @@ def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
     # -------------------------------------------------------------------------
     # Step 1: Hard Gates (Fatal Constraints -> Immediate REJECTED)
     # -------------------------------------------------------------------------
-    
+
     # 1.1 Geographic & Legal Authorization Gate
     if sheet.geographic_scope == "STRICT_DOMESTIC_ONLY":
         return MatchedJob(
             suitability_tier=SuitabilityTier.REJECTED,
             rejection_reason="Strict domestic residency, W-2 only, or citizenship/clearance required.",
             confidence_score=0.95,
-            analytics=Analytics(warnings=["Geographic restriction / domestic legal barrier."])
+            analytics=Analytics(warnings=["Geographic restriction / domestic legal barrier."]),
         )
 
     # 1.2 Workplace Presence Gate
@@ -239,7 +275,7 @@ def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
             suitability_tier=SuitabilityTier.REJECTED,
             rejection_reason="Mandatory 100% on-site office presence required.",
             confidence_score=0.95,
-            analytics=Analytics(warnings=["Role does not support remote work."])
+            analytics=Analytics(warnings=["Role does not support remote work."]),
         )
 
     if sheet.workplace_type == "HYBRID":
@@ -249,7 +285,9 @@ def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
                 suitability_tier=SuitabilityTier.REJECTED,
                 rejection_reason=f"Hybrid attendance required outside Kyiv ({sheet.office_location_city or 'Unknown location'}).",
                 confidence_score=0.90,
-                analytics=Analytics(warnings=[f"Hybrid office location: {sheet.office_location_city}"])
+                analytics=Analytics(
+                    warnings=[f"Hybrid office location: {sheet.office_location_city}"]
+                ),
             )
 
     # 1.3 Mandatory Travel Gate
@@ -258,7 +296,7 @@ def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
             suitability_tier=SuitabilityTier.REJECTED,
             rejection_reason="Mandatory travel or physical hardware pickup required.",
             confidence_score=0.90,
-            analytics=Analytics(warnings=["Frequent travel / physical onboarding requirement."])
+            analytics=Analytics(warnings=["Frequent travel / physical onboarding requirement."]),
         )
 
     # 1.4 Out-of-Scope Architecture / Legacy Maintenance Gate
@@ -267,7 +305,7 @@ def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
             suitability_tier=SuitabilityTier.REJECTED,
             rejection_reason="Role primarily focused on legacy monolith maintenance (PHP / older Java).",
             confidence_score=0.95,
-            analytics=Analytics(cons=["Legacy stack maintenance."])
+            analytics=Analytics(cons=["Legacy stack maintenance."]),
         )
 
     if sheet.is_pure_network_or_systems:
@@ -275,7 +313,7 @@ def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
             suitability_tier=SuitabilityTier.REJECTED,
             rejection_reason="Pure network engineering / hardware routing focus (BGP, OSPF).",
             confidence_score=0.95,
-            analytics=Analytics(cons=["Hardware/routing engineering focus."])
+            analytics=Analytics(cons=["Hardware/routing engineering focus."]),
         )
 
     # -------------------------------------------------------------------------
@@ -286,7 +324,9 @@ def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
     # 2.1 Seniority & Experience Penalties
     yoe = sheet.min_years_experience
     title_lower = raw_job_title.lower()
-    is_senior_title = any(kw in title_lower for kw in ["senior", "snr", "lead", "principal", "staff"])
+    is_senior_title = any(
+        kw in title_lower for kw in ["senior", "snr", "lead", "principal", "staff"]
+    )
 
     if yoe is not None:
         if yoe >= 5:
@@ -319,7 +359,9 @@ def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
     if req_langs:
         if not matched_langs:
             tech_score -= 0.40
-            cons.append(f"Primary language mismatch: requires {', '.join(sheet.primary_backend_languages)}.")
+            cons.append(
+                f"Primary language mismatch: requires {', '.join(sheet.primary_backend_languages)}."
+            )
         else:
             pros.append(f"Direct match on primary language(s): {', '.join(matched_langs)}.")
             unmatched_langs = [l for l in req_langs if l not in matched_langs]
@@ -348,7 +390,9 @@ def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
             suitability_tier=SuitabilityTier.REJECTED,
             rejection_reason="Out-of-scope domain: No backend languages or infrastructure tools detected.",
             confidence_score=0.95,
-            analytics=Analytics(warnings=["Non-technical/Sales/Management role detected (False Positive)."])
+            analytics=Analytics(
+                warnings=["Non-technical/Sales/Management role detected (False Positive)."]
+            ),
         )
     # -------------------------------------------------------------------------
     # Step 3: Strategic Value Score Evaluation (Base: 1.0)
@@ -396,16 +440,22 @@ def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
         rejection_reason = ""
     elif tech_score < 0.60 and strategic_score >= 0.60:
         tier = SuitabilityTier.STRETCH
-        strategic_reason = "High strategic value role with addressable technical or seniority stretch."
+        strategic_reason = (
+            "High strategic value role with addressable technical or seniority stretch."
+        )
         rejection_reason = ""
     elif tech_score >= 0.50 and strategic_score < 0.60:
         tier = SuitabilityTier.RUNWAY
-        strategic_reason = "Viable technical baseline, but lower architectural or operational alignment."
+        strategic_reason = (
+            "Viable technical baseline, but lower architectural or operational alignment."
+        )
         rejection_reason = ""
     else:
         tier = SuitabilityTier.REJECTED
         strategic_reason = ""
-        rejection_reason = "Combined technical capability and strategic score fell below viable thresholds."
+        rejection_reason = (
+            "Combined technical capability and strategic score fell below viable thresholds."
+        )
 
     return MatchedJob(
         technical_capability_score=tech_score,
@@ -414,25 +464,35 @@ def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
         suitability_tier=tier,
         strategic_reason=strategic_reason,
         rejection_reason=rejection_reason,
-        analytics=Analytics(
-            pros=pros,
-            cons=cons,
-            warnings=warnings
-        )
+        analytics=Analytics(pros=pros, cons=cons, warnings=warnings),
     )
+
+INSERT_COLUMNS = (
+    "id", "job_id", "job_family", "geographic_scope", "workplace_type",
+    "office_location_city", "target_jurisdiction", "region",
+    "timezone_overlap_requested", "min_years_experience",
+    "is_experience_flexible", "primary_backend_languages",
+    "secondary_tools", "is_legacy_maintenance",
+    "is_pure_network_or_systems", "has_mandatory_travel",
+    "has_uncompensated_oncall", "detected_operational_cues",
+    "model", "version",
+)
+
+INSERT_QUERY = f"""
+    INSERT INTO jobs_fact_sheets ({', '.join(INSERT_COLUMNS)})
+    VALUES ({', '.join(f'${i+1}' for i in range(len(INSERT_COLUMNS)))});
+"""
 
 async def process_job(
     job: asyncpg.Record,
     prompt_template: str,
     session: aiohttp.ClientSession,
     conn: asyncpg.Connection,
-    insert_sheet_query: str,
-    insert_match_query: str,
 ) -> None:
     job_dict = dict(job)
     full_prompt = f"{prompt_template}\n\n<job_payload>\n{job_dict}\n</job_payload>"
 
-    MODEL = 'qwen2.5-coder:7b'
+    MODEL = "qwen2.5-coder:7b"
     payload = {
         "model": MODEL,
         "prompt": full_prompt,
@@ -472,43 +532,33 @@ async def process_job(
             try:
                 sheet = JobFactSheet.model_validate_json(response_data["response"])
 
-                match = fact_sheet_to_match(sheet, job["title"])
-                async with conn.transaction():
-                    await conn.execute(
-                        insert_sheet_query,
-                        uuid6.uuid7(),
-                        job["id"],
-                        sheet.geographic_scope,
-                        sheet.workplace_type,
-                        sheet.office_location_city,
-                        sheet.timezone_overlap_requested,
-                        sheet.min_years_experience,
-                        sheet.is_experience_flexible,
-                        sheet.primary_backend_languages,
-                        sheet.secondary_tools,
-                        sheet.is_legacy_maintenance,
-                        sheet.is_pure_network_or_systems,
-                        sheet.has_mandatory_travel,
-                        sheet.has_uncompensated_oncall,
-                        sheet.detected_operational_cues,
-                        MODEL
-                    )
-                    await conn.execute(
-                        insert_match_query,
-                        uuid6.uuid7(),
-                        job["id"],
-                        True,
-                        match.suitability_tier,
-                        "PENDING" if match.strategic_reason else "DECLINED",
-                        match.technical_capability_score,
-                        match.strategic_value_score,
-                        match.confidence_score,
-                        match.strategic_reason,
-                        match.rejection_reason,
-                        match.analytics.model_dump_json(),
-                        match.internal_analysis_cot,
-                        MODEL
-                    )
+                # match = fact_sheet_to_match(sheet, job["title"])
+                # async with conn.transaction():
+                payload = {
+                    **sheet.model_dump(),
+                    "id": uuid6.uuid7(),
+                    "job_id": job["id"],
+                    "model": MODEL,
+                    "version": PIPELINE_VERSION,
+                }
+
+                await conn.execute(INSERT_QUERY, *(payload[col] for col in INSERT_COLUMNS))
+                    # await conn.execute(
+                    #     insert_match_query,
+                    #     uuid6.uuid7(),
+                    #     job["id"],
+                    #     True,
+                    #     match.suitability_tier,
+                    #     "PENDING" if match.strategic_reason else "DECLINED",
+                    #     match.technical_capability_score,
+                    #     match.strategic_value_score,
+                    #     match.confidence_score,
+                    #     match.strategic_reason,
+                    #     match.rejection_reason,
+                    #     match.analytics.model_dump_json(),
+                    #     match.internal_analysis_cot,
+                    #     MODEL,
+                    # )
 
             except ValidationError as e:
                 logger.warning(
@@ -527,33 +577,37 @@ async def run() -> None:
     logger.info("Starting local classification pipeline...")
 
     async with asyncpg.create_pool(PG_DSN) as pool:
-        jobs = await fetch_matching_raw_jobs(pool)
+        jobs = await fetch_golden_set(pool)
         logger.info(f"Retrieved {len(jobs)} jobs from database.")
 
-    ranking_prompt_path = ROOT / "prompt" / "job_fact_sheet.md"
+    ranking_prompt_path = ROOT / "prompt" / "job_fact_sheet_example.md"
     if not ranking_prompt_path.exists():
         logger.critical("Prompt file not found. Exiting.")
         exit(-1)
 
     prompt_template = ranking_prompt_path.read_text(encoding="utf-8")
 
-    insert_query = f"""INSERT INTO matches
-                            (id, job_id, is_technical, suitability_tier, pipeline_status, 
-                             technical_capability_score, strategic_value_score, confidence_score, 
-                             strategic_reason, rejection_reason, analytics, internal_analysis_cot, version, model)
-                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '{PIPELINE_VERSION}', $13)
-                   """
+    # insert_job_match_query = f"""INSERT INTO matches
+    #                         (id, job_id, is_technical, suitability_tier, pipeline_status, 
+    #                          technical_capability_score, strategic_value_score, confidence_score, 
+    #                          strategic_reason, rejection_reason, analytics, internal_analysis_cot, version, model)
+    #                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '{PIPELINE_VERSION}', $13)
+    #                """
 
-    insert_sheet_query = f"""
-                        INSERT INTO jobs_fact_sheets (
-                            id,job_id,geographic_scope,workplace_type,office_location_city,timezone_overlap_requested,
-                            min_years_experience,is_experience_flexible,primary_backend_languages,secondary_tools,
-                            is_legacy_maintenance,is_pure_network_or_systems,has_mandatory_travel,
-                            has_uncompensated_oncall,detected_operational_cues, model, version
-                        ) VALUES (
-                            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, '{PIPELINE_VERSION}'
-                        );
-                    """
+    # insert_sheet_query = f"""
+    #                     INSERT INTO jobs_fact_sheets (
+    #                         id,
+    #                         job_id,
+    #                         job_family,geographic_scope,workplace_type,office_location_city,target_jurisdiction,region,
+    #                         min_years_experience,is_experience_flexible,
+    #                         primary_backend_languages,secondary_tools,
+    #                         is_legacy_maintenance,is_pure_network_or_systems,has_mandatory_travel,has_uncompensated_oncall,
+    #                         detected_operational_cues,
+    #                         model, version
+    #                     ) VALUES (
+    #                         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, '{PIPELINE_VERSION}'
+    #                     );
+    #                 """
 
     # Use aiohttp to prevent blocking the event loop
     timeout = aiohttp.ClientTimeout(total=300)  # 5 min timeout per job
@@ -562,10 +616,12 @@ async def run() -> None:
         try:
             # Using tqdm for a progress bar
             for job in jobs:
-                print('\n')
+                print("\n")
                 # job_dict["description"] = filter_job_description_optimized(job["description"], clf, embedder)
 
-                await process_job(job, prompt_template, session, conn, insert_sheet_query, insert_query)
+                await process_job(
+                    job, prompt_template, session, conn
+                )
         finally:
             await conn.close()
             logger.info("Pipeline execution completed.")

@@ -16,9 +16,9 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Literal, Self
+from typing import Literal, Self, Any
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
@@ -604,4 +604,26 @@ class JobDB(BaseModel):
             salary_currency=job.salary_currency,
             posted_at=job.posted_at,
             fetched_at=job.fetched_at
+        )
+
+    def job_to_db_params(self) -> tuple[Any, ...]:
+        return (
+            self.id,
+            self.ats_type.value,
+            self.ats_id,
+            str(self.url),
+            str(self.apply_url) if self.apply_url else None,
+            self.title,
+            self.company_id,
+            self.location,
+            self.country_iso,
+            self.region,
+            self.employment_type or "FULL_TIME",
+            self.description or "",
+            self.salary_min,
+            self.salary_max,
+            self.salary_currency,
+            self.is_normalized,
+            self.posted_at,
+            self.fetched_at or datetime.now(timezone.utc),
         )
