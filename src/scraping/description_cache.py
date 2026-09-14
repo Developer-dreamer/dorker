@@ -6,20 +6,6 @@ from models import Job
 
 _CACHE_SCHEMA_VERSION = 2
 
-def _description_keys(job: Job) -> list[tuple[str, str]]:
-    keys: list[tuple[str, str]] = []
-    url = str(job.url).strip()
-    if job.ats_type.value == "icims":
-        return [("url", url)] if url else []
-    company = (job.company or "").strip()
-    ats_id = (job.ats_id or "").strip()
-    if company and ats_id:
-        keys.append(("company_ats_id", f"{company}\0{ats_id}"))
-    if url:
-        keys.append(("url", url))
-    return keys
-
-
 class DescriptionCache:
     """Disk-backed description cache, optionally persistent and zstd-compressed."""
 

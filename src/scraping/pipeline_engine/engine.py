@@ -6,17 +6,16 @@ from contextlib import contextmanager
 from datetime import time
 from logging import Logger
 from pathlib import Path
-from typing import Any, Dict, Iterator, List
+from typing import Iterator, List
 
 from asyncpg import Pool
-from description_cache import DescriptionCache
 from models import JobDB
 from scraper_runner import ScraperRunner
 from ui.cli import Dashboard
 
 from shared.types.priority_semaphore import PrioritySemaphore
 from src.scraping.configuration_manager import DynamicConfigManager
-from src.scraping.database.base import ATS, CompanyRepository, JobRepository
+from src.scraping.database.base import ATS, CompanyRepository, DescriptionCache, JobRepository
 
 
 class RunEngine:
@@ -26,7 +25,7 @@ class RunEngine:
                  pool: Pool,
                  job_repository: JobRepository,
                  company_repo: CompanyRepository,
-                 description_cache_path: Path,
+                 description_cache: DescriptionCache,
                  ui_queue: asyncio.Queue | None = None,
                  max_concurrent_ats: int = 5
                  ) -> None:
@@ -39,7 +38,7 @@ class RunEngine:
         self.priority_sem = PrioritySemaphore(max_concurrent_ats)
         self.db_writer_queue: asyncio.Queue[JobDB | None] = asyncio.Queue(maxsize=1000)
         self.ui_queue: asyncio.Queue[Dashboard] | None = ui_queue
-        self.description_cache_path = description_cache_path
+        self.description_cache: DescriptionCache = description_cache
 
     async def run(self, ats_list: List[ATS]) -> None:
         self.logger.info(f"[Engine] Starting cycle across {len(ats_list)} platforms.")
@@ -86,23 +85,6 @@ class RunEngine:
             if self.ui_queue:
                 self.ui_queue.put_nowait({"type": "finish", "ats": ats})
 
-    def _desc_cache_init(self, ats: ATS, cfg: Dict[str, Any]) -> DescriptionCache:
-        persistent_path_rel = cfg.get("description_cache_path")
-        persistent_path = self.jobs_output_root / persistent_path_rel if persistent_path_rel else None
-        cache_compress = bool(cfg.get("description_cache_compress"))
-
-        self.logger.info(f"[Engine] | {ats} | [CACHE] Initializing description cache...")
-        description_cache = DescriptionCache(self.description_cache_path, ats.name, compress=cache_compress)
-        if description_cache.count:
-            location = "persistent" if persistent_path else "ephemeral"
-            self.logger.info(
-                f"[{ats}] [CACHE] Loaded {description_cache.count:,} warm description keys "
-                f"({location} cache at {description_cache.path})"
-            )
-        else:
-            self.logger.info(f"[{ats}] [CACHE] Description cache initialized empty.")
-
-        return description_cache
 
     @contextmanager
     def _pipeline_lock(self, ats: str) -> Iterator[bool]:
@@ -150,8 +132,9 @@ class RunEngine:
 
                 if len(buffer) >= batch_size or (self.db_writer_queue.empty() and buffer):
                     await self.job_repository.save_job_batch(buffer)
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as e:
             await self.job_repository.save_job_batch(buffer)
+            raise e
         except Exception as exc:
             self.logger.critical(f"[DB Writer] Fatal error in worker loop: {exc}", exc_info=True)
         finally:

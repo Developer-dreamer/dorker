@@ -5,9 +5,9 @@ from typing import Any, List
 import asyncpg
 from asyncpg import Pool
 
-from src.scraping.models import JobDB
+from src.scraping.models import Job, JobDB
 
-from .base import ATS, ATSCompany
+from .base import ATS, ATSCompany, description_keys
 
 
 class JobRepositoryPostgres:
@@ -151,3 +151,74 @@ class CompanyRepositoryPostgres:
 
         async with self.pool.acquire() as conn:
             await conn.execute(query, is_success, duration_ms, err, jobs_count, company_id)
+
+class DescriptionCachePostgres:
+    def __init__(self, logger: Logger, pool: Pool, compress: bool = True) -> None:
+        self.logger = logger
+        self.pool = pool
+        self.compress = compress
+
+        if compress:
+            import zstandard
+
+            self._compressor = zstandard.ZstdCompressor(level=3)
+            self._decompressor = zstandard.ZstdDecompressor()
+
+
+    async def close(self) -> None:
+        """
+        Pool is closed from outer scope
+        """
+        return
+
+    async def get(self, job: Job) -> str | None:
+        query = """
+                SELECT payload 
+                FROM description_cache 
+                WHERE key_type = $1 AND key_value = $2
+                """
+
+        for key_type, key_value in description_keys(job):
+            row = await self.pool.fetchrow(query, key_type, key_value)
+            if row:
+                self.logger.info(f"Cache HIT for job_id {job.global_id} by key {key_value} of type {key_type}")
+                return self._decode(row["payload"])
+
+        return None
+
+    async def set(self, job: Job, description: str) -> None:
+        blob = self._encode(description)
+        rows = [(*key, blob) for key in description_keys(job)]
+        if not rows:
+            return
+
+        await self._insert_many(rows, replace=True)
+
+    def _decode(self, blob: bytes) -> str:
+        raw = self._decompressor.decompress(blob) if self.compress else blob
+        return raw.decode("utf-8")
+
+    def _encode(self, description: str) -> bytes:
+        raw = description.encode("utf-8")
+        return self._compressor.compress(raw) if self.compress else raw
+
+    async def _insert_many(
+        self, rows: list[tuple[str, str, bytes]], *, replace: bool = False
+    ) -> int:
+        if not rows:
+            return 0
+
+        conflict_clause = (
+            "DO UPDATE SET description = EXCLUDED.description" if replace else "DO NOTHING"
+        )
+
+        query = f"""
+            INSERT INTO description_cache (key_type, key_value, description)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (key_type, key_value) {conflict_clause}
+        """
+
+        # asyncpg's executemany returns a command tag string like 'INSERT 0 5'
+        status = await self.pool.executemany(query, rows)
+        # Parse inserted/updated rows count from status string if needed:
+        return int(status.split()[-1]) if status else 0
