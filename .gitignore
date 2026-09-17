@@ -2,6 +2,7 @@
 app.db*
 batches/
 logs/
+cache/
 backups*
 *.jsonl
 
