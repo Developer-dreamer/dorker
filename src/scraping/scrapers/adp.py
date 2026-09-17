@@ -30,7 +30,7 @@ from src.scraping.scrapers.base import BaseScraper, ScraperRegistry
 if TYPE_CHECKING:
     from typing import Any
 
-    from ats_scrapers.fetch import Fetcher
+    from src.scraping.fetch import Fetcher
 
 PAGE_LIMIT = 100
 DETAIL_CONCURRENCY = 8

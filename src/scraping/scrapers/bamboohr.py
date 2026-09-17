@@ -45,7 +45,7 @@ from src.scraping.scrapers._slug import require_host_label
 from src.scraping.scrapers.base import BaseScraper, ScraperRegistry
 
 if TYPE_CHECKING:
-    from ats_scrapers.fetch import Fetcher
+    from src.scraping.fetch import Fetcher
 
 WIDGET_TEMPLATE = "https://{slug}.bamboohr.com/jobs/embed2.php"
 DETAIL_TEMPLATE = "https://{slug}.bamboohr.com/careers/{id}/detail"

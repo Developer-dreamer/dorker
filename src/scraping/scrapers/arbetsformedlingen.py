@@ -26,7 +26,7 @@ from src.scraping.scrapers.base import BaseScraper, ScraperRegistry
 if TYPE_CHECKING:
     from typing import Any
 
-    from ats_scrapers.fetch import Fetcher
+    from src.scraping.fetch import Fetcher
 
 API_URL = "https://jobsearch.api.jobtechdev.se/search"
 PAGE_SIZE = 100  # API hard-caps at 100/page.
