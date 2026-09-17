@@ -42,7 +42,7 @@ DEFAULT_MAX_PAGES = 200
 MAX_CONCURRENCY_LISTING = 4
 # Retry knobs for the httpcloak fallback path only — the plain-httpx
 # path now goes through the shared Fetcher, which owns its own retry
-# policy (src.scraping.fetch.DEFAULT_RETRIES).
+# policy (ats_scrapers.fetch.DEFAULT_RETRIES).
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 1.5
 

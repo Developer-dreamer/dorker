@@ -49,7 +49,7 @@ class BaseScraper(ABC):
     Subclasses must set the ``ats`` class attribute and implement
     :meth:`afetch`. The class attributes ``fetch_engine``,
     ``fetch_escalate``, and ``default_headers`` declare what the ATS
-    is known to need (see :class:`src.scraping.fetch.Fetcher`);
+    is known to need (see :class:`ats_scrapers.fetch.Fetcher`);
     :meth:`make_fetcher` turns them into a configured fetcher.
     """
 

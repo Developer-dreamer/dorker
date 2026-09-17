@@ -1,17 +1,17 @@
 """Shared Browserbase helpers for browser-required scrapers.
 
-Used by :mod:`src.scraping.scrapers.meta` and :mod:`src.scraping.scrapers.tesla`,
+Used by :mod:`ats_scrapers.scrapers.meta` and :mod:`ats_scrapers.scrapers.tesla`,
 both of which can only fetch jobs through a real browser context. The
-:mod:`src.scraping.scrapers.avature` scraper has its own inline copy of this
+:mod:`ats_scrapers.scrapers.avature` scraper has its own inline copy of this
 flow predating the shared helper; refactor target for a future cleanup.
 
 Three env vars gate the path:
 
 * ``BROWSERBASE_API_KEY`` + ``BROWSERBASE_PROJECT_ID`` — credentials.
-* ``src.scraping_USE_BROWSERBASE`` (1/true/yes) — explicit opt-in for
+* ``ATS_SCRAPERS_USE_BROWSERBASE`` (1/true/yes) — explicit opt-in for
   browser-required scrapers (meta, tesla). Without it those scrapers
   return ``[]`` with a single warning so the pipeline keeps moving.
-* ``src.scraping_DISABLE_BROWSERBASE=1`` — emergency kill-switch shared
+* ``ATS_SCRAPERS_DISABLE_BROWSERBASE=1`` — emergency kill-switch shared
   with the Avature fallback.
 """
 
@@ -38,9 +38,9 @@ def is_enabled() -> bool:
     nothing, do not raise" — matches the Avature fallback behaviour
     when creds are absent.
     """
-    if os.getenv("src.scraping_DISABLE_BROWSERBASE", "").lower() in _TRUTHY:
+    if os.getenv("ATS_SCRAPERS_DISABLE_BROWSERBASE", "").lower() in _TRUTHY:
         return False
-    return os.getenv("src.scraping_USE_BROWSERBASE", "").lower() in _TRUTHY
+    return os.getenv("ATS_SCRAPERS_USE_BROWSERBASE", "").lower() in _TRUTHY
 
 
 def require_creds() -> tuple[str, str]:
@@ -54,9 +54,9 @@ def require_creds() -> tuple[str, str]:
     project_id = os.getenv("BROWSERBASE_PROJECT_ID")
     if not api_key or not project_id:
         raise ScraperError(
-            "src.scraping_USE_BROWSERBASE is set but BROWSERBASE_API_KEY / "
+            "ATS_SCRAPERS_USE_BROWSERBASE is set but BROWSERBASE_API_KEY / "
             "BROWSERBASE_PROJECT_ID are missing. Either configure both "
-            "or unset src.scraping_USE_BROWSERBASE."
+            "or unset ATS_SCRAPERS_USE_BROWSERBASE."
         )
     return api_key, project_id
 
@@ -67,7 +67,7 @@ def require_playwright() -> None:
         import playwright.async_api  # noqa: F401
     except ImportError as exc:
         raise ScraperError(
-            "src.scraping_USE_BROWSERBASE is set but `playwright` is not "
+            "ATS_SCRAPERS_USE_BROWSERBASE is set but `playwright` is not "
             "installed. Run `pip install playwright` (no browser "
             "binaries needed — Browserbase runs them remotely)."
         ) from exc
@@ -113,10 +113,10 @@ async def create_session_ws_url(
 
 def warn_disabled(scraper_name: str) -> None:
     """Single-line warning emitted when a browser-required scraper runs
-    with ``src.scraping_USE_BROWSERBASE`` unset. Returns nothing so callers
+    with ``ATS_SCRAPERS_USE_BROWSERBASE`` unset. Returns nothing so callers
     can ``return []`` after invoking it."""
     log.warning(
-        "%s: browser required — set src.scraping_USE_BROWSERBASE=1 (with "
+        "%s: browser required — set ATS_SCRAPERS_USE_BROWSERBASE=1 (with "
         "BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID configured) to "
         "enable. Skipping.",
         scraper_name,
