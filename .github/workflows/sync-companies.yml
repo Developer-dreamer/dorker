@@ -1,0 +1,117 @@
+name: Sync ATS Company Lists
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-csvs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch upstream repository
+        run: |
+          git clone --depth 1 https://github.com/kalil0321/ats-scrapers.git /tmp/upstream-ats
+
+      - name: Run CSV Sync and Categorization
+        run: |
+          python3 - << 'EOF'
+          import csv
+          import os
+          import shutil
+
+          # Configurable paths
+          UPSTREAM_DIR = "/tmp/upstream-ats"
+          LOCAL_BASE_DIR = "ats-companies"
+          UNDEFINED_DIR = os.path.join(LOCAL_BASE_DIR, "undefined")
+
+          os.makedirs(UNDEFINED_DIR, exist_ok=True)
+
+          # 1. Locate upstream source CSV directory
+          # Handles either a subfolder named 'ats-scrapers' or root-level CSV collections
+          possible_sources = [
+              os.path.join(UPSTREAM_DIR, "ats-scrapers"),
+              UPSTREAM_DIR,
+          ]
+          source_dir = None
+          for path in possible_sources:
+              if os.path.isdir(path) and any(f.endswith(".csv") for f in os.listdir(path)):
+                  source_dir = path
+                  break
+
+          if not source_dir:
+              raise FileNotFoundError(f"No CSV files found in candidate upstream paths: {possible_sources}")
+
+          # 2. Build map of existing local CSVs: {filename: relative_path}
+          local_file_map = {}
+          for root, _, files in os.walk(LOCAL_BASE_DIR):
+              for file in files:
+                  if file.endswith(".csv"):
+                      local_file_map[file] = os.path.join(root, file)
+
+          # 3. Process each upstream CSV
+          for filename in os.listdir(source_dir):
+              if not filename.endswith(".csv"):
+                  continue
+
+              upstream_file = os.path.join(source_dir, filename)
+
+              if filename in local_file_map:
+                  target_file = local_file_map[filename]
+                  
+                  # Read existing lines to preserve order and deduplicate
+                  with open(target_file, "r", encoding="utf-8", errors="ignore") as f:
+                      local_lines = [line.rstrip("\r\n") for line in f if line.strip()]
+
+                  if not local_lines:
+                      shutil.copy2(upstream_file, target_file)
+                      continue
+
+                  header = local_lines[0]
+                  existing_rows = set(local_lines[1:])
+
+                  # Read upstream lines
+                  with open(upstream_file, "r", encoding="utf-8", errors="ignore") as f:
+                      upstream_lines = [line.rstrip("\r\n") for line in f if line.strip()]
+
+                  if not upstream_lines:
+                      continue
+
+                  # Append new unique rows from upstream
+                  new_rows = []
+                  for row in upstream_lines[1:]:
+                      if row not in existing_rows:
+                          new_rows.append(row)
+                          existing_rows.add(row)
+
+                  if new_rows:
+                      with open(target_file, "a", encoding="utf-8") as f:
+                          for row in new_rows:
+                              f.write(f"\n{row}")
+              else:
+                  # File does not exist in any tier; route to undefined/
+                  target_file = os.path.join(UNDEFINED_DIR, filename)
+                  shutil.copy2(upstream_file, target_file)
+          EOF
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add ats-companies/
+
+          if git diff --staged --quiet; then
+            echo "No CSV updates detected."
+          else
+            git commit -m "chore(sync): update company CSVs and ingest new upstream files into undefined"
+            git push origin main
+          fi
