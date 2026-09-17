@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import List
 
 import asyncpg
-from pipeline_engine.engine import RunEngine
 from rich.live import Live
 
 from src.scraping.configuration_manager import DynamicConfigManager
@@ -15,6 +14,7 @@ from src.scraping.database.postgres import (
     DescriptionCachePostgres,
     JobRepositoryPostgres,
 )
+from src.scraping.pipeline_engine.engine import RunEngine
 from src.scraping.ui.cli import ATSState, Dashboard
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -36,35 +36,39 @@ logger = logging.getLogger("orchestrator")
 
 async def ui_worker(ui_queue: asyncio.Queue, dashboard: Dashboard, live: Live) -> None:
     while True:
-        msg = await ui_queue.get()
-        if msg is None:
+        try:
+            msg = await ui_queue.get()
+            if msg is None:
+                ui_queue.task_done()
+                break
+
+            msg_type = msg.get("type")
+            ats = msg.get("ats")
+
+            if msg_type == "start":
+                if ats in dashboard.pending:
+                    dashboard.pending.remove(ats)
+                dashboard.working[ats] = ATSState()
+            elif msg_type == "progress":
+                if ats in dashboard.working:
+                    state = dashboard.working[ats]
+                    state.current = msg.get("current", 0)
+                    state.total = msg.get("total", 0)
+                    state.slug = msg.get("slug", "")
+                    state.found = msg.get("found", 0)
+                    state.queued = msg.get("queued", 0)
+                    state.dupes = msg.get("dupes", 0)
+            elif msg_type == "finish":
+                if ats in dashboard.working:
+                    del dashboard.working[ats]
+                if ats not in dashboard.finished:
+                    dashboard.finished.append(ats)
+
+            live.update(dashboard.generate_layout(), refresh=True)
+        except Exception as exc:
+            logger.error(f"[UI Worker] Render error: {exc}", exc_info=True)
+        finally:
             ui_queue.task_done()
-            break
-
-        msg_type = msg.get("type")
-        ats = msg.get("ats")
-
-        if msg_type == "start":
-            if ats in dashboard.pending:
-                dashboard.pending.remove(ats)
-            dashboard.working[ats] = ATSState()
-        elif msg_type == "progress":
-            if ats in dashboard.working:
-                state = dashboard.working[ats]
-                state.current = msg.get("current", 0)
-                state.total = msg.get("total", 0)
-                state.slug = msg.get("slug", "")
-                state.found = msg.get("found", 0)
-                state.queued = msg.get("queued", 0)
-                state.dupes = msg.get("dupes", 0)
-        elif msg_type == "finish":
-            if ats in dashboard.working:
-                del dashboard.working[ats]
-            if ats not in dashboard.finished:
-                dashboard.finished.append(ats)
-
-        live.update(dashboard.generate_layout())
-        ui_queue.task_done()
 
 
 async def get_active_ats_platforms(company_repo: CompanyRepository, cfg: DynamicConfigManager) -> List[ATS]:
@@ -89,7 +93,7 @@ async def get_active_ats_platforms(company_repo: CompanyRepository, cfg: Dynamic
 
 
 async def main_loop() -> None:
-    cfg_path = Path(__file__).resolve().parent.parent.parent / "configs" / "scraper.json"
+    cfg_path = Path(__file__).resolve().parent.parent / "configs" / "scraper.json"
     cfg = DynamicConfigManager(logger, cfg_path)
 
     async with asyncpg.create_pool(PG_DSN) as pool:
@@ -115,7 +119,6 @@ async def main_loop() -> None:
                 ui_queue,
                 max_concurrent_ats=5
             )
-
             await engine.run(ats_list)
 
             await ui_queue.put(None)

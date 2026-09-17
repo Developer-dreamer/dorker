@@ -13,31 +13,41 @@ Do NOT prepend or append markdown code blocks, conversational text, notes, or ex
 1. Extract one of the next types of job's family:
 - Backend: role is backend focused only (e.g., API development, Infrastructure building). Tooling mention permitted (building CLI, configs, etc.) unless primary focus lies in backend perspecite
 - Frontend: role is frontend focuesd (e.g. UI, UX). Design mention is permitted unless it requires coding.
-- Full-Stack: the role combines both backend and frontend. If role is backend however mentioned any frontend framework or tool as Required, "Nice-to-have", etc - still mark as Full-Stack.
+- Full-Stack: the role combines both backend and frontend ("Go + JS", "Python + React", etc.).
 - QA_SDET (stands for Quality assurance or Software development in Test): if role's primarily focus on testing, designing testing pipelines, UI testing, manual, etc.
 - Devops/platform: if role's primarily focus on configuration, cloud management, CI/CD pipelines. If role requires only basic scripting with python, bash, etc. however keeping focus as Devops - mark as Devops.
-- DATA_AI: if role's focuses are either AI engineering (integrating AI and ML into standart backend) OR Data Science (building models from scratch or focusing on data science fundamentals like math, optimizations, etc.). Does not include here data analysts, data engineers and other data related fields.
+- DATA_AI: strictly for Software AI/ML (NLP, LLMs, Computer Vision, Recommenders, tabular business ML). Natural sciences (Bioinformatics, Computational Chemistry, Geophysics, Biostatistics, Quantum Mechanics) MUST be classified as OTHER
 - Mobile: if role's primary focus is mobile or desktop development (React Native, Swift, Java, Kotlin, etc.) or it is any of other types, however mentiones in requirements commitment to mobile development (e.g.: "This is backend role, however you're required to maintain our Kotlin app...").
-- Non-technical: if role is management, customer, marketing, etc.
+- Non-technical: If the primary deliverable is Sales, Customer Support, Regulatory/Financial Compliance, Teaching, or Survey Operations—even if it requires SQL, Python scripting, or technical knowledge—classify as NON_TECHNICAL.
 - Other: if none of listed above criterias matched - keep Other.
+  <critical_constraint>
+  - A role is BACKEND if the work involves building web services, databases, orchestrators, or APIs, even if the payload or product involves LLMs, agents, or AI. It is only DATA_AI if the engineer's primary duty is developing, training, fine-tuning, or mathematically evaluating model weights.
+  </critical_constraint>
 
-2. Extract geographic scope:
-- Global: if role explicitly specifies that candidates are hired globally, no legal requirement, etc.
-- Regional: if role does not hire globally, however legal requierements still not present. For example: EMEA, LATAM, SEA considered regional geographic scope.
-- Domestic: if role does require specific country or region residence (e.g., Candidates within EU only, U.S. Only, etc)
-- Unknown: if it is impossible to identify the scope of the job according to above's requirements
+2. Extract Geographic Scope:
+- DOMESTIC: Hiring is legally restricted to a single country OR a legally unified economic bloc requiring specific residency/work authorization (e.g., "US Only", "Must reside in the UK", "EU only", "Must have EU work permit").
+- REGIONAL: Hiring is defined by timezone or broad geographical corridors with no single legal work permit required (e.g., "EMEA", "LATAM", "APAC", "Americas").
+- GLOBAL: Hiring is explicitly open worldwide, anywhere, or via an Employer of Record (e.g., Deel/Remote.com) with no country/bloc restrictions.
+- UNKNOWN: No clear geographic or legal constraints are stated.
 
 3. Extract workplace type:
 - Remote: role does not require any office attendance at all, no probation period on-site, no "attend office to receive youre devices", no hybrid. Nothing. Pure remote availability.
 - Hybrid: if role specified as remote, operational activity going on remote, however it requires 'device pick up' on-site - mark as hybrid. If role explicitly specifies hybrid, or Remote or requires regular office attendance - mark it as hybrid. EXCEPTION: role is remote, however requires traveling one-twice, etc. times per year.
 - On-Site: role clearly specifies that all work is going on in office with no exceptions and alternatives.
-- Unknown: no clearl workplace type was specified anywhere in the description or location fields.
+- Unknown: no clear workplace type was specified anywhere in the description or location fields.
 
-4. Extract office location: if any clear mention of main office appear in the descripiton, or the on-site/hybrid role mention where you will be located when working - fill it with next format: "City, Country". Otherwise - leave empty.
+4. Extract Office Location:
+If the role is HYBRID or ON_SITE, extract "City, Country" (e.g., "London, GB"). If the role is REMOTE, set to null. Do NOT output an empty string.
 
-5. Extract target jurisdiction: if role considered domestic ONLY, retrieve country (aka US, GB, RO) or region (aka. EU) in format ISO 3166-1 Alpha-2 (two-letter) country codes. If geogaphic scope is not domestic - leave empty.
+5. Extract Target Jurisdiction:
+- If Geographic Scope is DOMESTIC:
+  - If restricted to a single country, extract its 2-letter ISO 3166-1 Alpha-2 code (e.g., "US", "GB", "UA").
+  - If restricted to the European Union, extract "EU".
+- If Geographic Scope is NOT DOMESTIC (GLOBAL, REGIONAL, or UNKNOWN): set to null. Do NOT output an empty string, spaces, or "N/A".
 
-6. Extract region: if only role considered regional, retrieve one of the next regions "EMEA", "LATAM", "APAC", "AMER", "APJ", "CEE", "MENA", "SEA". If other geographic scope type or unspecified in the description or location fields - leave empty.
+6. Extract Target Region:
+- If Geographic Scope is REGIONAL: extract "EMEA", "LATAM", "APAC", or "AMER".
+- If Geographic Scope is NOT REGIONAL: set to null. Do NOT output an empty string, spaces, or "N/A".
 
 7. Extract years of experience:
    a. min_years_experience value contains the minimal amount of total years of experience mentioned in description. For example: "You have 3-5+ years with Go in production" -> min_years_experience = 3; "You have 10 years of experience in IT and at least 5 years of production development" -> min_years_experience = 5.
@@ -57,3 +67,28 @@ Do NOT prepend or append markdown code blocks, conversational text, notes, or ex
 
 12. Save all results into JSON model, with schema requested via API. Do not omit any field. Leave empty if allowed in extraction protocol.
 </instructions>
+
+<negative_constraints>
+CRITICAL: To prevent misclassification, you MUST obey these exclusion rules:
+
+1. Experience Null Rule: If no specific numerical years of experience are mentioned, you MUST output `null`. Do NOT default to `0`. `0` is strictly forbidden unless the text explicitly says "0 years" or "no experience required".
+
+2. DATA_AI Exclusion: Using AI coding assistants (e.g., Copilot, Cursor, Claude Code) or calling basic LLM APIs does NOT make a role DATA_AI. Feeding data to ML models does NOT make it DATA_AI. Mark it BACKEND. To be DATA_AI, the core role must be training, tuning, or building models.
+
+3. QA_SDET Exclusion: Roles focused on "Technical Support", "Helpdesk", "Customer Success", or "Troubleshooting client issues" are NOT QA_SDET, even if they mention filing JIRAs or reproducing bugs. Mark them as OTHER.
+
+4. FULLSTACK Exclusion: Embedded systems, IoT, hardware, and C/C++ roles (e.g., working with RTOS, microcontrollers) are NEVER Fullstack. Mark them as OTHER.
+
+5. HYBRID Override: If a role lists a physical office city (implying ON_SITE) but explicitly mentions "Homeoffice", "flexible remote options", or "work from home" in the benefits/perks, you MUST classify it as HYBRID, not ON_SITE.
+
+6. Array Normalization: When extracting languages, split grouped strings. Do not output "C/C++" or "PostgreSQL/MySQL". Split them into separate array items: ["C", "C++"] and ["PostgreSQL", "MySQL"].
+
+7. EU vs. EMEA Rule: 
+   - If text says "EU only", "must reside in the EU", or requires "EU work authorization", you MUST set geographic_scope = "DOMESTIC" and target_jurisdiction = "EU". Do NOT set this to REGIONAL or EMEA.
+   - Set geographic_scope = "REGIONAL" and target_region = "EMEA" ONLY if the posting specifies the broad timezone/corridor "EMEA" or "Europe/Middle East/Africa" without restricting hiring strictly to European Union member states.
+
+8. Strict Null Rule: For any optional string field (target_jurisdiction, target_region, office_location_city), if no value applies, you MUST output literal JSON `null`. NEVER output empty strings `""`, whitespace `"   "`, or placeholder text like `"None"` / `"N/A"`.
+
+9. Priority rule: prioritize the Job Title and Key Responsibilities over company introduction boilerplate.
+
+</negative_constraints>

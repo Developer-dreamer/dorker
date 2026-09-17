@@ -1,20 +1,19 @@
 import asyncio
 import json
-from datetime import time
+import time
 from logging import Logger
 from typing import Any, Tuple
 from urllib.parse import urlparse
 
-from base import BaseScraper
-from description_cache import DescriptionCache
-from exceptions import CompanyNotFoundError
-from models import Job, JobDB
 from pydantic import ValidationError
-from ui.cli import Counts, DescCounts
 
-from shared.types.priority_semaphore import PrioritySemaphore
+from src.scraping.base import BaseScraper
 from src.scraping.configuration_manager import DynamicConfigManager
-from src.scraping.database.base import ATS, CompanyRepository
+from src.scraping.database.base import ATS, ATSCompany, CompanyRepository, DescriptionCache
+from src.scraping.exceptions import CompanyNotFoundError
+from src.scraping.models import Job, JobDB
+from src.scraping.ui.cli import Counts, DescCounts
+from src.shared.types.priority_semaphore import PrioritySemaphore
 
 STREAM_DESCRIPTION_CONCURRENCY = 8
 
@@ -61,13 +60,13 @@ class ScraperRunner:
         # Internal semaphore per ATS for description fetching
         self.sem = asyncio.Semaphore(self.concurrency)
         description_concurrency = self.per_ats_cfg_copy.get("description_concurrency", concurrency)
-        if not isinstance(description_concurrency, int):
-            self.description_concurrency = concurrency
+        if isinstance(description_concurrency, int):
+            self.description_concurrency = description_concurrency
         else:
-            self.description_concurrency = 0
+            self.description_concurrency = concurrency
 
         self.description_sem = asyncio.Semaphore(max(1, self.description_concurrency))
-        self.tenant_delay = float(self.per_ats_cfg_copy.get("tenant_delay_seconds"), 0)
+        self.tenant_delay = float(self.per_ats_cfg_copy.get("tenant_delay_seconds", 0))
         self.description_delay = float(self.per_ats_cfg_copy.get("description_delay_seconds", 0))
 
         self.uses_streaming = bool(self.per_ats_cfg_copy.get("singleton") and hasattr(cfg["scraper"], "fetch_stream"))
@@ -81,7 +80,13 @@ class ScraperRunner:
         self.tenants_completed = 0
         self.start = time.time()
 
-        self.scraper = self.per_ats_cfg_copy["scraper"](self.ats.name, timeout=self.timeout)
+        if self.per_ats_cfg_copy.get("singleton"):
+            # Singletons crawl a global platform and accept the ATS name
+            self.scraper = self.per_ats_cfg_copy["scraper"](self.ats.name, timeout=self.timeout)
+        else:
+            # Multi-tenant scrapers require a tenant-specific slug/token per request
+            self.scraper = None
+
         self.pending_descriptions: set[asyncio.Task[Tuple[int, Job]]] = set()
 
         self.counts, self.desc_counts = Counts(), DescCounts()
@@ -185,7 +190,7 @@ class ScraperRunner:
 
         try:
             async for job in self.scraper.fetch_stream():
-                cached = self.description_cache.get(job)
+                cached = await self.description_cache.get(job)
                 if cached:
                     job.description = cached
                     desc_stats.cache += 1
@@ -226,7 +231,7 @@ class ScraperRunner:
                 f"[{self.ats.name}] [BATCH] Dispatching tenants {i + 1} to {min(i + batch_size, len(self.ats.companies))} "
                 f"of {len(self.ats.companies)}..."
             )
-            await asyncio.gather(*(self._scrape_tenant(c_id, s, kw) for c_id, s, kw in batch))
+            await asyncio.gather(*(self._scrape_tenant(compn) for compn in batch))
 
             batch_elapsed = time.time() - batch_t0
             total_elapsed = time.time() - self.start
@@ -276,13 +281,23 @@ class ScraperRunner:
 
         return False
 
-    async def _scrape_tenant(self, company_id: int, slug: str, kw: dict[str, Any]) -> None:
+    async def _scrape_tenant(self, company: ATSCompany) -> None:
         active_tenant_delay = float(self.cfg.get(self.ats.name).get("tenant_delay_seconds", 0))
+
+        company_dict = company.model_dump(exclude_none=True)
+        kwargs_factory = self.per_ats_cfg_copy.get("kwargs")
+        slug = self.per_ats_cfg_copy.get("slug")(company_dict)
+        kw = {}
+        if slug:
+            kw = kwargs_factory(company_dict) if kwargs_factory else {}
 
         started = time.time()
         jobs: list[Job] = []
         scraper = None
         err = None
+
+        company_id = company.id
+        slug = company.slug
 
         async with self.sem:
             try:
@@ -339,7 +354,7 @@ class ScraperRunner:
                 self.seen_keys.add(key)
 
                 if scraper is not None and not self.per_ats_cfg_copy.get("skip_description_enrichment"):
-                    if self.description_cache.get(job) or job.description:
+                    if await self.description_cache.get(job) or job.description:
                         await self._ensure_description(job, tenant_desc_stats)
                     else:
                         async with self.description_sem:
@@ -374,8 +389,8 @@ class ScraperRunner:
         self.logger.info(
             f"  [{self.ats.name}] [{self.tenants_completed}/{len(self.ats.companies)}] [{tag}] '{slug}' in {elapsed:.1f}s: "
             f"{len(jobs)} found -> {tenant_queued} queued, {tenant_deduped} dupes "
-            f"(desc: {tenant_desc_stats['fetched']} fetched, {tenant_desc_stats['cache']} cached, "
-            f"{tenant_desc_stats['present']} present, {tenant_desc_stats['missing']} missing)"
+            f"(desc: {tenant_desc_stats.fetched} fetched, {tenant_desc_stats.cache} cached, "
+            f"{tenant_desc_stats.present} present, {tenant_desc_stats.missing} missing)"
         )
 
     async def _run_scraper(self,
@@ -439,9 +454,10 @@ class ScraperRunner:
         for task in done:
             company_id, job = task.result()
             await self._write_streamed_job(company_id, job)
+        self.pending_descriptions.difference_update(done)
 
     async def _ensure_description(self, job: Job, tenant_desc_counts: DescCounts | None = None):
-        cached = self.description_cache.get(job)
+        cached = await self.description_cache.get(job)
         fresh = job.description
 
         async with self.incr_lock:
@@ -455,7 +471,7 @@ class ScraperRunner:
 
                     return
 
-                self.description_cache.set(job, fresh)
+                await self.description_cache.set(job, fresh)
 
                 self.desc_counts.present += 1
                 if tenant_desc_counts:
@@ -484,7 +500,7 @@ class ScraperRunner:
         async with self.incr_lock:
             if description:
                 job.description = description[:25_000]
-                self.description_cache.set(job, job.description)
+                await self.description_cache.set(job, job.description)
                 self.desc_counts.fetched += 1
                 if tenant_desc_counts:
                     tenant_desc_counts.fetched += 1

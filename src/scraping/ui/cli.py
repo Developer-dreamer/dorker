@@ -39,8 +39,6 @@ class Dashboard:
         self.start_time = time.time()
         self.total_ats = len(ats_list)
 
-    def populate(self, ats_list: list[str]):
-
     def generate_layout(self) -> Group:
         completed = len(self.finished)
         total = self.total_ats

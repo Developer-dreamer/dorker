@@ -24,7 +24,9 @@ MODEL_TAG = "golden_set_manual"
 INFRA = ['smartrecruiters:744000141710019','smartrecruiters:744000142054520','dou:361822','adp:41a778b2-3a5e-42c7-9770-87f62458fb3e:9200865371904_2:9201277181986_1','dou:368562','dou:365325','greenhouse:8749950002','dou:371742','dou:359220','dou:369470','greenhouse:4705232006','greenhouse:4705191006','greenhouse:8701253002','dou:370649','dou:369435','greenhouse:6173884004','rippling:052b68e5-9417-4be3-8e5b-fd28d45b1c86','greenhouse:8682860002','dou:369168','dou:370677']
 AI = ['dou:353725','ashby:e5b56446-5cf6-4acc-85ed-2612873c5148','dou:371076','dou:352466','dou:369989','dou:368701','greenhouse:5220321007','dou:368813','jazzhr:wFjXAodd3Y','dou:370924','dou:369992','dou:370712','dou:363877','dou:371009','dou:369636','dou:371691','greenhouse:5365275008','dou:371360','greenhouse:4963900101','dou:364511']
 
-JOB_IDS = list(set(INFRA) | set(AI))
+REWRITE = ['jazzhr:DjTrHJESEL', 'recruitee:2730599', 'greenhouse:8764268002', 'greenhouse:8721134002', 'greenhouse:4966671101', 'greenhouse:6179066004', 'greenhouse:6145900004', 'lever:d99a8fe3-7646-4775-9712-858b081f30c7', 'greenhouse:8104436', 'lever:e1d6c7a6-9467-4cfe-8cd9-ea6bd8757791', 'greenhouse:6138019004', 'rippling:c2461f4d-aed9-4871-accb-3c30512e5fa6', 'lever:1be33200-057e-4599-8924-02601d871d50', 'greenhouse:4728512005', 'greenhouse:5203984007', 'rippling:2b0fbbe4-6b7c-4187-a020-1f9e7f2c7362', 'jazzhr:MmI6ClLJF2', 'greenhouse:8635416002', 'greenhouse:5396524008', 'lever:b5d3a603-759a-4702-a336-59bf817e270d', 'greenhouse:7978685003', 'greenhouse:8130787', 'ashby:351a48db-3b7c-4e4b-972f-e86b72250ded', 'greenhouse:5217807007', 'greenhouse:8747416002', 'lever:f1b19dd4-0b59-4dc8-a61e-4a8ea1a5f344', 'greenhouse:8646544002', 'recruitee:2722237', 'ashby:39c2b79b-0269-4711-9354-be5ccf747a98', 'greenhouse:8658763002', 'ashby:f3d1ad18-1845-4811-b69f-65d3cc8a545e', 'adp:555e77b2-029a-4357-8712-1dd910b41621:19000101_000001:9201150583988_1', 'ashby:619d95e3-6f53-4754-9c76-7607603bbbfc', 'greenhouse:8122131', 'greenhouse:6178814004', 'recruitee:2715852', 'greenhouse:8164730', 'jazzhr:GPqtcUrmJT']
+
+JOB_IDS = REWRITE
 
 
 @st.cache_resource
@@ -87,6 +89,21 @@ def save_golden_record(conn: connection, payload: Dict[str, Any]) -> None:
         payload["has_mandatory_travel"],
         payload["has_uncompensated_oncall"],
         payload["detected_operational_cues"],
+    )
+
+    with conn.cursor() as cur:
+        cur.execute(query, params)
+        
+def update_row(conn: connection, payload: Dict[str, Any]) -> None:
+    query = f"""
+                UPDATE jobs_fact_sheets
+                SET target_jurisdiction = %s
+                WHERE id = %s;
+                """
+
+    params = (
+        payload["target_jurisdiction"],
+        payload["id"],
     )
 
     with conn.cursor() as cur:
@@ -259,7 +276,7 @@ with col_right:
                 "detected_operational_cues": parse_csv(detected_operational_cues_raw),
             }
 
-            save_golden_record(conn, payload)
+            update_row(conn, payload)
 
             if st.session_state.index < total - 1:
                 st.session_state.index += 1

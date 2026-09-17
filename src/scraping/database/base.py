@@ -1,7 +1,8 @@
 from typing import List, Protocol
 
-from models import Job, JobDB
 from pydantic import BaseModel
+
+from src.scraping.models import Job, JobDB
 
 
 class JobRepository(Protocol):
@@ -12,13 +13,21 @@ class ATSCompany(BaseModel):
     id: int
     name: str
     slug: str
-    url: str
+    url: str | None
 
 class ATS(BaseModel):
     name: str
     tier: int
 
-    companies: List[ATSCompany]
+    companies: List[ATSCompany] = []
+
+    def __hash__(self):
+        return hash(self.name)
+
+    def __eq__(self, other):
+        if not isinstance(other, ATS):
+            return False
+        return self.name == other.name
 
 
 class CompanyRepository(Protocol):

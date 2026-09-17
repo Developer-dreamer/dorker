@@ -10,6 +10,10 @@ from src.scraping.models import Job, JobDB
 from .base import ATS, ATSCompany, description_keys
 
 
+def _sanitize_record(record: tuple | list) -> tuple:
+    return tuple(val.replace("\x00", "") if isinstance(val, str) else val for val in record)
+
+
 class JobRepositoryPostgres:
     def __init__(self, logger: Logger, pool: Pool) -> None:
         self.logger = logger
@@ -28,7 +32,7 @@ class JobRepositoryPostgres:
                     )
                     ON CONFLICT (id) DO NOTHING;
                 """
-        buffer = [self._sanitize_record(self._job_to_db_params(job)) for job in jobs]
+        buffer = [_sanitize_record(self._job_to_db_params(job)) for job in jobs]
 
         if not buffer:
             return
@@ -56,9 +60,6 @@ class JobRepositoryPostgres:
                 self.logger.critical(
                     f"[DB Writer] Unexpected error during flush: {unhandled}", exc_info=True
                 )
-
-    def _sanitize_record(self, record: tuple | list) -> tuple:
-        return tuple(val.replace("\x00", "") if isinstance(val, str) else val for val in record)
 
     def _job_to_db_params(self, job: JobDB) -> tuple[Any, ...]:
         return (
@@ -111,7 +112,6 @@ class CompanyRepositoryPostgres:
             ats.companies.append(company)
 
         return list(seen_ats.values())
-
 
     async def get_active_tenats_by_ats(self, ats: str) -> List[ATSCompany]:
         query = """
@@ -179,6 +179,9 @@ class DescriptionCachePostgres:
                 """
 
         for key_type, key_value in description_keys(job):
+            key_type = key_type.replace("\x00", "")
+            key_value = key_value.replace("\x00", "")
+
             row = await self.pool.fetchrow(query, key_type, key_value)
             if row:
                 self.logger.info(f"Cache HIT for job_id {job.global_id} by key {key_value} of type {key_type}")
@@ -187,8 +190,13 @@ class DescriptionCachePostgres:
         return None
 
     async def set(self, job: Job, description: str) -> None:
+        description = description.replace("\x00", "")
         blob = self._encode(description)
-        rows = [(*key, blob) for key in description_keys(job)]
+        rows = []
+        for key_type, key_value in description_keys(job):
+            key_type = key_type.replace("\x00", "")
+            key_value = key_value.replace("\x00", "")
+            rows.append((key_type, key_value, blob))
         if not rows:
             return
 
@@ -213,7 +221,7 @@ class DescriptionCachePostgres:
         )
 
         query = f"""
-            INSERT INTO description_cache (key_type, key_value, description)
+            INSERT INTO description_cache (key_type, key_value, payload)
             VALUES ($1, $2, $3)
             ON CONFLICT (key_type, key_value) {conflict_clause}
         """

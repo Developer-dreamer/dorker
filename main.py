@@ -1,17 +1,17 @@
 import asyncio
 import logging
+import re
 from json import JSONDecodeError
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Optional
+from uuid import UUID
 
 import aiohttp
 import asyncpg
 import joblib
-from uuid import UUID
 import uuid6
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sentence_transformers import SentenceTransformer
-from tqdm.asyncio import tqdm
 
 from src.analytics.models import Analytics, MatchedJob, SuitabilityTier
 
@@ -27,29 +27,49 @@ ROOT = Path(__file__).resolve().parent
 PG_DSN = "postgresql://postgres:password@localhost:5432/dorker_db"
 
 PIPELINE_VERSION = "v0.1.2"
+ITERATION = 2
 
+PERKS_SIGNAL_PATTERN = re.compile(
+    r"(?i)\b("
+    r"remote|hybrid|on[- ]?site|homeoffice|office|co[- ]?working|"
+    r"travel|relocat|visa|sponsor|citizenship|clearance|"
+    r"timezone|overlap|est|pst|utc|gmt|emea|latam|apac|"
+    r"b2b|contractor|fop|w2|c2c"
+    r")\b"
+)
 
 def filter_job_description_optimized(raw_text: str, clf: Any, embedder: Any) -> str:
     blocks = [b.strip() for b in raw_text.split("\n\n") if b.strip()]
+    if not blocks:
+        return ""
+
     vectors = embedder.encode(blocks)
-
-    # Get probabilities for all classes
     probs = clf.predict_proba(vectors)
-    classes = clf.classes_
+    classes = list(clf.classes_)
 
-    # Get indices for the classes we want to keep
-    req_idx = list(classes).index("REQUIREMENTS")
-    resp_idx = list(classes).index("RESPONSIBILITIES")
-    comp_idx = list(classes).index("COMPENSATION_LOCATION")
+    req_idx = classes.index("REQUIREMENTS")
+    resp_idx = classes.index("RESPONSIBILITIES")
+    comp_idx = classes.index("COMPENSATION_LOCATION")
+    perk_idx = classes.index("BENEFITS_PERKS")
 
     filtered_blocks = []
 
     for i, block in enumerate(blocks):
-        # If the combined probability of our KEEP classes is greater than 0.35
-        # (Lowering the threshold from the default 0.50 to favor Recall)
-        keep_prob = probs[i][req_idx] + probs[i][resp_idx] + probs[i][comp_idx]
+        # 1. First block guard: Always keep if it contains basic title/metadata
+        if i == 0 and len(block) < 300:
+            filtered_blocks.append(block)
+            continue
 
-        if keep_prob >= 0.35:
+        core_prob = probs[i][req_idx] + probs[i][resp_idx] + probs[i][comp_idx]
+        perk_prob = probs[i][perk_idx]
+
+        # 2. Keep core functional blocks
+        if core_prob >= 0.35:
+            filtered_blocks.append(block)
+            continue
+
+        # 3. Conditionally keep BENEFITS_PERKS only if operational cues exist
+        if perk_prob >= 0.35 and PERKS_SIGNAL_PATTERN.search(block):
             filtered_blocks.append(block)
 
     return "\n\n".join(filtered_blocks)
@@ -114,63 +134,24 @@ async def fetch_golden_set(pool: asyncpg.Pool) -> list[asyncpg.Record]:
 class JobFactSheet(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
+    # =========================================================================
+    # PHASE 0: Identifiers
+    # =========================================================================
     id: UUID = Field(default_factory=uuid6.uuid7)
     job_id: str
-    # --- 1. Location & Legal Constraints ---
-    job_family: Literal[
-        "BACKEND",
-        "FRONTEND",
-        "FULLSTACK",
-        "QA_SDET",
-        "DEVOPS_PLATFORM",
-        "DATA_AI",
-        "MOBILE",
-        "NON_TECHNICAL",
-        "OTHER",
-    ] = Field(..., description=("Literal representing job alignment. Names speaks for themselves."))
-    geographic_scope: Literal[
-        "UNKNOWN",
-        "DOMESTIC",
-        "REGIONAL",
-        "GLOBAL",
-    ] = Field(
-        ...,
-        description=(
-            "Geographic classification. DOMESTIC if restricted to specific countries "
-            "(e.g., US only), strict domestic tax forms (W-2 only), citizenship mandates, or clearance. "
-            "GLOBAL if open to worldwide, Europe, Ukraine, or B2B/EOR arrangements. "
-            "REGIONAL if fixed to specific hours alignment (APAC, EMEA, SEA, LATAM)."
-        ),
-    )
-    workplace_type: Literal["REMOTE", "HYBRID", "ON_SITE", "UNKNOWN"] = Field(
-        ...,
-        description="Operational workplace model: REMOTE, HYBRID, or ON_SITE.",
-    )
-    office_location_city: str | None = Field(
-        default=None,
-        description="Target office location/city if workplace_type is HYBRID or ON_SITE.",
-    )
-    target_jurisdiction: str | None = Field(
-        default=None,
-        description=(
-            "Country ISO code if DOMESTIC and clear country specified: US, UA, GB. Region code if"
-            "legal region specified (e.g., EU). Leave empty if geographic_scope IS NOT 'DOMESTIC'"
-        ),
-    )
-    region: Literal["EMEA", "LATAM", "APAC", "AMER", "APJ", "CEE", "MENA", "SEA"] | None = Field(
-        default=None,
-        description=(
-            "Regional abbreviation of operational timezone requirement: EMEA, APAC, LATAM."
-            "Leave empty if geographic_scope IS NOT 'REGIONAL'"
-        ),
-    )
-    timezone_overlap_requested: str | None = Field(
-        default=None,
-        description="Target timezone alignment if requested (e.g., 'EST', '4 hours US East overlap').",
-    )
 
-    # --- 2. Seniority & Experience ---
-
+    # =========================================================================
+    # PHASE 1: Concrete Technical Grounding (Literal token extractions)
+    # The model inspects explicit requirements without committing to taxonomy.
+    # =========================================================================
+    primary_backend_languages: list[str] = Field(
+        default_factory=list,
+        description="Primary programming languages required for daily backend development (e.g., Go, Python, C#).",
+    )
+    secondary_tools: list[str] = Field(
+        default_factory=list,
+        description="Databases, infrastructure, cloud providers, and libraries (e.g., PostgreSQL, Docker, Redis, GCP, AWS).",
+    )
     min_years_experience: int | None = Field(
         default=None,
         description=(
@@ -186,19 +167,10 @@ class JobFactSheet(BaseModel):
         ),
     )
 
-    # --- 3. Technology Stack & Architectural Focus ---
-
-    primary_backend_languages: list[str] = Field(
-        default_factory=list,
-        description="Primary programming languages required for daily backend development (e.g., Go, Python, C#).",
-    )
-    secondary_tools: list[str] = Field(
-        default_factory=list,
-        description="Databases, infrastructure, cloud providers, and libraries (e.g., PostgreSQL, Docker, Redis, GCP, AWS).",
-    )
-
-    # --- 4. Operational Red Flags ---
-
+    # =========================================================================
+    # PHASE 2: Operational Signals & Explicit Flags
+    # Simple binary extractions derived directly from specific textual cues.
+    # =========================================================================
     is_legacy_maintenance: bool = Field(
         default=False,
         description=(
@@ -218,12 +190,97 @@ class JobFactSheet(BaseModel):
         default=False,
         description="True if on-call rotation is required without explicit compensation parameters.",
     )
-
-    # --- 5. Optional info ---
     detected_operational_cues: list[str] = Field(
         default_factory=list,
         description="Exact linguistic cues indicating management debt (e.g., 'fast-paced environment', 'firefighting').",
     )
+
+    # =========================================================================
+    # PHASE 3: Location & Jurisdiction Details (Extractive tokens)
+    # Extracts concrete geographic entities before deciding high-level scope.
+    # =========================================================================
+    workplace_type: Literal["REMOTE", "HYBRID", "ON_SITE", "UNKNOWN"] = Field(
+        ...,
+        description="Operational workplace model: REMOTE, HYBRID, or ON_SITE.",
+    )
+    office_location_city: Optional[str] = Field(
+        default=None,
+        description="Target office location/city if workplace_type is HYBRID or ON_SITE.",
+    )
+    target_jurisdiction: Optional[str] = Field(
+        default=None,
+        description=(
+            "Country ISO code if DOMESTIC and clear country specified: US, UA, GB. Region code if "
+            "legal region specified (e.g., EU). Set to null if not restricted to a single country/EU."
+        ),
+    )
+    region: Optional[Literal["EMEA", "LATAM", "APAC", "AMER", "APJ", "CEE", "MENA", "SEA"]] = Field(
+        default=None,
+        description=(
+            "Regional abbreviation of operational timezone requirement: EMEA, APAC, LATAM, etc. "
+            "Must be null if not an operational timezone corridor."
+        ),
+    )
+    # timezone_overlap_requested: Optional[str] = Field(
+    #     default=None,
+    #     description="Target timezone alignment if requested (e.g., 'EST', '4 hours US East overlap').",
+    # )
+
+    # =========================================================================
+    # PHASE 4: High-Level Classification Enums (Synthesis)
+    # Generated LAST. The model conditions on all tokens generated in Phases 1–3.
+    # =========================================================================
+    geographic_scope: Literal[
+        "UNKNOWN",
+        "DOMESTIC",
+        "REGIONAL",
+        "GLOBAL",
+    ] = Field(
+        ...,
+        description=(
+            "Geographic classification conditioned on target_jurisdiction and region. "
+            "DOMESTIC if restricted to specific countries (US only, EU only), tax forms, or clearance. "
+            "GLOBAL if open worldwide with no country/bloc mandate. "
+            "REGIONAL if bound to operational timezones (EMEA, LATAM, APAC)."
+        ),
+    )
+    job_family: Literal[
+        "BACKEND",
+        "FRONTEND",
+        "FULLSTACK",
+        "QA_SDET",
+        "DEVOPS_PLATFORM",
+        "DATA_AI",
+        "MOBILE",
+        "NON_TECHNICAL",
+        "OTHER",
+    ] = Field(
+        ...,
+        description=(
+            "Final classification of role alignment. Must be consistent with the "
+            "extracted primary_backend_languages, secondary_tools, and responsibilities above."
+        ),
+    )
+
+    # =========================================================================
+    # Deserialization Sanitizers
+    # =========================================================================
+    @field_validator(
+        "target_jurisdiction",
+        "region",
+        "office_location_city",
+        mode="before",
+    )
+    @classmethod
+    def empty_str_to_none(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            v_clean = v.strip()
+            if v_clean == "" or v_clean.lower() in {"null", "none", "n/a"}:
+                return None
+            return v_clean
+        return v
 
 
 # Candidate skill profile definitions for matching
@@ -406,8 +463,8 @@ def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
         pros.append("Hybrid role with office located in Kyiv.")
 
     # 3.2 Timezone Alignment
-    if sheet.timezone_overlap_requested:
-        warnings.append(f"Timezone alignment requested: {sheet.timezone_overlap_requested}.")
+    # if sheet.timezone_overlap_requested:
+    #     warnings.append(f"Timezone alignment requested: {sheet.timezone_overlap_requested}.")
 
     # 3.3 Operational Cues & Uncompensated On-Call
     if sheet.has_uncompensated_oncall:
@@ -469,13 +526,12 @@ def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
 
 INSERT_COLUMNS = (
     "id", "job_id", "job_family", "geographic_scope", "workplace_type",
-    "office_location_city", "target_jurisdiction", "region",
-    "timezone_overlap_requested", "min_years_experience",
+    "office_location_city", "target_jurisdiction", "region", "min_years_experience",
     "is_experience_flexible", "primary_backend_languages",
     "secondary_tools", "is_legacy_maintenance",
     "is_pure_network_or_systems", "has_mandatory_travel",
     "has_uncompensated_oncall", "detected_operational_cues",
-    "model", "version",
+    "model", "version", "iteration"
 )
 
 INSERT_QUERY = f"""
@@ -484,12 +540,11 @@ INSERT_QUERY = f"""
 """
 
 async def process_job(
-    job: asyncpg.Record,
+    job_dict: dict[str, Any],
     prompt_template: str,
     session: aiohttp.ClientSession,
     conn: asyncpg.Connection,
 ) -> None:
-    job_dict = dict(job)
     full_prompt = f"{prompt_template}\n\n<job_payload>\n{job_dict}\n</job_payload>"
 
     MODEL = "qwen2.5-coder:7b"
@@ -505,7 +560,7 @@ async def process_job(
     try:
         async with session.post("http://localhost:11434/api/generate", json=payload) as response:
             if response.status != 200:
-                logger.error(f"Ollama API Error for Job {job['id']}: {response.status}")
+                logger.error(f"Ollama API Error for Job {job_dict['id']}: {response.status}")
                 return
 
             response_data = await response.json()
@@ -523,7 +578,7 @@ async def process_job(
             prompt_tps = prompt_eval_count / prompt_duration_s if prompt_duration_s > 0 else 0
 
             logger.info(
-                f"Job {job['id'][:8]} processed | "
+                f"Job {job_dict['id'][:8]} processed | "
                 f"Total: {total_duration_s:.1f}s | "
                 f"Prompt TPS: {prompt_tps:.1f} (Tokens: {prompt_eval_count}) | "
                 f"Gen TPS: {gen_tps:.1f} (Tokens: {eval_count})"
@@ -537,9 +592,10 @@ async def process_job(
                 payload = {
                     **sheet.model_dump(),
                     "id": uuid6.uuid7(),
-                    "job_id": job["id"],
+                    "job_id": job_dict["id"],
                     "model": MODEL,
                     "version": PIPELINE_VERSION,
+                    "iteration": ITERATION,
                 }
 
                 await conn.execute(INSERT_QUERY, *(payload[col] for col in INSERT_COLUMNS))
@@ -562,19 +618,25 @@ async def process_job(
 
             except ValidationError as e:
                 logger.warning(
-                    f"Schema validation failed for {job['id'][:8]}: {e.error_count()} errors"
+                    f"Schema validation failed for {job_dict['id'][:8]}: {e.error_count()} errors"
                 )
                 logger.error(f"Validation Details: {e.errors()}")
                 logger.error(f"Raw LLM Output: {response_data.get('response')}")
             except JSONDecodeError as e:
-                logger.warning(f"JSON Syntax failed for {job['id'][:8]}: {e}")
+                logger.warning(f"JSON Syntax failed for {job_dict['id'][:8]}: {e}")
 
     except Exception as e:
-        logger.error(f"Request failed for {job['id']}: {str(e)}")
+        logger.error(f"Request failed for {job_dict['id']}: {str(e)}")
 
 
 async def run() -> None:
     logger.info("Starting local classification pipeline...")
+
+    clf, embedder = (
+        joblib.load("/Users/serafym/Developer/dorker.space/dorker/block_classifier_nomic.pkl"),
+        SentenceTransformer("nomic-ai/nomic-embed-text-v1.5", trust_remote_code=True, local_files_only=True),
+    )
+    embedder.max_seq_length = 5000
 
     async with asyncpg.create_pool(PG_DSN) as pool:
         jobs = await fetch_golden_set(pool)
@@ -617,7 +679,8 @@ async def run() -> None:
             # Using tqdm for a progress bar
             for job in jobs:
                 print("\n")
-                # job_dict["description"] = filter_job_description_optimized(job["description"], clf, embedder)
+                job = dict(job)
+                job["description"] = filter_job_description_optimized(job["description"], clf, embedder)
 
                 await process_job(
                     job, prompt_template, session, conn

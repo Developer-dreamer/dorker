@@ -1,21 +1,22 @@
+import time
 import asyncio
 import fcntl
 import os
 import tempfile
 from contextlib import contextmanager
-from datetime import time
 from logging import Logger
 from pathlib import Path
 from typing import Iterator, List
 
 from asyncpg import Pool
-from models import JobDB
-from scraper_runner import ScraperRunner
-from ui.cli import Dashboard
 
-from shared.types.priority_semaphore import PrioritySemaphore
 from src.scraping.configuration_manager import DynamicConfigManager
 from src.scraping.database.base import ATS, CompanyRepository, DescriptionCache, JobRepository
+from src.scraping.models import JobDB
+from src.scraping.ui.cli import Dashboard
+from src.shared.types.priority_semaphore import PrioritySemaphore
+
+from .scraper_runner import ScraperRunner
 
 
 class RunEngine:
@@ -37,16 +38,21 @@ class RunEngine:
 
         self.priority_sem = PrioritySemaphore(max_concurrent_ats)
         self.db_writer_queue: asyncio.Queue[JobDB | None] = asyncio.Queue(maxsize=1000)
-        self.ui_queue: asyncio.Queue[Dashboard] | None = ui_queue
+        self.ui_queue: asyncio.Queue | None = ui_queue
         self.description_cache: DescriptionCache = description_cache
 
     async def run(self, ats_list: List[ATS]) -> None:
         self.logger.info(f"[Engine] Starting cycle across {len(ats_list)} platforms.")
 
-        await asyncio.gather(
-            *(self._run_single_ats(ats) for ats in ats_list)
-        )
+        db_worker_task = asyncio.create_task(self._db_writer_worker(batch_size=500))
 
+        try:
+            await asyncio.gather(
+                *(self._run_single_ats(ats) for ats in ats_list)
+            )
+        finally:
+            await self.db_writer_queue.put(None)
+            await db_worker_task
 
     async def _run_single_ats(self, ats: ATS):
         await self.priority_sem.acquire(ats.tier)
@@ -64,14 +70,12 @@ class RunEngine:
 
                 self.logger.info(f"[Engine] === Starting scrape for ATS: {ats.name} ===")
 
-                description_cache = self._desc_cache_init(ats, self.cfg.get(ats.name))
-
                 ats_runner = ScraperRunner(
                     logger=self.logger,
                     ats=ats,
                     cfg=self.cfg,
                     priority_semaphore=self.priority_sem,
-                    description_cache=description_cache,
+                    description_cache=self.description_cache,
                     company_repo=self.company_repo,
                     db_queue=self.db_writer_queue,
                     concurrency=1,
@@ -83,7 +87,7 @@ class RunEngine:
         finally:
             self.priority_sem.release()
             if self.ui_queue:
-                self.ui_queue.put_nowait({"type": "finish", "ats": ats})
+                self.ui_queue.put_nowait({"type": "finish", "ats": ats.name})
 
 
     @contextmanager
@@ -119,23 +123,30 @@ class RunEngine:
     async def _db_writer_worker(self, batch_size: int = 500):
         buffer: list[JobDB] = []
 
+        async def _flush():
+            if not buffer:
+                return
+            await self.job_repository.save_job_batch(buffer)
+            buffer.clear()
+
         try:
             while True:
                 job = await self.db_writer_queue.get()
-                if job is None:
-                    await self.job_repository.save_job_batch(buffer)
+                try:
+                    if job is None:
+                        await _flush()
+                        break
+
+                    buffer.append(job)
+
+                    if len(buffer) >= batch_size or (self.db_writer_queue.empty() and buffer):
+                        await _flush()
+                finally:
                     self.db_writer_queue.task_done()
-                    break
 
-                buffer.append(job)
-                self.db_writer_queue.task_done()
-
-                if len(buffer) >= batch_size or (self.db_writer_queue.empty() and buffer):
-                    await self.job_repository.save_job_batch(buffer)
-        except asyncio.CancelledError as e:
-            await self.job_repository.save_job_batch(buffer)
-            raise e
+        except asyncio.CancelledError:
+            await _flush()
+            raise
         except Exception as exc:
             self.logger.critical(f"[DB Writer] Fatal error in worker loop: {exc}", exc_info=True)
-        finally:
-            await self.job_repository.save_job_batch(buffer)
+            await _flush()
