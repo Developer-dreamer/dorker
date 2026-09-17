@@ -1,3 +1,8 @@
+"""
+This files was used to generate batch to OpenAI for job description blocks labeling.
+The results were used further to train regressor to identify description blocks to omit long context for LLM.
+"""
+
 import asyncio
 import datetime
 import json
