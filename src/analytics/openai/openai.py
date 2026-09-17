@@ -11,11 +11,10 @@ from openai.lib._pydantic import to_strict_json_schema
 from openai.types import Batch
 from pydantic import BaseModel
 
+from analytics.openai.batch_repo import BatchRepository
+from analytics.openai.models import MatchedJob, OpenAIBatchRecord, Purpose
 from src.database.sqlite import save_technical_match, save_unmatch
 from src.scraping.models import Job
-
-from .batch_repo import BatchRepository
-from .models import MatchedJob, OpenAIBatchRecord, Purpose
 
 MAX_BYTES_PER_BATCH = 2e8  # 200 MB per request
 MAX_REQUESTS_PER_BATCH = 50_000  # 50 000 separate questions to AI model

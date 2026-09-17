@@ -11,7 +11,7 @@ import asyncpg
 import uuid6
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from src.analytics.models import Analytics, MatchedJob, SuitabilityTier
+from analytics.openai.models import Analytics, MatchedJob, SuitabilityTier
 
 # --- Logging Configuration ---
 logging.basicConfig(
