@@ -31,7 +31,6 @@ jobs:
       - name: Update tracking branch
         id: sync_tracking
         run: |
-          # Checkout or initialize the dedicated synchronization branch
           if git show-ref --quiet refs/heads/upstream-sync; then
             git checkout upstream-sync
           else
@@ -39,40 +38,45 @@ jobs:
             git rm -rf .
           fi
 
-          # Align upstream files into the target folder structure
+          # 1. Sync scrapers
           mkdir -p src/scraping/scrapers
           rsync -av --delete --exclude '__pycache__' /tmp/upstream-ats/src/ats_scrapers/scrapers/ src/scraping/scrapers/
-          
-          # Rewrite import paths from upstream namespace to local project namespace
+
+          # 2. Sync tests (including fixtures, excluding caches)
+          mkdir -p tests
+          rsync -av --delete --exclude '__pycache__' --exclude '.pytest_cache' /tmp/upstream-ats/tests/ tests/
+
+          # 3. Rewrite imports across both source and test files
           python3 - << 'EOF'
           import os
           import re
 
-          target_dir = "src/scraping/scrapers"
-          # Pattern matches 'from ats_scrapers' or 'import ats_scrapers'
+          target_dirs = ["src/scraping/scrapers", "tests"]
           pattern = re.compile(r'\b(from|import)\s+ats_scrapers\b')
 
-          for root, _, files in os.walk(target_dir):
-              for file in files:
-                  if file.endswith(".py"):
-                      filepath = os.path.join(root, file)
-                      with open(filepath, "r", encoding="utf-8") as f:
-                          content = f.read()
+          for target_dir in target_dirs:
+              if not os.path.exists(target_dir):
+                  continue
+              for root, _, files in os.walk(target_dir):
+                  for file in files:
+                      if file.endswith(".py"):
+                          filepath = os.path.join(root, file)
+                          with open(filepath, "r", encoding="utf-8") as f:
+                              content = f.read()
 
-                      # Replace with target namespace
-                      new_content = pattern.sub(r'\1 src.scraping', content)
+                          new_content = pattern.sub(r'\1 src.scraping', content)
 
-                      if new_content != content:
-                          with open(filepath, "w", encoding="utf-8") as f:
-                              f.write(new_content)
+                          if new_content != content:
+                              with open(filepath, "w", encoding="utf-8") as f:
+                                  f.write(new_content)
           EOF
 
-          git add src/scraping/scrapers
+          git add src/scraping/scrapers tests
 
           if git diff --staged --quiet; then
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
           else
-            git commit -m "chore(sync): snapshot upstream ats-scrapers"
+            git commit -m "chore(sync): snapshot upstream scrapers and tests with rewritten imports"
             git push origin upstream-sync
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           fi
@@ -82,9 +86,7 @@ jobs:
         run: |
           git checkout main
 
-          # Merge using -X theirs to automatically resolve content conflicts in favor of upstream
-          # --allow-unrelated-histories is required for the initial merge
-          if git merge --allow-unrelated-histories -X theirs upstream-sync -m "chore: sync scrapers from upstream with automatic conflict resolution"; then
+          if git merge --allow-unrelated-histories -X theirs upstream-sync -m "chore: sync scrapers and tests from upstream with automatic conflict resolution"; then
             git push origin main
           else
             echo "Merge failed due to structural/tree conflicts that cannot be auto-resolved."
