@@ -27,33 +27,39 @@ jobs:
           import os
           import shutil
 
-          UPSTREAM_DIR = "/tmp/upstream-ats/ats-companies"
+          UPSTREAM_ROOT = "/tmp/upstream-ats"
           LOCAL_BASE_DIR = "ats-companies"
           UNDEFINED_DIR = os.path.join(LOCAL_BASE_DIR, "undefined")
 
-          if not os.path.isdir(UPSTREAM_DIR):
-              raise FileNotFoundError(f"Upstream directory not found: {UPSTREAM_DIR}")
-
           os.makedirs(UNDEFINED_DIR, exist_ok=True)
 
-          # 1. Map all local CSV files: {filename: relative_path}
+          # 1. Prioritize ats-companies if present, otherwise scan the entire clone
+          upstream_target = os.path.join(UPSTREAM_ROOT, "ats-companies")
+          scan_root = upstream_target if os.path.isdir(upstream_target) else UPSTREAM_ROOT
+
+          # 2. Index local CSVs: {filename: relative_path}
           local_file_map = {}
           for root, _, files in os.walk(LOCAL_BASE_DIR):
               for file in files:
                   if file.endswith(".csv"):
                       local_file_map[file] = os.path.join(root, file)
 
-          # 2. Walk upstream directory recursively to collect all CSVs
+          # 3. Recursively find all upstream CSVs
           upstream_csvs = {}
-          for root, _, files in os.walk(UPSTREAM_DIR):
+          for root, dirs, files in os.walk(scan_root):
+              if ".git" in dirs:
+                  dirs.remove(".git")
               for file in files:
                   if file.endswith(".csv"):
                       upstream_csvs[file] = os.path.join(root, file)
 
           if not upstream_csvs:
-              raise FileNotFoundError(f"No CSV files found inside {UPSTREAM_DIR}")
+              available = os.listdir(UPSTREAM_ROOT)
+              raise FileNotFoundError(
+                  f"No CSVs found scanning '{scan_root}'. Root contents: {available}"
+              )
 
-          # 3. Synchronize files
+          # 4. Synchronize records
           for filename, upstream_file in upstream_csvs.items():
               if filename in local_file_map:
                   target_file = local_file_map[filename]
@@ -85,10 +91,8 @@ jobs:
                           for row in new_rows:
                               f.write(f"\n{row}")
               else:
-                  # Brand new CSV: Route to undefined/
                   target_file = os.path.join(UNDEFINED_DIR, filename)
                   shutil.copy2(upstream_file, target_file)
-                  # Register in local map to prevent duplicate processing if upstream contains duplicate names
                   local_file_map[filename] = target_file
           EOF
 
