@@ -28,7 +28,7 @@ jobs:
           import shutil
 
           UPSTREAM_ROOT = "/tmp/upstream-ats"
-          LOCAL_BASE_DIR = "ats-companies"
+          LOCAL_BASE_DIR = "artifacts/data/ats-companies"
           UNDEFINED_DIR = os.path.join(LOCAL_BASE_DIR, "undefined")
 
           os.makedirs(UNDEFINED_DIR, exist_ok=True)

@@ -1,3 +1,8 @@
+"""
+This file provides script for labeling jobs by title.
+Local logistic regression model defines either job is technical or not.
+"""
+
 import asyncio
 from typing import List, Tuple
 

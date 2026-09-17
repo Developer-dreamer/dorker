@@ -8,16 +8,14 @@ from uuid import UUID
 
 import aiohttp
 import asyncpg
-import joblib
 import uuid6
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
-from sentence_transformers import SentenceTransformer
 
 from src.analytics.models import Analytics, MatchedJob, SuitabilityTier
 
 # --- Logging Configuration ---
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s | %(levelname)-8s | %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
@@ -26,8 +24,8 @@ logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent
 PG_DSN = "postgresql://postgres:password@localhost:5432/dorker_db"
 
-PIPELINE_VERSION = "v0.1.2"
-ITERATION = 2
+PIPELINE_VERSION = "v0.1.3"
+ITERATION = 3
 
 PERKS_SIGNAL_PATTERN = re.compile(
     r"(?i)\b("
@@ -210,6 +208,7 @@ class JobFactSheet(BaseModel):
     target_jurisdiction: Optional[str] = Field(
         default=None,
         description=(
+            "MUST FOLLOW 2-letter ISO 3166-1 Alpha-2 code FORMAT."
             "Country ISO code if DOMESTIC and clear country specified: US, UA, GB. Region code if "
             "legal region specified (e.g., EU). Set to null if not restricted to a single country/EU."
         ),
@@ -610,18 +609,20 @@ async def process_job(
 
     except Exception as e:
         logger.error(f"Request failed for {job_dict['id']}: {str(e)}")
+        if sheet:
+            logger.debug(f"Job: {sheet.model_dump()}")
 
 
 async def run() -> None:
     logger.info("Starting local classification pipeline...")
 
-    clf, embedder = (
-        joblib.load("/Users/serafym/Developer/dorker.space/dorker/block_classifier_nomic.pkl"),
-        SentenceTransformer(
-            "nomic-ai/nomic-embed-text-v1.5", trust_remote_code=True, local_files_only=True
-        ),
-    )
-    embedder.max_seq_length = 5000
+    # clf, embedder = (
+    #     joblib.load("/Users/serafym/Developer/dorker.space/dorker/block_classifier_nomic.pkl"),
+    #     SentenceTransformer(
+    #         "nomic-ai/nomic-embed-text-v1.5", trust_remote_code=True, local_files_only=True
+    #     ),
+    # )
+    # embedder.max_seq_length = 5000
 
     async with asyncpg.create_pool(PG_DSN) as pool:
         jobs = await fetch_golden_set(pool)
@@ -641,9 +642,6 @@ async def run() -> None:
             for job in jobs:
                 print("\n")
                 job_dict = dict(job)
-                job_dict["description"] = filter_job_description_optimized(
-                    job_dict["description"], clf, embedder
-                )
 
                 await process_job(job_dict, prompt_template, session, conn)
         finally:

@@ -1,19 +1,19 @@
 # User sensitive data
 app.db*
-batches/
+artifacts/data/batches/
 logs/
 cache/
 backups*
 *.jsonl
 
 # Ignore all files inside prompt/ and any nested directories
-prompt/**
+artifacts/data/prompts/**
 
 # Whitelist any directory so Git can traverse down to inspect files
-!prompt/**/
+!artifacts/data/prompts/**/
 
 # Re-include files containing "example" anywhere in their name
-!prompt/**/*example*
+!artifacts/data/prompts/**/*example*
 
 # IDE config
 .vscode/
