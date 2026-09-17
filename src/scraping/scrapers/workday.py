@@ -79,13 +79,13 @@ _REMOTE_TYPE_PATTERNS = {
     # ``flexible``, ``hybrid`` etc. stay None — neither purely remote nor onsite.
 }
 QUERY_TOTAL_CAP = 2000  # On capped tenants, total is reported as exactly 2000
-                       # and pagination past offset=2000 wraps to page 1.
-                       # Detection: total == QUERY_TOTAL_CAP triggers subdivision.
-                       # Tenants with no cap (Dollar Tree, ~22K) report the real
-                       # total and paginate cleanly.
+# and pagination past offset=2000 wraps to page 1.
+# Detection: total == QUERY_TOTAL_CAP triggers subdivision.
+# Tenants with no cap (Dollar Tree, ~22K) report the real
+# total and paginate cleanly.
 MAX_SUBDIVISION_DEPTH = 4  # Recursion bound — Accenture needs depth 3 to fully
-                          # cover Software Engineering (32K jobs). Depth 4 is a
-                          # paranoid ceiling.
+# cover Software Engineering (32K jobs). Depth 4 is a
+# paranoid ceiling.
 MAX_CONCURRENCY = 10
 MAX_RETRIES = 3
 RETRY_BACKOFF = 1.5
@@ -132,11 +132,7 @@ class WorkdayScraper(BaseScraper):
             proxy=proxy,
         )
         self.max_fetch_seconds = max_fetch_seconds
-        self.company_name = (
-            company_name.strip()
-            if company_name and company_name.strip()
-            else None
-        )
+        self.company_name = company_name.strip() if company_name and company_name.strip() else None
         self._deadline: float | None = None
 
     @classmethod
@@ -174,9 +170,7 @@ class WorkdayScraper(BaseScraper):
         base = self.company_slug.split("/wday/")[0].rstrip("/")
 
         self._deadline = (
-            time.monotonic() + self.max_fetch_seconds
-            if self.max_fetch_seconds
-            else None
+            time.monotonic() + self.max_fetch_seconds if self.max_fetch_seconds else None
         )
         try:
             return await self._fetch_all(api, base, display_company, detail_prefix)
@@ -204,7 +198,9 @@ class WorkdayScraper(BaseScraper):
 
         async def run() -> str | None:
             async with httpx.AsyncClient(
-                timeout=self.timeout, follow_redirects=True, proxy=self.proxy,
+                timeout=self.timeout,
+                follow_redirects=True,
+                proxy=self.proxy,
             ) as client:
                 sem = asyncio.Semaphore(1)
                 await self._enrich_details(client, sem, detail_prefix, jobs)
@@ -236,13 +232,20 @@ class WorkdayScraper(BaseScraper):
                     all_jobs.append(job)
 
             await self._exhaust_query(
-                client, api, sem,
-                applied_facets={}, absorb=absorb, depth=0,
+                client,
+                api,
+                sem,
+                applied_facets={},
+                absorb=absorb,
+                depth=0,
             )
 
             if self.include_descriptions:
                 await self._enrich_details(
-                    client, sem, detail_prefix, all_jobs,
+                    client,
+                    sem,
+                    detail_prefix,
+                    all_jobs,
                 )
         return all_jobs
 
@@ -265,7 +268,8 @@ class WorkdayScraper(BaseScraper):
         not discard the listing row or the rest of the tenant.
         """
         targets = [
-            (i, j) for i, j in enumerate(jobs)
+            (i, j)
+            for i, j in enumerate(jobs)
             if (j.raw or {}).get("externalPath") or _external_path(j.url)
         ]
         if not targets:
@@ -341,8 +345,12 @@ class WorkdayScraper(BaseScraper):
         is_capped = total == QUERY_TOTAL_CAP
         if not is_capped:
             await self._fan_out_pages(
-                client, api, sem,
-                applied_facets=applied_facets, total=total, absorb=absorb,
+                client,
+                api,
+                sem,
+                applied_facets=applied_facets,
+                total=total,
+                absorb=absorb,
             )
             return
 
@@ -350,8 +358,12 @@ class WorkdayScraper(BaseScraper):
         if depth >= MAX_SUBDIVISION_DEPTH:
             # Recursion bound — accept the capped 2000 from this query.
             await self._fan_out_pages(
-                client, api, sem,
-                applied_facets=applied_facets, total=total, absorb=absorb,
+                client,
+                api,
+                sem,
+                applied_facets=applied_facets,
+                total=total,
+                absorb=absorb,
             )
             return
 
@@ -362,8 +374,12 @@ class WorkdayScraper(BaseScraper):
         if facet is None:
             # No more partitioning facets available — take the capped 2000.
             await self._fan_out_pages(
-                client, api, sem,
-                applied_facets=applied_facets, total=total, absorb=absorb,
+                client,
+                api,
+                sem,
+                applied_facets=applied_facets,
+                total=total,
+                absorb=absorb,
             )
             return
 
@@ -373,8 +389,12 @@ class WorkdayScraper(BaseScraper):
             self._check_deadline()
             child_filters = {**applied_facets, param: [value_id]}
             await self._exhaust_query(
-                client, api, sem,
-                applied_facets=child_filters, absorb=absorb, depth=depth + 1,
+                client,
+                api,
+                sem,
+                applied_facets=child_filters,
+                absorb=absorb,
+                depth=depth + 1,
             )
 
         await asyncio.gather(*(child(v_id) for v_id, _ in values))
@@ -432,12 +452,10 @@ class WorkdayScraper(BaseScraper):
                     )
                 except httpx.HTTPError as exc:
                     last_exc = exc
-                    await asyncio.sleep(min(MAX_RETRY_DELAY, RETRY_BACKOFF ** attempt))
+                    await asyncio.sleep(min(MAX_RETRY_DELAY, RETRY_BACKOFF**attempt))
                     continue
             if response.status_code == 404:
-                raise CompanyNotFoundError(
-                    f"Workday site not found: {self.company_slug}"
-                )
+                raise CompanyNotFoundError(f"Workday site not found: {self.company_slug}")
             if response.status_code == 200:
                 try:
                     payload = response.json()
@@ -451,33 +469,29 @@ class WorkdayScraper(BaseScraper):
                         f"{self.company_slug} (offset={offset}, "
                         f"content-type={content_type})"
                     )
-                    await asyncio.sleep(
-                        min(MAX_RETRY_DELAY, RETRY_BACKOFF ** attempt)
-                    )
+                    await asyncio.sleep(min(MAX_RETRY_DELAY, RETRY_BACKOFF**attempt))
                     continue
                 if not isinstance(payload, dict):
                     last_exc = ScraperError(
                         "Workday returned an unexpected JSON payload for "
                         f"{self.company_slug} (offset={offset})"
                     )
-                    await asyncio.sleep(
-                        min(MAX_RETRY_DELAY, RETRY_BACKOFF ** attempt)
-                    )
+                    await asyncio.sleep(min(MAX_RETRY_DELAY, RETRY_BACKOFF**attempt))
                     continue
                 return payload
             if response.status_code in retryable_statuses:
                 # Exponential backoff respects Retry-After when present.
                 retry_after = response.headers.get("Retry-After")
                 delay = (
-                    float(retry_after) if retry_after and retry_after.isdigit()
-                    else RETRY_BACKOFF ** attempt
+                    float(retry_after)
+                    if retry_after and retry_after.isdigit()
+                    else RETRY_BACKOFF**attempt
                 )
                 delay = min(MAX_RETRY_DELAY, delay)
                 await asyncio.sleep(delay)
                 continue
             raise ScraperError(
-                f"Workday returned {response.status_code} for {self.company_slug} "
-                f"(offset={offset})"
+                f"Workday returned {response.status_code} for {self.company_slug} (offset={offset})"
             )
         raise ScraperError(
             f"Workday gave up after {MAX_RETRIES} retries at offset={offset}: {last_exc}"
@@ -497,11 +511,7 @@ class WorkdayScraper(BaseScraper):
         # ``timeType`` ("Full time" / "Part time") is the canonical
         # Workday signal; map to our employment-type enum.
         time_type = item.get("timeType")
-        commitment = (
-            time_type.strip()
-            if isinstance(time_type, str) and time_type.strip()
-            else None
-        )
+        commitment = time_type.strip() if isinstance(time_type, str) and time_type.strip() else None
         employment_type: str | None = None
         if commitment:
             norm = commitment.strip().lower().replace("-", " ")
@@ -523,9 +533,7 @@ class WorkdayScraper(BaseScraper):
                 is_remote = _REMOTE_TYPE_PATTERNS[norm]
             elif "remote" in norm and "hybrid" not in norm:
                 is_remote = True
-            elif "hybrid" not in norm and (
-                "site" in norm or "office" in norm
-            ):
+            elif "hybrid" not in norm and ("site" in norm or "office" in norm):
                 is_remote = False
 
         # Department from ``jobFamilyGroup`` when populated (it's the

@@ -74,9 +74,7 @@ class TikTokScraper(BaseScraper):
                     "location_code_list": [],
                     "job_function_id_list": [],
                 }
-                payload_data = (
-                    await fetch.post_json(API_URL, json=payload)
-                ).get("data") or {}
+                payload_data = (await fetch.post_json(API_URL, json=payload)).get("data") or {}
                 jobs = payload_data.get("job_post_list") or []
                 if not jobs:
                     break
@@ -117,9 +115,16 @@ class TikTokScraper(BaseScraper):
         )
 
         raw: dict[str, Any] = {}
-        for k in ("job_category", "job_subject", "recruit_type",
-                  "experience", "department_info", "skill_list",
-                  "tag_list", "process_type"):
+        for k in (
+            "job_category",
+            "job_subject",
+            "recruit_type",
+            "experience",
+            "department_info",
+            "skill_list",
+            "tag_list",
+            "process_type",
+        ):
             v = item.get(k)
             if v:
                 raw[k] = v

@@ -84,16 +84,16 @@ _JOB_CARD_RE = re.compile(
 _JOB_ANCHOR_RE = re.compile(
     r'<a[^>]+href="(?P<href>https?://[^"]*?/jobs/(?P<id>\d+)/[^"]*?/job[^"]*)"[^>]*'
     r'class="[^"]*iCIMS_Anchor[^"]*"[^>]*>'
-    r'(?P<inner>.*?)</a>',
+    r"(?P<inner>.*?)</a>",
     re.DOTALL | re.IGNORECASE,
 )
-_TITLE_RE = re.compile(r'<h3[^>]*>(?P<title>.*?)</h3>', re.DOTALL | re.IGNORECASE)
+_TITLE_RE = re.compile(r"<h3[^>]*>(?P<title>.*?)</h3>", re.DOTALL | re.IGNORECASE)
 # `<span class="sr-only field-label">Job Locations</span> <span>VALUE</span>`
 # captures the visible location string (iCIMS uses the format
 # "US-SC-Prosperity" — country-state-city).
 _LOCATION_RE = re.compile(
     r'<span[^>]+class="[^"]*sr-only[^"]*field-label[^"]*"[^>]*>\s*Job Locations\s*</span>'
-    r'\s*<span[^>]*>\s*(?P<loc>[^<]*?)\s*</span>',
+    r"\s*<span[^>]*>\s*(?P<loc>[^<]*?)\s*</span>",
     re.DOTALL | re.IGNORECASE,
 )
 # Posted-at: `<span title="5/6/2026 10:23 AM">3 hours ago…</span>`. The
@@ -110,8 +110,8 @@ _DATE_TITLE_RE = re.compile(
 # The label is whatever readable text sits inside the <dt>, with any
 # leading icon/sr-only wrappers stripped — extract by removing tags.
 _HEADER_TAG_RE = re.compile(
-    r'<dt[^>]*>(?P<label_html>.*?)</dt>'
-    r'\s*<dd[^>]*>\s*<span[^>]*>(?P<value>.*?)</span>',
+    r"<dt[^>]*>(?P<label_html>.*?)</dt>"
+    r"\s*<dd[^>]*>\s*<span[^>]*>(?P<value>.*?)</span>",
     re.DOTALL | re.IGNORECASE,
 )
 _DESC_RE = re.compile(
@@ -189,9 +189,7 @@ class iCIMSScraper(BaseScraper):  # noqa: N801  matches public iCIMS branding
             # row.
             if self.include_descriptions and all_jobs:
                 sem = asyncio.Semaphore(DETAIL_CONCURRENCY)
-                await asyncio.gather(*(
-                    self._enrich_detail(fetch, sem, j) for j in all_jobs
-                ))
+                await asyncio.gather(*(self._enrich_detail(fetch, sem, j) for j in all_jobs))
         return all_jobs
 
     async def _enrich_detail(
@@ -307,9 +305,7 @@ def _apply_jsonld_to_job(job: Job, html_text: str) -> None:
         date_raw = posting.get("datePosted")
         if isinstance(date_raw, str) and date_raw:
             with contextlib.suppress(ValueError):
-                job.posted_at = datetime.fromisoformat(
-                    date_raw.replace("Z", "+00:00")
-                )
+                job.posted_at = datetime.fromisoformat(date_raw.replace("Z", "+00:00"))
 
     if not job.department:
         cat = posting.get("occupationalCategory")
@@ -383,7 +379,7 @@ def _strip(text: str) -> str:
 # scrapers — but only when we recognize the dash-separated shape; opaque
 # strings ("Remote", "Multiple Locations") pass through unchanged.
 _DASH_LOC_RE = re.compile(
-    r'^(?P<country>[A-Z]{2,3})-(?P<state>[A-Z0-9 ]{1,40})(?:-(?P<city>[^-].*))?$'
+    r"^(?P<country>[A-Z]{2,3})-(?P<state>[A-Z0-9 ]{1,40})(?:-(?P<city>[^-].*))?$"
 )
 
 
@@ -442,7 +438,9 @@ def _extract_description(card_body: str) -> str | None:
 
 
 def _extract_requisition_id(card_body: str) -> str | None:
-    return _extract_header_value(card_body, "Requisition ID") or _extract_header_value(card_body, "ID")
+    return _extract_header_value(card_body, "Requisition ID") or _extract_header_value(
+        card_body, "ID"
+    )
 
 
 def _extract_header_value(card_body: str, label_match: str) -> str | None:

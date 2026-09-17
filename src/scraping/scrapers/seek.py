@@ -100,6 +100,7 @@ MAX_CONCURRENCY = 4
 MAX_RETRIES = 5
 RETRY_BASE_DELAY = 1.5
 
+
 @ScraperRegistry.register(ATSType.SEEK)
 class SeekScraper(BaseScraper):
     """SEEK / JobsDB / JobStreet — single scraper for the whole family.
@@ -127,9 +128,7 @@ class SeekScraper(BaseScraper):
             proxy=proxy,
         )
         if max_pages is not None and max_pages < 1:
-            raise ScraperError(
-                f"SEEK max_pages must be positive, got {max_pages}"
-            )
+            raise ScraperError(f"SEEK max_pages must be positive, got {max_pages}")
         self.max_pages = max_pages
         region = company_slug.strip().lower()
         if region == "all":
@@ -138,8 +137,7 @@ class SeekScraper(BaseScraper):
             self.regions = (region,)
         else:
             raise ScraperError(
-                f"Unknown SEEK region {company_slug!r}. "
-                f"Valid: {sorted(SEEK_SITES)} or 'all'."
+                f"Unknown SEEK region {company_slug!r}. Valid: {sorted(SEEK_SITES)} or 'all'."
             )
 
     async def afetch(self) -> list[Job]:
@@ -174,21 +172,13 @@ class SeekScraper(BaseScraper):
         region: str,
     ) -> list[Job]:
         host, site_key, country_iso = SEEK_SITES[region]
-        first = await self._search(client, sem, host=host,
-                                   site_key=site_key, page=1)
+        first = await self._search(client, sem, host=host, site_key=site_key, page=1)
         total, data = self._page_data(first, region=region, page=1)
         if not data:
-            raise ScraperError(
-                f"SEEK region={region} returned an empty catalogue"
-            )
-        parsed_jobs = [
-            self._parse_job(item, host=host, country_iso=country_iso)
-            for item in data
-        ]
+            raise ScraperError(f"SEEK region={region} returned an empty catalogue")
+        parsed_jobs = [self._parse_job(item, host=host, country_iso=country_iso) for item in data]
         if any(job is None for job in parsed_jobs):
-            raise ScraperError(
-                f"SEEK region={region} page=1 contained unparseable jobs"
-            )
+            raise ScraperError(f"SEEK region={region} page=1 contained unparseable jobs")
         jobs: list[Job] = [job for job in parsed_jobs if job is not None]
         if total <= PAGE_SIZE:
             return jobs
@@ -209,18 +199,11 @@ class SeekScraper(BaseScraper):
         results: list[list[Job]] = [jobs]
 
         async def one_page(page: int) -> tuple[list[Job], int]:
-            payload = await self._search(client, sem, host=host,
-                                         site_key=site_key, page=page)
+            payload = await self._search(client, sem, host=host, site_key=site_key, page=page)
             _, items = self._page_data(payload, region=region, page=page)
-            parsed = [
-                self._parse_job(it, host=host, country_iso=country_iso)
-                for it in items
-            ]
+            parsed = [self._parse_job(it, host=host, country_iso=country_iso) for it in items]
             if any(job is None for job in parsed):
-                raise ScraperError(
-                    f"SEEK region={region} page={page} contained "
-                    "unparseable jobs"
-                )
+                raise ScraperError(f"SEEK region={region} page={page} contained unparseable jobs")
             return [job for job in parsed if job is not None], len(items)
 
         for start in range(2, last_page + 1, MAX_CONCURRENCY):
@@ -251,25 +234,21 @@ class SeekScraper(BaseScraper):
 
     @staticmethod
     def _page_data(
-        payload: dict[str, Any], *, region: str, page: int,
+        payload: dict[str, Any],
+        *,
+        region: str,
+        page: int,
     ) -> tuple[int, list[dict[str, Any]]]:
         total = payload.get("totalCount")
         if isinstance(total, bool) or not isinstance(total, int) or total < 0:
-            raise ScraperError(
-                f"SEEK region={region} page={page} omitted a valid totalCount"
-            )
+            raise ScraperError(f"SEEK region={region} page={page} omitted a valid totalCount")
         data = payload.get("data")
-        if not isinstance(data, list) or not all(
-            isinstance(item, dict) for item in data
-        ):
-            raise ScraperError(
-                f"SEEK region={region} page={page} returned invalid data"
-            )
+        if not isinstance(data, list) or not all(isinstance(item, dict) for item in data):
+            raise ScraperError(f"SEEK region={region} page={page} returned invalid data")
         offset = (page - 1) * PAGE_SIZE
         if data and total <= offset:
             raise ScraperError(
-                f"SEEK region={region} page={page} returned jobs beyond "
-                f"its totalCount={total}"
+                f"SEEK region={region} page={page} returned jobs beyond its totalCount={total}"
             )
         if total > offset + len(data) and len(data) < PAGE_SIZE:
             raise ScraperError(
@@ -306,36 +285,30 @@ class SeekScraper(BaseScraper):
             except httpx.HTTPError as exc:
                 last_exc = exc
                 if attempt == MAX_RETRIES:
-                    raise ScraperError(
-                        f"SEEK fetch failed for {url}: {exc}"
-                    ) from exc
+                    raise ScraperError(f"SEEK fetch failed for {url}: {exc}") from exc
                 await asyncio.sleep(RETRY_BASE_DELAY * attempt)
                 continue
             if r.status_code == 200:
                 try:
                     return r.json()
                 except ValueError as exc:
-                    raise ScraperError(
-                        f"SEEK returned non-JSON for {url}: {exc}"
-                    ) from exc
+                    raise ScraperError(f"SEEK returned non-JSON for {url}: {exc}") from exc
             if r.status_code in (429,) or 500 <= r.status_code < 600:
                 if attempt == MAX_RETRIES:
                     raise ScraperError(
-                        f"SEEK returned {r.status_code} for {url} after "
-                        f"{MAX_RETRIES} retries"
+                        f"SEEK returned {r.status_code} for {url} after {MAX_RETRIES} retries"
                     )
                 retry_after = r.headers.get("Retry-After")
                 delay = (
-                    float(retry_after) if retry_after and retry_after.isdigit()
-                    else RETRY_BASE_DELAY * (2 ** attempt)
+                    float(retry_after)
+                    if retry_after and retry_after.isdigit()
+                    else RETRY_BASE_DELAY * (2**attempt)
                 )
                 await asyncio.sleep(delay)
                 continue
             # 4xx other than 429 — treat as a terminal slice failure so
             # we don't burn retries on a permanent error.
-            raise ScraperError(
-                f"SEEK returned {r.status_code} for {url}: {r.text[:120]}"
-            )
+            raise ScraperError(f"SEEK returned {r.status_code} for {url}: {r.text[:120]}")
         raise ScraperError(f"SEEK exhausted retries for {url}: {last_exc}")
 
     def _parse_job(
@@ -351,11 +324,7 @@ class SeekScraper(BaseScraper):
             return None
 
         advertiser = item.get("advertiser") or {}
-        company = (
-            advertiser.get("description")
-            or item.get("companyName")
-            or "Unknown"
-        )
+        company = advertiser.get("description") or item.get("companyName") or "Unknown"
 
         # Location — the search response gives a list. ``label`` is the
         # display string (e.g. ``"Tampines North, East Region"``);
@@ -380,8 +349,7 @@ class SeekScraper(BaseScraper):
         # canonical 25k-character cap is preserved.
         teaser = (item.get("teaser") or "").strip()
         bullets = [
-            b.strip() for b in (item.get("bulletPoints") or [])
-            if isinstance(b, str) and b.strip()
+            b.strip() for b in (item.get("bulletPoints") or []) if isinstance(b, str) and b.strip()
         ]
         if teaser and bullets:
             description = teaser + "\n\n- " + "\n- ".join(bullets)
@@ -419,8 +387,13 @@ class SeekScraper(BaseScraper):
         emp_id = employer.get("id")
         if emp_id:
             raw["employerId"] = str(emp_id)
-        for k in ("roleId", "displayType", "isFeatured", "workTypes",
-                  "companyProfileStructuredDataId"):
+        for k in (
+            "roleId",
+            "displayType",
+            "isFeatured",
+            "workTypes",
+            "companyProfileStructuredDataId",
+        ):
             v = item.get(k)
             if v not in (None, "", []):
                 raw[k] = v
@@ -449,8 +422,10 @@ class SeekScraper(BaseScraper):
             location=location,
             country_iso=country,
             region=(
-                "Oceania" if country in ("AU", "NZ")
-                else "Asia" if country in {"HK", "TH", "MY", "ID", "PH", "SG"}
+                "Oceania"
+                if country in ("AU", "NZ")
+                else "Asia"
+                if country in {"HK", "TH", "MY", "ID", "PH", "SG"}
                 else None
             ),
             salary_currency=salary_currency,

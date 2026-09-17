@@ -41,11 +41,9 @@ if TYPE_CHECKING:
 PAGE_SIZE = 25
 MAX_CONCURRENCY = 4  # Cornerstone rate-limits ~60 req/min
 
-_TOKEN_RE = re.compile(
-    r'csod\.context\.token\s*=\s*[\'"]([^\'"]+)[\'"]'
-)
+_TOKEN_RE = re.compile(r'csod\.context\.token\s*=\s*[\'"]([^\'"]+)[\'"]')
 _TOKEN_FALLBACK_RE = re.compile(r'"token"\s*:\s*"([^"]+)"')
-_API_HOST_RE = re.compile(r'(https?://[a-z0-9-]+\.api\.csod\.com)')
+_API_HOST_RE = re.compile(r"(https?://[a-z0-9-]+\.api\.csod\.com)")
 
 _DEFAULT_API_HOST = "https://na.api.csod.com"
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -79,14 +77,10 @@ class CornerstoneScraper(BaseScraper):
             proxy=proxy,
         )
         # Full URLs containing a career-site ID take precedence over site_id.
-        self.career_url, self.slug, resolved_site_id = _resolve_career_url(
-            company_slug, site_id
-        )
+        self.career_url, self.slug, resolved_site_id = _resolve_career_url(company_slug, site_id)
         self.site_id = resolved_site_id
         self.company_name = (
-            company_name.strip()
-            if company_name and company_name.strip()
-            else self.slug
+            company_name.strip() if company_name and company_name.strip() else self.slug
         )
 
     default_headers: ClassVar[dict[str, str]] = {"User-Agent": "Mozilla/5.0"}
@@ -95,9 +89,7 @@ class CornerstoneScraper(BaseScraper):
         async with self.make_fetcher() as fetch:
             token, api_host = await self._init_session(fetch)
             sem = asyncio.Semaphore(MAX_CONCURRENCY)
-            first = await self._search(
-                fetch, sem, token=token, api_host=api_host, page=1
-            )
+            first = await self._search(fetch, sem, token=token, api_host=api_host, page=1)
             data = first.get("data") or {}
             total = int(data.get("totalCount") or 0)
             requisitions = data.get("requisitions") or []
@@ -125,9 +117,7 @@ class CornerstoneScraper(BaseScraper):
                     )
                     absorb((payload.get("data") or {}).get("requisitions") or [])
 
-                await asyncio.gather(
-                    *(task(p) for p in range(2, last_page + 1))
-                )
+                await asyncio.gather(*(task(p) for p in range(2, last_page + 1)))
         return all_jobs
 
     async def _init_session(self, fetch: Fetcher) -> tuple[str, str]:
@@ -187,8 +177,15 @@ class CornerstoneScraper(BaseScraper):
         url = f"{career_origin}/ux/ats/careersite/{self.site_id}/job/{ats_id}?c={self.slug}"
 
         raw: dict[str, Any] = {}
-        for k in ("jobType", "schedule", "shift", "department",
-                  "industry", "category", "experienceLevel"):
+        for k in (
+            "jobType",
+            "schedule",
+            "shift",
+            "department",
+            "industry",
+            "category",
+            "experienceLevel",
+        ):
             v = item.get(k)
             if v:
                 raw[k] = v
@@ -252,7 +249,8 @@ def _format_locations(value: object) -> str | None:
     if not isinstance(first, dict):
         return None
     parts = [
-        first.get(k) for k in ("city", "state", "country")
+        first.get(k)
+        for k in ("city", "state", "country")
         if isinstance(first.get(k), str) and first.get(k, "").strip()
     ]
     if parts:

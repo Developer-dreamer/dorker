@@ -100,8 +100,7 @@ class BeisenLegacyScraper(BaseScraper):
             category not in CATEGORIES for category in normalized_categories
         ):
             raise ScraperError(
-                "Beisen legacy categories must be a non-empty subset of "
-                f"{CATEGORIES!r}"
+                f"Beisen legacy categories must be a non-empty subset of {CATEGORIES!r}"
             )
         if detail_concurrency < 1:
             raise ScraperError("Beisen legacy detail_concurrency must be positive")
@@ -236,9 +235,7 @@ class BeisenLegacyScraper(BaseScraper):
 
     def _build_job(self, row: _ListingRow) -> Job:
         country_iso = self.country_iso
-        if row.location and any(
-            marker in row.location for marker in _FOREIGN_LOCATION_MARKERS
-        ):
+        if row.location and any(marker in row.location for marker in _FOREIGN_LOCATION_MARKERS):
             country_iso = None
         raw: dict[str, object] = {
             "legacy_portal": True,
@@ -304,8 +301,7 @@ def _soup(html: str):
         from bs4 import BeautifulSoup
     except ImportError as exc:  # pragma: no cover - installation failure
         raise ScraperError(
-            "Beisen legacy scraper requires beautifulsoup4 "
-            "(install ats-scrapers[scrapers])"
+            "Beisen legacy scraper requires beautifulsoup4 (install ats-scrapers[scrapers])"
         ) from exc
     return BeautifulSoup(html, "html.parser")
 
@@ -430,9 +426,7 @@ def _parse_detail(
         value_node = label.find_next_sibling("li")
         if value_node is None:
             continue
-        value = str(
-            value_node.get("title") or value_node.get_text(" ", strip=True)
-        ).strip()
+        value = str(value_node.get("title") or value_node.get_text(" ", strip=True)).strip()
         if not value or value in {"-", "&nbsp;"}:
             continue
         if "salar" in label_class:

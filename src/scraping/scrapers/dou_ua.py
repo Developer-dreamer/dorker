@@ -153,7 +153,10 @@ class DOUScraper(BaseScraper):
     async def _post_xhr(
         self, fetch: Fetcher, url: str, data: dict[str, Any], headers: dict[str, str]
     ) -> Any:
-        """Handle URL-encoded form data separately since `Fetcher.request` only supports JSON payloads."""
+        """
+        Handle URL-encoded form data separately since
+        `Fetcher.request` only supports JSON payloads.
+        """
         client = fetch._httpx_client()
         for attempt in range(1, 4):
             try:

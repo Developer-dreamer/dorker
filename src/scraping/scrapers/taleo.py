@@ -47,7 +47,7 @@ DETAIL_CONCURRENCY = 8
 _JOB_LINK_RE = re.compile(
     r'<a[^>]+href="(?P<href>[^"]*viewRequisition[^"]*\brid=(?P<rid>\d+)[^"]*)"'
     r'[^>]*class="(?:[^"]*\s)?viewJobLink(?:\s[^"]*)?"[^>]*>'
-    r'(?P<title>.*?)</a>',
+    r"(?P<title>.*?)</a>",
     re.DOTALL | re.IGNORECASE,
 )
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -115,9 +115,7 @@ class TaleoScraper(BaseScraper):
             jobs = self._parse_listing(html_text, base_url=url)
             if self.include_descriptions and jobs:
                 sem = asyncio.Semaphore(DETAIL_CONCURRENCY)
-                await asyncio.gather(*(
-                    self._enrich_detail(fetch, sem, j) for j in jobs
-                ))
+                await asyncio.gather(*(self._enrich_detail(fetch, sem, j) for j in jobs))
         return jobs
 
     async def _enrich_detail(
@@ -139,13 +137,11 @@ class TaleoScraper(BaseScraper):
         if not slug.startswith(("http://", "https://")):
             raise ScraperError(
                 f"Taleo slug must be a full URL "
-                f"(https://{{phN}}.tbe.taleo.net/{{phNN}}/ats/careers/v2/searchResults?org=X&cws=N), "
-                f"got {slug!r}"
+                f"(https://{{phN}}.tbe.taleo.net/{{phNN}}/ats/careers/v2/searchResults?org=X&cws=N),"
+                f" got {slug!r}"
             )
         if "tbe.taleo.net" not in slug:
-            raise ScraperError(
-                f"Taleo URL must contain `tbe.taleo.net`, got {slug!r}"
-            )
+            raise ScraperError(f"Taleo URL must contain `tbe.taleo.net`, got {slug!r}")
         return slug.rstrip("/")
 
     def _parse_listing(self, html_text: str, *, base_url: str) -> list[Job]:

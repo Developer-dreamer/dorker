@@ -75,9 +75,7 @@ def require_http_url(url: str, *, provider: str) -> str:
             f"http(s) URL like 'https://careers.example.com'."
         )
     if parsed.username or parsed.password:
-        raise ScraperError(
-            f"{provider}: careers URL {url!r} must not contain credentials."
-        )
+        raise ScraperError(f"{provider}: careers URL {url!r} must not contain credentials.")
     reason = _disallowed_host(parsed.hostname.lower())
     if reason:
         raise ScraperError(

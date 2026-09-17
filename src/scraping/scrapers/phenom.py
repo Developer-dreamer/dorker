@@ -106,8 +106,7 @@ class PhenomScraper(BaseScraper):
         )
         if not company_slug.startswith(("http://", "https://")):
             raise ScraperError(
-                f"Phenom slug must be a full URL (e.g. https://jobs.bell.ca), "
-                f"got {company_slug!r}"
+                f"Phenom slug must be a full URL (e.g. https://jobs.bell.ca), got {company_slug!r}"
             )
         self.base_url = company_slug.rstrip("/")
         self.locale = locale
@@ -197,7 +196,11 @@ class PhenomScraper(BaseScraper):
             "jobs": True,
             "counts": True,
             "all_fields": [
-                "category", "jobFamilies", "country", "state", "city",
+                "category",
+                "jobFamilies",
+                "country",
+                "state",
+                "city",
                 "experienceLevel",
             ],
             "size": PAGE_SIZE,
@@ -274,11 +277,7 @@ class PhenomScraper(BaseScraper):
         ats_id = str(item.get("jobId") or item.get("id") or "")
         if not ats_id:
             return None
-        title = (
-            item.get("title")
-            or item.get("jobTitle")
-            or "Untitled"
-        )
+        title = item.get("title") or item.get("jobTitle") or "Untitled"
         url = item.get("jobUrl") or item.get("url")
         if not url or not isinstance(url, str):
             url = f"{self.base_url}/job/{ats_id}"
@@ -286,9 +285,16 @@ class PhenomScraper(BaseScraper):
             url = f"{self.base_url}{url if url.startswith('/') else '/' + url}"
 
         raw: dict[str, Any] = {}
-        for k in ("category", "subCategory", "businessUnit",
-                  "jobType", "jobFamily", "remoteType",
-                  "jobSeqNo", "internalCategoryName"):
+        for k in (
+            "category",
+            "subCategory",
+            "businessUnit",
+            "jobType",
+            "jobFamily",
+            "remoteType",
+            "jobSeqNo",
+            "internalCategoryName",
+        ):
             v = item.get(k)
             if v:
                 raw[k] = v
@@ -309,9 +315,7 @@ class PhenomScraper(BaseScraper):
 
         # Map ``jobType`` to the canonical ``employment_type`` enum;
         # keep the original label in ``commitment`` for display.
-        commitment = (
-            item.get("jobType") if isinstance(item.get("jobType"), str) else None
-        )
+        commitment = item.get("jobType") if isinstance(item.get("jobType"), str) else None
         employment_type: str | None = None
         if commitment:
             norm = commitment.strip().lower()
@@ -335,8 +339,12 @@ class PhenomScraper(BaseScraper):
             # Prefer the full ``description`` field. ``descriptionTeaser`` is
             # a short marketing summary (typically 1-2 sentences) and was
             # silently truncating each posting to a fraction of its real body.
-            description=_clean_description(item.get("description") or item.get("descriptionTeaser")),
-            posted_at=_parse_iso(item.get("postedDate") or item.get("dateCreated") or item.get("createdAt")),
+            description=_clean_description(
+                item.get("description") or item.get("descriptionTeaser")
+            ),
+            posted_at=_parse_iso(
+                item.get("postedDate") or item.get("dateCreated") or item.get("createdAt")
+            ),
             fetched_at=datetime.now(UTC),
             raw=raw or None,
         )

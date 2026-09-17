@@ -115,10 +115,7 @@ class WantedScraper(BaseScraper):
             async def per_country(cc: str) -> None:
                 # Pagination is cursor-style: follow ``links.next`` until null.
                 # The first request seeds the cursor with the standard params.
-                url = (
-                    f"{API_ROOT}{JOBS_PATH}?country={cc}"
-                    f"&limit={PER_PAGE}&offset=0"
-                )
+                url = f"{API_ROOT}{JOBS_PATH}?country={cc}&limit={PER_PAGE}&offset=0"
                 while url:
                     payload = await self._request_json(fetch, sem, url)
                     items = payload.get("data") or []
@@ -128,10 +125,7 @@ class WantedScraper(BaseScraper):
                     next_path = (payload.get("links") or {}).get("next")
                     if not next_path:
                         return
-                    url = (
-                        next_path if next_path.startswith("http")
-                        else f"{API_ROOT}{next_path}"
-                    )
+                    url = next_path if next_path.startswith("http") else f"{API_ROOT}{next_path}"
 
             await asyncio.gather(*(per_country(cc) for cc in self.country_codes))
             if self.include_descriptions and jobs:
@@ -151,7 +145,7 @@ class WantedScraper(BaseScraper):
             payload = await self._request_json(fetch, sem, url)
         except ScraperError:
             return
-        detail = ((payload.get("job") or {}).get("detail") or {})
+        detail = (payload.get("job") or {}).get("detail") or {}
         description = _compose_description(detail)
         if description and not job.description:
             job.description = description[:25_000]
@@ -216,8 +210,7 @@ class WantedScraper(BaseScraper):
         cat_tags = item.get("category_tags")
         if isinstance(cat_tags, list) and cat_tags:
             raw["category_tag_ids"] = [
-                t.get("id") for t in cat_tags
-                if isinstance(t, dict) and t.get("id") is not None
+                t.get("id") for t in cat_tags if isinstance(t, dict) and t.get("id") is not None
             ]
         raw["country"] = country.upper()
 

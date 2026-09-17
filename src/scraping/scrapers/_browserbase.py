@@ -105,8 +105,7 @@ async def create_session_ws_url(
         )
     if response.status_code != 201:
         raise ScraperError(
-            f"Browserbase session create failed: {response.status_code} "
-            f"{response.text[:200]}"
+            f"Browserbase session create failed: {response.status_code} {response.text[:200]}"
         )
     return response.json()["connectUrl"]
 

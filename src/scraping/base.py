@@ -38,7 +38,7 @@ from .models import ATSType
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
 
-    from ats_scrapers.models import Job
+    from src.scraping.models import Job
 
 T = TypeVar("T")
 
@@ -160,9 +160,7 @@ class ScraperRegistry:
     _scrapers: ClassVar[dict[ATSType, type[BaseScraper]]] = {}
 
     @classmethod
-    def register(
-        cls, ats: ATSType
-    ) -> Callable[[type[BaseScraper]], type[BaseScraper]]:
+    def register(cls, ats: ATSType) -> Callable[[type[BaseScraper]], type[BaseScraper]]:
         def decorator(scraper_cls: type[BaseScraper]) -> type[BaseScraper]:
             cls._scrapers[ats] = scraper_cls
             return scraper_cls

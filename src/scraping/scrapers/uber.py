@@ -99,9 +99,7 @@ class UberScraper(BaseScraper):
                 "team": [],
             },
         }
-        data = await fetch.post_json(
-            API_URL, params={"localeCode": "en"}, json=payload
-        )
+        data = await fetch.post_json(API_URL, params={"localeCode": "en"}, json=payload)
         return data.get("data") or {}
 
     def _parse_job(self, item: dict[str, Any]) -> Job:
@@ -124,18 +122,13 @@ class UberScraper(BaseScraper):
         # Description is markdown — kept verbatim, capped at 25k chars.
         description_raw = item.get("description")
         description = (
-            description_raw.strip()[:25_000] or None
-            if isinstance(description_raw, str)
-            else None
+            description_raw.strip()[:25_000] or None if isinstance(description_raw, str) else None
         )
 
         # ``timeType`` ships as ``"Full-Time"`` / ``"Part-Time"`` /
         # ``"Intern"`` / ``"Contract"``. Map to the canonical enum.
         time_type = item.get("timeType")
-        commitment = (
-            time_type.strip() if isinstance(time_type, str) and time_type.strip()
-            else None
-        )
+        commitment = time_type.strip() if isinstance(time_type, str) and time_type.strip() else None
         employment_type: str | None = None
         if commitment:
             norm = commitment.lower()
@@ -145,9 +138,20 @@ class UberScraper(BaseScraper):
                     break
 
         raw: dict[str, Any] = {}
-        for k in ("department", "team", "category", "subCategory",
-                  "level", "otherLevels", "remote", "allLocations",
-                  "programAndPlatform", "type", "timeType", "uniqueSkills"):
+        for k in (
+            "department",
+            "team",
+            "category",
+            "subCategory",
+            "level",
+            "otherLevels",
+            "remote",
+            "allLocations",
+            "programAndPlatform",
+            "type",
+            "timeType",
+            "uniqueSkills",
+        ):
             v = item.get(k)
             if v:
                 raw[k] = v
@@ -166,9 +170,7 @@ class UberScraper(BaseScraper):
             description=description,
             requisition_id=ats_id if ats_id else None,
             posted_at=_parse_iso(
-                item.get("creationDate")
-                or item.get("createdDate")
-                or item.get("updatedDate")
+                item.get("creationDate") or item.get("createdDate") or item.get("updatedDate")
             ),
             fetched_at=datetime.now(UTC),
             raw=raw or None,

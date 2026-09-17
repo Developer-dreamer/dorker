@@ -90,7 +90,10 @@ class GetOnBrdScraper(BaseScraper):
                 page = 1
                 while True:
                     payload = await self._fetch_jobs_page(
-                        fetch, sem, slug=slug, page=page,
+                        fetch,
+                        sem,
+                        slug=slug,
+                        page=page,
                     )
                     items = payload.get("data") or []
                     for item in items:
@@ -100,9 +103,12 @@ class GetOnBrdScraper(BaseScraper):
                         seen.add(ats_id)
                         jobs.append(
                             await self._parse_job(
-                                fetch, sem, item,
+                                fetch,
+                                sem,
+                                item,
                                 modalities=modalities,
-                                companies=companies, cities=cities,
+                                companies=companies,
+                                cities=cities,
                             )
                         )
                     meta = payload.get("meta") or {}
@@ -128,15 +134,9 @@ class GetOnBrdScraper(BaseScraper):
             return {}
         return response.json()
 
-    async def _list_categories(
-        self, fetch: Fetcher, sem: asyncio.Semaphore
-    ) -> list[str]:
+    async def _list_categories(self, fetch: Fetcher, sem: asyncio.Semaphore) -> list[str]:
         payload = await self._request_json(fetch, sem, f"{API_ROOT}/categories")
-        cats = [
-            str(entry.get("id"))
-            for entry in (payload.get("data") or [])
-            if entry.get("id")
-        ]
+        cats = [str(entry.get("id")) for entry in (payload.get("data") or []) if entry.get("id")]
         if not cats:
             raise ScraperError("Get on Board /categories returned no entries")
         return cats
@@ -164,10 +164,7 @@ class GetOnBrdScraper(BaseScraper):
         slug: str,
         page: int,
     ) -> dict[str, Any]:
-        url = (
-            f"{API_ROOT}/categories/{slug}/jobs"
-            f"?per_page={PER_PAGE}&page={page}"
-        )
+        url = f"{API_ROOT}/categories/{slug}/jobs?per_page={PER_PAGE}&page={page}"
         return await self._request_json(fetch, sem, url)
 
     async def _resolve_company(
@@ -179,9 +176,7 @@ class GetOnBrdScraper(BaseScraper):
     ) -> str:
         if company_id in cache:
             return cache[company_id]
-        payload = await self._request_json(
-            fetch, sem, f"{API_ROOT}/companies/{company_id}"
-        )
+        payload = await self._request_json(fetch, sem, f"{API_ROOT}/companies/{company_id}")
         attrs = (payload.get("data") or {}).get("attributes") or {}
         name = (attrs.get("name") or "").strip() or company_id
         cache[company_id] = name
@@ -196,9 +191,7 @@ class GetOnBrdScraper(BaseScraper):
     ) -> dict[str, str]:
         if city_id in cache:
             return cache[city_id]
-        payload = await self._request_json(
-            fetch, sem, f"{API_ROOT}/cities/{city_id}"
-        )
+        payload = await self._request_json(fetch, sem, f"{API_ROOT}/cities/{city_id}")
         attrs = (payload.get("data") or {}).get("attributes") or {}
         out = {
             "name": (attrs.get("name") or "").strip(),
@@ -223,26 +216,24 @@ class GetOnBrdScraper(BaseScraper):
         attrs = item.get("attributes") or {}
         title = _strip_html(attrs.get("title") or "Untitled")
 
-        company_id = str(
-            ((attrs.get("company") or {}).get("data") or {}).get("id") or ""
-        )
+        company_id = str(((attrs.get("company") or {}).get("data") or {}).get("id") or "")
         company = (
             await self._resolve_company(fetch, sem, company_id, companies)
-            if company_id else "Unknown"
+            if company_id
+            else "Unknown"
         )
 
         location = await self._format_location(
-            fetch, sem, attrs, cities=cities,
+            fetch,
+            sem,
+            attrs,
+            cities=cities,
         )
 
-        modality_id = str(
-            ((attrs.get("modality") or {}).get("data") or {}).get("id") or ""
-        )
+        modality_id = str(((attrs.get("modality") or {}).get("data") or {}).get("id") or "")
         modality_attrs = modalities.get(modality_id) or {}
         commitment = modality_attrs.get("name")
-        employment_type = _MODALITY_MAP.get(
-            (modality_attrs.get("locale_key") or "").lower()
-        )
+        employment_type = _MODALITY_MAP.get((modality_attrs.get("locale_key") or "").lower())
 
         description = _strip_html(_concat_descriptions(attrs))
         salary_min = _to_float(attrs.get("min_salary"))
@@ -254,8 +245,14 @@ class GetOnBrdScraper(BaseScraper):
         )
 
         raw: dict[str, Any] = {}
-        for k in ("category_name", "lang", "perks", "remote_modality",
-                  "remote_zone", "applications_count"):
+        for k in (
+            "category_name",
+            "lang",
+            "perks",
+            "remote_modality",
+            "remote_zone",
+            "applications_count",
+        ):
             v = attrs.get(k)
             if v not in (None, "", []):
                 raw[k] = v
@@ -292,9 +289,7 @@ class GetOnBrdScraper(BaseScraper):
         # location_cities holds resolved-city refs; resolve the first one
         # we see (jobs rarely span more than one city in this dataset)
         # and fall back to the country list otherwise.
-        city_refs = (
-            ((attrs.get("location_cities") or {}).get("data")) or []
-        )
+        city_refs = ((attrs.get("location_cities") or {}).get("data")) or []
         if city_refs:
             cid = str(city_refs[0].get("id") or "")
             if cid:

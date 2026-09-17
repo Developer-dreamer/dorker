@@ -18,7 +18,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Literal, Self, Any
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
@@ -322,8 +322,7 @@ class Job(BaseModel):
     lon: float | None = Field(
         default=None,
         description=(
-            "Longitude in WGS-84 degrees. See ``lat`` notes — "
-            "populated together or not at all."
+            "Longitude in WGS-84 degrees. See ``lat`` notes — populated together or not at all."
         ),
     )
     is_remote: bool | None = Field(
@@ -464,8 +463,7 @@ class Job(BaseModel):
         ),
     )
     is_normalized: bool = Field(
-        default=False,
-        description="Tells wether description was normalized"
+        default=False, description="Tells wether description was normalized"
     )
     posted_at: datetime | None = Field(
         default=None,
@@ -538,9 +536,7 @@ class Job(BaseModel):
             # don't see the trailing-space or other whitespace forms.
             if normalized_id != self.ats_id:
                 object.__setattr__(self, "ats_id", normalized_id)
-            object.__setattr__(
-                self, "global_id", f"{self.ats_type.value}:{normalized_id}"
-            )
+            object.__setattr__(self, "global_id", f"{self.ats_type.value}:{normalized_id}")
         return self
 
     @property
@@ -554,7 +550,6 @@ class Job(BaseModel):
             max_amount=self.salary_max,
             summary=self.salary_summary,
         )
-
 
 
 class JobDB(BaseModel):
@@ -585,7 +580,7 @@ class JobDB(BaseModel):
     fetched_at: datetime | None
 
     @classmethod
-    def from_domain(self,company_id: int, job: Job) -> "JobDB":
+    def from_domain(self, company_id: int, job: Job) -> "JobDB":
         return self(
             id=job.global_id,
             ats_type=job.ats_type,
@@ -603,7 +598,7 @@ class JobDB(BaseModel):
             salary_max=job.salary_max,
             salary_currency=job.salary_currency,
             posted_at=job.posted_at,
-            fetched_at=job.fetched_at
+            fetched_at=job.fetched_at,
         )
 
     def job_to_db_params(self) -> tuple[Any, ...]:

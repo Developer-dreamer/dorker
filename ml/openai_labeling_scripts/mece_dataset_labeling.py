@@ -1,6 +1,6 @@
 import asyncio
+import datetime
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Literal, Tuple, Type
 
@@ -10,6 +10,7 @@ from openai.lib._pydantic import to_strict_json_schema
 from pydantic import BaseModel
 
 ROOT = Path(__file__).resolve().parent
+
 
 class SegmentedBlock(BaseModel):
     text: str
@@ -144,40 +145,40 @@ async def run_batch_upload() -> None:
             LIMIT 1000;
             """
 
-    # async with aiosqlite.connect(db_path) as conn:
-    #     cursor = await conn.execute(query)
-    #     rows = await cursor.fetchall()
+    async with aiosqlite.connect(db_path) as conn:
+        cursor = await conn.execute(query)
+        rows = await cursor.fetchall()
 
-    #     jobs = [(row[0], row[1]) for row in rows]
+        jobs = [(row[0], row[1]) for row in rows]
 
-    # path, ids = create_batch_file(batch_id=datetime.now(timezone.utc).isoformat(),
-    #                   model="gpt-5.6-luna",
-    #                   jobs=jobs,
-    #                   output_dir=Path("/Users/serafym/Developer/dorker.space/intelligence_core/ml"))
+    path, ids = create_batch_file(
+        batch_id=datetime.now(datetime.timezone.utc).isoformat(),
+        model="gpt-5.6-luna",
+        jobs=jobs,
+        output_dir=Path("/Users/serafym/Developer/dorker.space/intelligence_core/ml"),
+    )
 
-    # print(f'[INFO] Batch file created. Path: {path}')
+    print(f"[INFO] Batch file created. Path: {path}")
 
     client = OpenAI()
 
-    # batch_file_path = ROOT / "ml" / "batch_2026-08-26T15:04:34.625737+00:00.jsonl"
-    # batch_input_file = client.files.create(
-    #     file=open(
-    #         batch_file_path,
-    #         "rb",
-    #     ),
-    #     purpose="batch",
-    # )
-    # print(f"[INFO] Batch file sent to OpenAI API. ID: {batch_input_file.id}")
+    batch_file_path = ROOT / "ml" / "batch_2026-08-26T15:04:34.625737+00:00.jsonl"
+    batch_input_file = client.files.create(
+        file=open(
+            batch_file_path,
+            "rb",
+        ),
+        purpose="batch",
+    )
+    print(f"[INFO] Batch file sent to OpenAI API. ID: {batch_input_file.id}")
 
-    # batch = client.batches.create(
-    #     input_file_id=batch_input_file.id,
-    #     endpoint="/v1/chat/completions",
-    #     completion_window="24h",
-    # )
-    # print(f"[INFO] Batch created. ID: {batch.id}, Status: {batch.status}, Jobs sent: {len(ids)}.")
-
-
+    batch = client.batches.create(
+        input_file_id=batch_input_file.id,
+        endpoint="/v1/chat/completions",
+        completion_window="24h",
+    )
+    print(f"[INFO] Batch created. ID: {batch.id}, Status: {batch.status}, Jobs sent: {len(ids)}.")
 
 
 if __name__ == "__main__":
-    asyncio.run(run())
+    asyncio.run(run_batch_upload())

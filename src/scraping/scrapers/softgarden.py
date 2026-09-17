@@ -162,15 +162,11 @@ class SoftgardenScraper(BaseScraper):
 
     def _parse_feed(self, payload: object) -> list[Job]:
         if not isinstance(payload, dict):
-            raise ScraperError(
-                f"Softgarden ({self.company_slug}) feed was not an object"
-            )
+            raise ScraperError(f"Softgarden ({self.company_slug}) feed was not an object")
         elements = payload.get("dataFeedElement")
         expected_total = payload.get("numberOfItems")
         if not isinstance(elements, list) or not isinstance(expected_total, int):
-            raise ScraperError(
-                f"Softgarden ({self.company_slug}) feed omitted its jobs/count"
-            )
+            raise ScraperError(f"Softgarden ({self.company_slug}) feed omitted its jobs/count")
         if expected_total != len(elements):
             raise ScraperError(
                 f"Softgarden ({self.company_slug}) expected {expected_total} jobs "
@@ -180,18 +176,14 @@ class SoftgardenScraper(BaseScraper):
         jobs: list[Job] = []
         seen: set[str] = set()
         for index, element in enumerate(elements):
-            if not isinstance(element, dict) or not isinstance(
-                element.get("item"), dict
-            ):
+            if not isinstance(element, dict) or not isinstance(element.get("item"), dict):
                 raise ScraperError(
-                    f"Softgarden ({self.company_slug}) row {index} "
-                    "was not a JobPosting"
+                    f"Softgarden ({self.company_slug}) row {index} was not a JobPosting"
                 )
             job = self._parse_job(element["item"], element.get("dateModified"))
             if job.ats_id in seen:
                 raise ScraperError(
-                    f"Softgarden ({self.company_slug}) returned duplicate "
-                    f"job ID {job.ats_id}"
+                    f"Softgarden ({self.company_slug}) returned duplicate job ID {job.ats_id}"
                 )
             seen.add(job.ats_id or "")
             jobs.append(job)
@@ -205,9 +197,7 @@ class SoftgardenScraper(BaseScraper):
         identifier = item.get("identifier")
         organization = item.get("hiringOrganization")
         if not isinstance(identifier, dict) or not isinstance(organization, dict):
-            raise ScraperError(
-                f"Softgarden ({self.company_slug}) job omitted identity metadata"
-            )
+            raise ScraperError(f"Softgarden ({self.company_slug}) job omitted identity metadata")
         job_id = _job_id(identifier.get("value"))
         title = _required_string(item, "title")
         company = _required_string(organization, "name")
@@ -216,9 +206,7 @@ class SoftgardenScraper(BaseScraper):
         location, country_iso = _locations(item.get("jobLocation"))
         employment_raw = _string(item.get("employmentType"))
         employment_type = _employment_type(employment_raw)
-        remote_text = " ".join(
-            part for part in (title, location) if isinstance(part, str)
-        )
+        remote_text = " ".join(part for part in (title, location) if isinstance(part, str))
         raw = {
             key: value
             for key, value in {
@@ -241,9 +229,7 @@ class SoftgardenScraper(BaseScraper):
             employment_type=employment_type,
             commitment=employment_raw,
             description=(
-                description[:25_000]
-                if self.include_descriptions and description
-                else None
+                description[:25_000] if self.include_descriptions and description else None
             ),
             posted_at=_parse_datetime(item.get("datePosted")),
             fetched_at=datetime.now(UTC),
@@ -273,9 +259,7 @@ def _normalize_tenant(value: str) -> str:
             or parsed.query
             or parsed.fragment
         ):
-            raise ScraperError(
-                "Softgarden URL must use a public career.softgarden.de host"
-            )
+            raise ScraperError("Softgarden URL must use a public career.softgarden.de host")
         cleaned = host.removesuffix(HOST_SUFFIX)
     elif cleaned.lower().endswith(HOST_SUFFIX):
         cleaned = cleaned[: -len(HOST_SUFFIX)]
@@ -293,11 +277,7 @@ def _trusted_job_url(value: object, job_id: str) -> str:
     except ValueError as exc:
         raise ScraperError("Softgarden job returned an untrusted URL") from exc
     segments = [segment for segment in parsed.path.split("/") if segment]
-    valid_job_path = (
-        len(segments) >= 2
-        and segments[0] in {"job", "jobs"}
-        and segments[1] == job_id
-    )
+    valid_job_path = len(segments) >= 2 and segments[0] in {"job", "jobs"} and segments[1] == job_id
     if (
         parsed.scheme != "https"
         or parsed.username is not None
@@ -315,9 +295,7 @@ def _locations(value: object) -> tuple[str | None, str | None]:
     rendered: list[str] = []
     country_codes: list[str | None] = []
     for location in raw_locations:
-        if not isinstance(location, dict) or not isinstance(
-            location.get("address"), dict
-        ):
+        if not isinstance(location, dict) or not isinstance(location.get("address"), dict):
             continue
         address = location["address"]
         country_raw = _string(address.get("addressCountry"))
@@ -346,9 +324,7 @@ def _locations(value: object) -> tuple[str | None, str | None]:
     resolved_codes = {code for code in country_codes if code}
     country_iso = (
         next(iter(resolved_codes))
-        if country_codes
-        and all(country_codes)
-        and len(resolved_codes) == 1
+        if country_codes and all(country_codes) and len(resolved_codes) == 1
         else None
     )
     return "; ".join(dict.fromkeys(rendered)) or None, country_iso

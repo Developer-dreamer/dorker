@@ -160,9 +160,7 @@ class ScraperRegistry:
     _scrapers: ClassVar[dict[ATSType, type[BaseScraper]]] = {}
 
     @classmethod
-    def register(
-        cls, ats: ATSType
-    ) -> Callable[[type[BaseScraper]], type[BaseScraper]]:
+    def register(cls, ats: ATSType) -> Callable[[type[BaseScraper]], type[BaseScraper]]:
         def decorator(scraper_cls: type[BaseScraper]) -> type[BaseScraper]:
             cls._scrapers[ats] = scraper_cls
             return scraper_cls

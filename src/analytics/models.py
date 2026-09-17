@@ -22,13 +22,14 @@ class Analytics(BaseModel):
 # Main Root Model
 # ==========================================
 
+
 class MatchedJob(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     technical_capability_score: float = 0.0
     strategic_value_score: float = 0.0
     confidence_score: float = 0.0
-    suitability_tier: SuitabilityTier = "REJECTED"
+    suitability_tier: SuitabilityTier = SuitabilityTier.REJECTED
     strategic_reason: str = ""
     rejection_reason: str = ""
 
@@ -108,16 +109,12 @@ class OpenAIBatchRecord(BaseModel):
     ) -> "OpenAIBatchRecord":
         """Converts an OpenAI SDK Batch object and app state into a database record."""
         total = batch.request_counts.total if batch.request_counts else 0
-        completed = (
-            batch.request_counts.completed if batch.request_counts else 0
-        )
+        completed = batch.request_counts.completed if batch.request_counts else 0
         failed = batch.request_counts.failed if batch.request_counts else 0
 
         # Extract top-level error message if present in OpenAI batch response
         if not error_message and batch.errors and batch.errors.data:
-            error_message = "; ".join(
-                f"[{err.code}] {err.message}" for err in batch.errors.data
-            )
+            error_message = "; ".join(f"[{err.code}] {err.message}" for err in batch.errors.data)
 
         return cls(
             id=batch.id,

@@ -90,7 +90,8 @@ class ArbetsformedlingenScraper(BaseScraper):
             # etc.). ``stats.limit=30`` returns all 21 current regions
             # (default is 5, which is the trap that bit us before).
             seed = await self._fetch_page(
-                fetch, sem,
+                fetch,
+                sem,
                 params={"limit": 0, "stats": "region", "stats.limit": 30},
             )
             stats = seed.get("stats") or []
@@ -105,10 +106,9 @@ class ArbetsformedlingenScraper(BaseScraper):
                 # Last-resort fallback to the static list — better to get
                 # partial coverage than to crash if the API moves.
                 regions = list(SWEDEN_REGIONS)
-            await asyncio.gather(*(
-                self._exhaust_region(fetch, sem, region, absorb)
-                for region in regions
-            ))
+            await asyncio.gather(
+                *(self._exhaust_region(fetch, sem, region, absorb) for region in regions)
+            )
         return all_jobs
 
     async def _exhaust_region(
@@ -118,9 +118,15 @@ class ArbetsformedlingenScraper(BaseScraper):
         region: str,
         absorb,
     ) -> None:
-        first = await self._fetch_page(fetch, sem, params={
-            "region": region, "limit": PAGE_SIZE, "offset": 0,
-        })
+        first = await self._fetch_page(
+            fetch,
+            sem,
+            params={
+                "region": region,
+                "limit": PAGE_SIZE,
+                "offset": 0,
+            },
+        )
         total = (first.get("total") or {}).get("value", 0)
         if total == 0:
             return
@@ -137,14 +143,17 @@ class ArbetsformedlingenScraper(BaseScraper):
             return
 
         offsets = list(range(PAGE_SIZE, total, PAGE_SIZE))
-        await asyncio.gather(*(
-            self._fetch_and_absorb(
-                fetch, sem,
-                params={"region": region, "limit": PAGE_SIZE, "offset": o},
-                absorb=absorb,
+        await asyncio.gather(
+            *(
+                self._fetch_and_absorb(
+                    fetch,
+                    sem,
+                    params={"region": region, "limit": PAGE_SIZE, "offset": o},
+                    absorb=absorb,
+                )
+                for o in offsets
             )
-            for o in offsets
-        ))
+        )
 
     async def _subdivide_by_occupation(
         self,
@@ -156,9 +165,15 @@ class ArbetsformedlingenScraper(BaseScraper):
         # Discover occupation-field codes via stats — the API returns the
         # top buckets dynamically, which is fine because the largest
         # buckets are what we need to hit before the trailing cap.
-        stats = await self._fetch_page(fetch, sem, params={
-            "region": region, "limit": 0, "stats": "occupation-field",
-        })
+        stats = await self._fetch_page(
+            fetch,
+            sem,
+            params={
+                "region": region,
+                "limit": 0,
+                "stats": "occupation-field",
+            },
+        )
         fields = stats.get("stats") or []
         codes: list[str] = []
         if fields and isinstance(fields[0], dict):
@@ -170,35 +185,51 @@ class ArbetsformedlingenScraper(BaseScraper):
         if not codes:
             # Fallback — just paginate up to the cap.
             offsets = list(range(PAGE_SIZE, PAGINATION_CAP, PAGE_SIZE))
-            await asyncio.gather(*(
-                self._fetch_and_absorb(
-                    fetch, sem,
-                    params={"region": region, "limit": PAGE_SIZE, "offset": o},
-                    absorb=absorb,
+            await asyncio.gather(
+                *(
+                    self._fetch_and_absorb(
+                        fetch,
+                        sem,
+                        params={"region": region, "limit": PAGE_SIZE, "offset": o},
+                        absorb=absorb,
+                    )
+                    for o in offsets
                 )
-                for o in offsets
-            ))
+            )
             return
 
         async def occ_bucket(code: str) -> None:
-            sub = await self._fetch_page(fetch, sem, params={
-                "region": region, "occupation-field": code,
-                "limit": PAGE_SIZE, "offset": 0,
-            })
+            sub = await self._fetch_page(
+                fetch,
+                sem,
+                params={
+                    "region": region,
+                    "occupation-field": code,
+                    "limit": PAGE_SIZE,
+                    "offset": 0,
+                },
+            )
             sub_total = min((sub.get("total") or {}).get("value", 0), PAGINATION_CAP)
             absorb(sub.get("hits") or [])
             if sub_total <= PAGE_SIZE:
                 return
             offsets = list(range(PAGE_SIZE, sub_total, PAGE_SIZE))
-            await asyncio.gather(*(
-                self._fetch_and_absorb(
-                    fetch, sem,
-                    params={"region": region, "occupation-field": code,
-                            "limit": PAGE_SIZE, "offset": o},
-                    absorb=absorb,
+            await asyncio.gather(
+                *(
+                    self._fetch_and_absorb(
+                        fetch,
+                        sem,
+                        params={
+                            "region": region,
+                            "occupation-field": code,
+                            "limit": PAGE_SIZE,
+                            "offset": o,
+                        },
+                        absorb=absorb,
+                    )
+                    for o in offsets
                 )
-                for o in offsets
-            ))
+            )
 
         await asyncio.gather(*(occ_bucket(c) for c in codes))
 
@@ -232,9 +263,7 @@ class ArbetsformedlingenScraper(BaseScraper):
         try:
             return r.json()
         except ValueError as exc:
-            raise ScraperError(
-                f"Arbetsförmedlingen returned non-JSON for {params}: {exc}"
-            ) from exc
+            raise ScraperError(f"Arbetsförmedlingen returned non-JSON for {params}: {exc}") from exc
 
     def _parse(self, item: dict[str, Any]) -> Job | None:
         ats_id = str(item.get("id") or "").strip()
@@ -245,14 +274,11 @@ class ArbetsformedlingenScraper(BaseScraper):
 
         employer = item.get("employer") or {}
         company = (
-            (employer.get("name") if isinstance(employer, dict) else None)
-            or "Arbetsförmedlingen"
-        )
+            employer.get("name") if isinstance(employer, dict) else None
+        ) or "Arbetsförmedlingen"
         # ``workplace`` is the trading name / site label (e.g. parent
         # corp uses ``name``, the actual office is ``workplace``).
-        team = (
-            employer.get("workplace") if isinstance(employer, dict) else None
-        )
+        team = employer.get("workplace") if isinstance(employer, dict) else None
         if isinstance(team, str) and team.strip().lower() == str(company).strip().lower():
             team = None  # Don't duplicate company name into team.
 
@@ -276,8 +302,7 @@ class ArbetsformedlingenScraper(BaseScraper):
         # Working hours type: heltid (full-time) / deltid (part-time).
         working_hours_type = item.get("working_hours_type") or {}
         hours_label = (
-            working_hours_type.get("label")
-            if isinstance(working_hours_type, dict) else None
+            working_hours_type.get("label") if isinstance(working_hours_type, dict) else None
         )
 
         emp_type_obj = item.get("employment_type") or {}
@@ -289,18 +314,14 @@ class ArbetsformedlingenScraper(BaseScraper):
         # API didn't fill the working_hours_type. Don't leak the
         # employment-contract label here — that lives in ``employment_type``.
         commitment: str | None = (
-            hours_label.strip() if isinstance(hours_label, str) and hours_label.strip()
-            else None
+            hours_label.strip() if isinstance(hours_label, str) and hours_label.strip() else None
         )
         if not commitment:
             scope = item.get("scope_of_work") or {}
             if isinstance(scope, dict):
                 lo, hi = scope.get("min"), scope.get("max")
                 if isinstance(lo, (int, float)) and isinstance(hi, (int, float)) and hi > 0:
-                    commitment = (
-                        f"{int(hi)} %" if lo == hi
-                        else f"{int(lo)}–{int(hi)} %"
-                    )
+                    commitment = f"{int(hi)} %" if lo == hi else f"{int(lo)}–{int(hi)} %"
 
         # ``occupation_field`` is the high-level domain (Pedagogik,
         # Hälso- och sjukvård, IT-data, etc.) — Arbetsförmedlingen's
@@ -311,26 +332,34 @@ class ArbetsformedlingenScraper(BaseScraper):
         # ``application_details.url`` is where to actually apply (often
         # external — employer site or LinkedIn).
         apply_details = item.get("application_details") or {}
-        apply_url = (
-            apply_details.get("url") if isinstance(apply_details, dict) else None
-        )
+        apply_url = apply_details.get("url") if isinstance(apply_details, dict) else None
 
         # Employer's own external ref — usually null but worth keeping
         # when present.
         requisition_id = (
-            (item.get("external_id") or item.get("original_id") or "")
-            .strip() or None
-        ) if isinstance(item.get("external_id") or item.get("original_id"), str) else None
+            ((item.get("external_id") or item.get("original_id") or "").strip() or None)
+            if isinstance(item.get("external_id") or item.get("original_id"), str)
+            else None
+        )
 
         is_remote = None
         if isinstance(item.get("remote_work"), bool):
             is_remote = item["remote_work"]
 
         raw: dict[str, Any] = {}
-        for k in ("occupation", "occupation_field", "occupation_group",
-                  "duration", "scope_of_work", "experience_required",
-                  "salary_type", "must_have", "nice_to_have",
-                  "employment_type", "working_hours_type"):
+        for k in (
+            "occupation",
+            "occupation_field",
+            "occupation_group",
+            "duration",
+            "scope_of_work",
+            "experience_required",
+            "salary_type",
+            "must_have",
+            "nice_to_have",
+            "employment_type",
+            "working_hours_type",
+        ):
             v = item.get(k)
             if v:
                 raw[k] = v
@@ -348,7 +377,9 @@ class ArbetsformedlingenScraper(BaseScraper):
             department=department if isinstance(department, str) else None,
             employment_type=employment_type,
             commitment=commitment,
-            apply_url=apply_url if isinstance(apply_url, str) and apply_url.startswith("http") else None,
+            apply_url=apply_url
+            if isinstance(apply_url, str) and apply_url.startswith("http")
+            else None,
             requisition_id=requisition_id,
             salary_summary=salary_summary,
             posted_at=_parse_iso(item.get("publication_date") or item.get("application_deadline")),

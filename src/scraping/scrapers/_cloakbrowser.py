@@ -101,8 +101,7 @@ def evomi_proxy_from_env() -> dict[str, Any] | None:
     parts = rest.split(":")
     if len(parts) != 4:
         log.warning(
-            "PROXY env var doesn't match host:port:user:pass shape; "
-            "ignoring.",
+            "PROXY env var doesn't match host:port:user:pass shape; ignoring.",
         )
         return None
     host, port, user, password = parts

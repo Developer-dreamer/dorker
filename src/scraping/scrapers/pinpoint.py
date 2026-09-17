@@ -99,9 +99,7 @@ class PinpointScraper(BaseScraper):
             include_descriptions=include_descriptions,
             proxy=proxy,
         )
-        self.company_slug = require_host_label(
-            company_slug, provider="PinpointScraper"
-        )
+        self.company_slug = require_host_label(company_slug, provider="PinpointScraper")
 
     async def afetch(self) -> list[Job]:
         url = API_TEMPLATE.format(slug=self.company_slug)
@@ -119,9 +117,7 @@ class PinpointScraper(BaseScraper):
             ) from exc
         data = payload.get("data") if isinstance(payload, dict) else None
         if not isinstance(data, list):
-            raise ScraperError(
-                f"Pinpoint returned unexpected payload for {self.company_slug}"
-            )
+            raise ScraperError(f"Pinpoint returned unexpected payload for {self.company_slug}")
         seen: set[str] = set()
         jobs: list[Job] = []
         for item in data:
@@ -144,9 +140,7 @@ class PinpointScraper(BaseScraper):
         comp_currency = item.get("compensation_currency")
         comp_min = _to_float(item.get("compensation_minimum"))
         comp_max = _to_float(item.get("compensation_maximum"))
-        comp_period = _PERIOD_MAP.get(
-            (item.get("compensation_frequency") or "").lower()
-        )
+        comp_period = _PERIOD_MAP.get((item.get("compensation_frequency") or "").lower())
         if not item.get("compensation_visible"):
             # Pinpoint surfaces compensation only when the recruiter has chosen
             # to make it public; otherwise the numeric fields can leak internal
@@ -157,13 +151,17 @@ class PinpointScraper(BaseScraper):
 
         job_meta = item.get("job") if isinstance(item.get("job"), dict) else {}
         dept = job_meta.get("department") if isinstance(job_meta, dict) else None
-        department = (
-            dept.get("name") if isinstance(dept, dict) and dept.get("name") else None
-        )
+        department = dept.get("name") if isinstance(dept, dict) and dept.get("name") else None
 
         raw: dict[str, Any] = {}
-        for k in ("workplace_type", "experience_level", "office",
-                  "schedule", "tags", "remote_country_restriction"):
+        for k in (
+            "workplace_type",
+            "experience_level",
+            "office",
+            "schedule",
+            "tags",
+            "remote_country_restriction",
+        ):
             v = item.get(k)
             if v:
                 raw[k] = v
@@ -179,7 +177,9 @@ class PinpointScraper(BaseScraper):
             employment_type=_map_employment_type(item.get("employment_type")),
             department=department,
             commitment=item.get("schedule") if isinstance(item.get("schedule"), str) else None,
-            requisition_id=item.get("reference") if isinstance(item.get("reference"), str) else None,
+            requisition_id=item.get("reference")
+            if isinstance(item.get("reference"), str)
+            else None,
             description=_html_unescape_for_desc(item.get("description")),
             salary_currency=comp_currency,
             salary_min=comp_min,
@@ -209,7 +209,7 @@ def _map_employment_type(value: object) -> str | None:
     # Try stripping known prefixes like ``permanent_`` / ``fixed_term_``.
     for prefix in ("permanent_", "fixed_term_", "regular_"):
         if norm.startswith(prefix):
-            tail = norm[len(prefix):]
+            tail = norm[len(prefix) :]
             if tail in _TYPE_MAP:
                 return _TYPE_MAP[tail]
     # Last-resort: substring match.
@@ -251,6 +251,7 @@ def _html_unescape_for_desc(value: object, *, cap: int = 25_000) -> str | None:
     Replaces the legacy _strip_html/_html_to_text path for descriptions
     only — title/company/salary fields still use the strip variant."""
     import html as _h
+
     if not isinstance(value, str):
         return None
     out = _h.unescape(value).strip()

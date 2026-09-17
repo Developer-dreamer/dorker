@@ -91,9 +91,7 @@ class JoinComScraper(BaseScraper):
 
             if self.include_descriptions and all_jobs:
                 sem = asyncio.Semaphore(DETAIL_CONCURRENCY)
-                await asyncio.gather(*(
-                    self._enrich_with_detail(fetch, sem, j) for j in all_jobs
-                ))
+                await asyncio.gather(*(self._enrich_with_detail(fetch, sem, j) for j in all_jobs))
         return all_jobs
 
     def get_description(self, job: Job) -> str | None:
@@ -171,14 +169,20 @@ class JoinComScraper(BaseScraper):
             match = re.search(pattern, body)
             if match:
                 return match.group(1)
-        raise ScraperError(
-            f"join.com page for {self.company_slug} did not expose a company id"
-        )
+        raise ScraperError(f"join.com page for {self.company_slug} did not expose a company id")
 
     def _parse_job(self, item: dict[str, Any]) -> Job:
         raw: dict[str, Any] = {}
-        for k in ("department", "category", "industry", "skills",
-                  "language", "employmentType", "remoteWork", "workplaceType"):
+        for k in (
+            "department",
+            "category",
+            "industry",
+            "skills",
+            "language",
+            "employmentType",
+            "remoteWork",
+            "workplaceType",
+        ):
             v = item.get(k)
             if v:
                 raw[k] = v
@@ -195,9 +199,7 @@ class JoinComScraper(BaseScraper):
         # numeric id (which only the API uses). Falling back to a numeric
         # path 404s.
         slug_param = item.get("idParam") or item["id"]
-        url = item.get("url") or (
-            f"{BASE_URL}/companies/{self.company_slug}/jobs/{slug_param}"
-        )
+        url = item.get("url") or (f"{BASE_URL}/companies/{self.company_slug}/jobs/{slug_param}")
 
         return Job(
             url=url,
@@ -327,9 +329,7 @@ def _salary_from_jsonld(
     summary = None
     if sal_min is not None or sal_max is not None:
         if sal_min == sal_max and sal_min is not None:
-            base = (
-                f"{currency} {sal_min:,.0f}" if currency else f"{sal_min:,.0f}"
-            )
+            base = f"{currency} {sal_min:,.0f}" if currency else f"{sal_min:,.0f}"
         else:
             base = (
                 f"{currency} {sal_min:,.0f}–{sal_max:,.0f}"

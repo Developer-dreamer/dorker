@@ -88,7 +88,10 @@ async def run() -> None:
 
             probs = classifier.predict_proba(embeddings)[:, 1]
 
-            buffer = [(job_id, bool(prob >= threshold)) for job_id, prob in zip(job_ids, probs)]
+            buffer = [
+                (job_id, bool(prob >= threshold))
+                for job_id, prob in zip(job_ids, probs, strict=True)
+            ]
 
             await save_matches(db, buffer)
             await db.commit()

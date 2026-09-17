@@ -68,6 +68,7 @@ class MalformedJSONError(ScraperError, ValueError):
     written against either contract keep working.
     """
 
+
 # Total attempts per request (first try included). Module-level so the
 # suite-wide conftest fixture can dial them down in one place; a
 # Fetcher constructed with explicit values ignores these.
@@ -274,9 +275,7 @@ class Fetcher:
             else DEFAULT_RETRY_BASE_DELAY
         )
         max_delay = (
-            self._max_retry_delay
-            if self._max_retry_delay is not None
-            else DEFAULT_MAX_RETRY_DELAY
+            self._max_retry_delay if self._max_retry_delay is not None else DEFAULT_MAX_RETRY_DELAY
         )
 
         last_error: str = "exhausted retries"
@@ -291,8 +290,7 @@ class Fetcher:
                 last_error = str(exc)
                 if attempt == retries:
                     raise ScraperError(
-                        f"{self.label}: {method} {url} failed after "
-                        f"{retries} attempts: {exc}"
+                        f"{self.label}: {method} {url} failed after {retries} attempts: {exc}"
                     ) from exc
                 await asyncio.sleep(min(base_delay * 2 ** (attempt - 1), max_delay))
                 continue
@@ -308,7 +306,9 @@ class Fetcher:
                 if self.escalate and _cloak_available():
                     log.info(
                         "%s: %s blocked httpx (%d) — escalating to httpcloak",
-                        self.label, url, status,
+                        self.label,
+                        url,
+                        status,
                     )
                     self.engine = "cloak"
                     # Restart the logical request with a fresh attempt
@@ -326,18 +326,13 @@ class Fetcher:
                 raise ScraperError(
                     f"{self.label}: {url} returned {status} — the load "
                     f"balancer is blocking plain HTTP clients"
-                    + (
-                        " (install httpcloak to enable escalation)"
-                        if self.escalate
-                        else ""
-                    )
+                    + (" (install httpcloak to enable escalation)" if self.escalate else "")
                 )
             if status in _RETRYABLE_STATUSES:
                 last_error = f"HTTP {status}"
                 if attempt == retries:
                     raise ScraperError(
-                        f"{self.label}: {url} returned {status} after "
-                        f"{retries} attempts"
+                        f"{self.label}: {url} returned {status} after {retries} attempts"
                     )
                 retry_after = response.headers.get("Retry-After") or response.headers.get(
                     "retry-after"
@@ -386,7 +381,7 @@ class Fetcher:
         headers: dict[str, str] | None,
         json: Any,
     ) -> FetchResponse:
-        import httpcloak  # type: ignore[import-untyped]
+        import httpcloak
 
         merged_headers = {**self.headers, **(headers or {})}
         kwargs: dict[str, Any] = {
@@ -402,9 +397,7 @@ class Fetcher:
         elif method.upper() == "POST":
             response = httpcloak.post(url, json=json, **kwargs)
         else:
-            raise ScraperError(
-                f"{self.label}: cloak engine does not support {method}"
-            )
+            raise ScraperError(f"{self.label}: cloak engine does not support {method}")
         return FetchResponse(
             response.status_code,
             response.text,

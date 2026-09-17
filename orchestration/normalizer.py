@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Normalize the description column in a SQLite database in place,
+"""Normalize the description column in a PostgreSQL database in place,
 processing in parallel batches to bound memory and minimize write locks.
 
 Workflow:
-  - Open SQLite in WAL mode for concurrent read/write isolation
-  - Fetch batches of (id, description)
+  - Connect to PostgreSQL via asyncpg connection pool
+  - Fetch batches of (id, description) where is_normalized is FALSE
   - Dispatch chunks to a multiprocessing pool for normalization
-  - Write updated rows back in batched transactions (skipping unchanged rows)
+  - Write updated rows back in batched transactions
+  - Mark unchanged rows as is_normalized = TRUE
 """
+
 from __future__ import annotations
 
 import argparse
@@ -18,24 +20,14 @@ import re
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
-from typing import Any, Callable, List, Tuple
+from typing import Any
 
 import asyncpg
 from linkify_it import LinkifyIt
 from linkify_it.tlds import TLDS
 from markdownify import markdownify as md
 
-_MD = None
-
-
-def _md_lazy() -> Callable[[Any], str] | None:
-    global _MD
-    if _MD is None:
-        _MD = md
-    return _MD
-
-
-_LINKIFY = None
+_LINKIFY: LinkifyIt | None = None
 
 
 def _linkify_lazy() -> LinkifyIt:
@@ -88,7 +80,7 @@ def normalize_one(s: str | None) -> str:
         return ""
     if HTML_BLOCK_RE.search(s):
         try:
-            out = _md_lazy()(
+            out = md(
                 s,
                 heading_style="ATX",
                 strip=["script", "style"],
@@ -113,8 +105,8 @@ def normalize_one(s: str | None) -> str:
 
 
 def _normalize_batch(
-    rows: List[Tuple[Any, str | None]],
-) -> List[Tuple[Any, str | None, str | None]]:
+    rows: list[tuple[Any, str | None]],
+) -> list[tuple[Any, str | None, str | None]]:
     """Worker task: transforms [(id, raw_desc), ...] into [(id, raw_desc, normalized_desc), ...]."""
     return [(row_id, raw_desc, normalize_one(raw_desc)) for row_id, raw_desc in rows]
 
@@ -133,15 +125,9 @@ PG_DSN = "postgresql://postgres:password@localhost:5432/dorker_db"
 
 
 async def main() -> int:
-    p = argparse.ArgumentParser(
-        description="Normalize job descriptions in PostgreSQL in-place."
-    )
-    p.add_argument(
-        "--table", default="jobs", help="Target table name (default: jobs)"
-    )
-    p.add_argument(
-        "--id-col", default="id", help="Primary key column name (default: id)"
-    )
+    p = argparse.ArgumentParser(description="Normalize job descriptions in PostgreSQL in-place.")
+    p.add_argument("--table", default="jobs", help="Target table name (default: jobs)")
+    p.add_argument("--id-col", default="id", help="Primary key column name (default: id)")
     p.add_argument(
         "--column",
         default="description",
@@ -166,7 +152,6 @@ async def main() -> int:
 
     try:
         async with pool.acquire() as conn:
-            # Validate table and columns via PostgreSQL information_schema
             columns_records = await conn.fetch(
                 """
                 SELECT column_name
@@ -195,7 +180,6 @@ async def main() -> int:
             FROM "{args.table}"
             WHERE "{args.column}" IS NOT NULL AND is_normalized = FALSE
         """
-        # Updates both modified and unmodified records so is_normalized becomes TRUE
         update_query = f"""
             UPDATE "{args.table}"
             SET "{args.column}" = $1, is_normalized = TRUE
@@ -227,7 +211,6 @@ async def main() -> int:
 
         with ProcessPoolExecutor(max_workers=args.workers) as executor:
             async with pool.acquire() as read_conn, pool.acquire() as write_conn:
-                # Cursors in PostgreSQL require an open transaction block
                 async with read_conn.transaction():
                     cursor = await read_conn.cursor(select_query)
 
@@ -236,22 +219,15 @@ async def main() -> int:
                         if not records:
                             break
 
-                        # Convert asyncpg.Record instances to tuples for fast inter-process pickling
-                        chunk = [
-                            (r[args.id_col], r[args.column]) for r in records
-                        ]
+                        chunk = [(r[args.id_col], r[args.column]) for r in records]
 
-                        # Parallel sub-chunking across worker processes
                         sub_size = max(1, len(chunk) // args.workers + 1)
                         sub_batches = [
-                            chunk[i : i + sub_size]
-                            for i in range(0, len(chunk), sub_size)
+                            chunk[i : i + sub_size] for i in range(0, len(chunk), sub_size)
                         ]
 
                         tasks = [
-                            loop.run_in_executor(
-                                executor, _normalize_batch, batch
-                            )
+                            loop.run_in_executor(executor, _normalize_batch, batch)
                             for batch in sub_batches
                         ]
                         results = await asyncio.gather(*tasks)
@@ -267,8 +243,6 @@ async def main() -> int:
 
                                 if new_str == old_str:
                                     counts["unchanged"] += 1
-                                    # Must mark is_normalized = TRUE, otherwise the record
-                                    # will be re-fetched indefinitely on subsequent runs.
                                     unchanged_ids.append((row_id,))
                                     continue
 
@@ -283,26 +257,24 @@ async def main() -> int:
 
                                 content_updates.append((new_str, row_id))
 
-                        # Batch update database
                         if content_updates:
-                            await write_conn.executemany(
-                                update_query, content_updates
-                            )
+                            await write_conn.executemany(update_query, content_updates)
                         if unchanged_ids:
-                            await write_conn.executemany(
-                                mark_normalized_only_query, unchanged_ids
-                            )
+                            await write_conn.executemany(mark_normalized_only_query, unchanged_ids)
 
                         if total % (args.chunk * 5) == 0:
                             elapsed = time.time() - t0
                             rate = total / max(elapsed, 0.001)
                             print(
                                 f"  {total:,} rows processed · {rate:,.0f}/s · "
-                                f"updated={total - counts['unchanged']:,} unchanged={counts['unchanged']:,}",
+                                f"updated={total - counts['unchanged']:,} "
+                                f"unchanged={counts['unchanged']:,}",
                                 flush=True,
                             )
 
-                await write_conn.execute("UPDATE jobs SET is_normalized = TRUE WHERE is_normalized = FALSE;")
+                await write_conn.execute(
+                    f'UPDATE "{args.table}" SET is_normalized = TRUE WHERE is_normalized = FALSE;'
+                )
 
     finally:
         await pool.close()

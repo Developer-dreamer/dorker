@@ -136,10 +136,7 @@ class OracleScraper(BaseScraper):
         base, _site = _normalize_oracle_target(self.company_slug)
         if not base.startswith(("http://", "https://")):
             return None
-        detail_url = (
-            f"{base}/hcmRestApi/resources/latest/"
-            "recruitingCEJobRequisitionDetails"
-        )
+        detail_url = f"{base}/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails"
 
         async def run() -> str | None:
             async with self.make_fetcher() as fetch:
@@ -187,14 +184,10 @@ class OracleScraper(BaseScraper):
 
             if self.include_descriptions and all_jobs:
                 sem = asyncio.Semaphore(DETAIL_CONCURRENCY)
-                detail_url = (
-                    f"{base}/hcmRestApi/resources/latest/"
-                    "recruitingCEJobRequisitionDetails"
+                detail_url = f"{base}/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails"
+                await asyncio.gather(
+                    *(self._enrich_detail(fetch, sem, detail_url, j) for j in all_jobs)
                 )
-                await asyncio.gather(*(
-                    self._enrich_detail(fetch, sem, detail_url, j)
-                    for j in all_jobs
-                ))
         return all_jobs
 
     async def _enrich_detail(
@@ -317,26 +310,36 @@ class OracleScraper(BaseScraper):
         # Requisition id — Oracle stores the human-readable req number
         # under multiple keys depending on the API version.
         req_raw = (
-            item.get("RequisitionNumber")
-            or item.get("RequisitionId")
-            or item.get("ReqNumber")
+            item.get("RequisitionNumber") or item.get("RequisitionId") or item.get("ReqNumber")
         )
         requisition_id = str(req_raw).strip() if req_raw else None
 
         # Team — JobFamily is the closest analog when it's a string.
         team_raw = item.get("JobFamilyName") or item.get("JobFamily")
-        team = (
-            team_raw.strip() if isinstance(team_raw, str) and team_raw.strip()
-            else None
-        )
+        team = team_raw.strip() if isinstance(team_raw, str) and team_raw.strip() else None
 
         raw: dict[str, Any] = {"oracle_id": source_id} if source_id else {}
-        for k in ("Category", "JobFamily", "JobFamilyName",
-                  "JobFunction", "JobFunctionCode", "WorkLocation",
-                  "WorkerType", "WorkerCategory", "WorkplaceTypeCode",
-                  "ContractType", "JobSchedule", "JobShift", "JobType",
-                  "Department", "Organization", "BusinessUnit",
-                  "PrimaryLocationCountry", "GeographyId", "LegalEmployer"):
+        for k in (
+            "Category",
+            "JobFamily",
+            "JobFamilyName",
+            "JobFunction",
+            "JobFunctionCode",
+            "WorkLocation",
+            "WorkerType",
+            "WorkerCategory",
+            "WorkplaceTypeCode",
+            "ContractType",
+            "JobSchedule",
+            "JobShift",
+            "JobType",
+            "Department",
+            "Organization",
+            "BusinessUnit",
+            "PrimaryLocationCountry",
+            "GeographyId",
+            "LegalEmployer",
+        ):
             v = item.get(k)
             if v not in (None, "", [], False):
                 raw[k] = v
@@ -391,6 +394,7 @@ def _unwrap(payload: dict[str, Any]) -> tuple[list[dict[str, Any]], int | None]:
 
 def _strip_html(text: str) -> str:
     import html as html_mod
+
     out = _TAG_RE.sub(" ", text)
     out = html_mod.unescape(out)
     return re.sub(r"\s+", " ", out).strip()

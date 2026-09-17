@@ -146,9 +146,7 @@ class DarwinboxScraper(BaseScraper):
             proxy=proxy,
         )
         self.company_name = (
-            company_name.strip()
-            if isinstance(company_name, str) and company_name.strip()
-            else None
+            company_name.strip() if isinstance(company_name, str) and company_name.strip() else None
         )
 
     async def afetch(self) -> list[Job]:
@@ -219,9 +217,7 @@ class DarwinboxScraper(BaseScraper):
             raise ScraperError("Darwinbox scraper requires a non-empty company_slug")
         if "://" in raw:
             host = (urlparse(raw).hostname or "").lower()
-            match = re.fullmatch(
-                rf"({_TENANT_RE.pattern})\.darwinbox\.(in|com)", host
-            )
+            match = re.fullmatch(rf"({_TENANT_RE.pattern})\.darwinbox\.(in|com)", host)
             if not match:
                 raise ScraperError(
                     f"Darwinbox slug must be a darwinbox.{{in,com}} URL, got {raw!r}"
@@ -264,11 +260,7 @@ class DarwinboxScraper(BaseScraper):
         country_iso = country_metadata[0] if country_metadata else None
         region = country_metadata[1] if country_metadata else None
         is_remote_raw = item.get("is_remote")
-        is_remote = (
-            bool(is_remote_raw)
-            if isinstance(is_remote_raw, (bool, int))
-            else None
-        )
+        is_remote = bool(is_remote_raw) if isinstance(is_remote_raw, (bool, int)) else None
         functional_area = _first_string(
             item.get("functional_area_name"),
             item.get("functional_area"),
@@ -314,8 +306,7 @@ class DarwinboxScraper(BaseScraper):
                 _first_present(item.get("experience_from"), item.get("experience_from_num"))
             ),
             description=_html_to_text(item.get("jd")),
-            posted_at=_parse_posted_at(item.get("posted_on"))
-            or _parse_iso(item.get("created_on")),
+            posted_at=_parse_posted_at(item.get("posted_on")) or _parse_iso(item.get("created_on")),
             fetched_at=datetime.now(UTC),
             language="en",
             raw=raw,

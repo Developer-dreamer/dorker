@@ -1,7 +1,6 @@
 import json
 import time
-from datetime import datetime, timezone
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Tuple
 
 import aiosqlite
 from pydantic import BaseModel
@@ -21,6 +20,7 @@ class BatchItem(BaseModel):
     error_message: Optional[str] = None
 
     processed_at: Optional[str] = None
+
 
 class BatchRepository:
     def __init__(self, conn: aiosqlite.Connection):
@@ -46,16 +46,14 @@ class BatchRepository:
 
             return [(row[0], Purpose(row[1])) for row in rows]
 
-
     async def create_batch(self, batch: OpenAIBatchRecord, job_ids: List[str]) -> None:
-        """Inserts an OpenAI batch record and its associated item line items in a single atomic transaction.
+        """Inserts an OpenAI batch record and
+        its associated item line items in a single atomic transaction.
 
         Assumes `custom_id` passed to OpenAI matches `job_id`.
         """
         metadata_json: Optional[str] = (
-            json.dumps(batch.custom_metadata)
-            if batch.custom_metadata is not None
-            else None
+            json.dumps(batch.custom_metadata) if batch.custom_metadata is not None else None
         )
 
         batch_query = """
@@ -162,10 +160,8 @@ class BatchRepository:
 
     async def update_batch(self, batch: OpenAIBatchRecord) -> None:
         metadata_json: Optional[str] = (
-                    json.dumps(batch.custom_metadata)
-                    if batch.custom_metadata is not None
-                    else None
-                )
+            json.dumps(batch.custom_metadata) if batch.custom_metadata is not None else None
+        )
 
         batch_update_query = """
             UPDATE openai_batches
@@ -214,7 +210,6 @@ class BatchRepository:
         async with self._conn.cursor() as cursor:
             await cursor.execute(batch_update_query, batch_params)
 
-
     async def update_batch_items(self, items: List[BatchItem]) -> None:
 
         query = """
@@ -239,7 +234,8 @@ class BatchRepository:
                 item.error_code,
                 item.error_message,
                 item.processed_at,
-                item.id)
+                item.id,
+            )
             for item in items
         ]
 

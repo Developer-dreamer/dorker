@@ -70,8 +70,14 @@ _ATTR_RE = re.compile(
     re.DOTALL,
 )
 _DETAIL_DESCRIPTION_RE = re.compile(
-    r'<(?:div|section|article)[^>]+class=["\'][^"\']*(?:job-description|description|job-detail)[^"\']*["\'][^>]*>(?P<body>.*?)</(?:div|section|article)>',
-    re.IGNORECASE | re.DOTALL,
+    r"""
+    <(?:div|section|article)[^>]+
+    class=["\'][^"\']*(?:job-description|description|job-detail)[^"\']*["\']
+    [^>]*>
+    (?P<body>.*?)
+    </(?:div|section|article)>
+    """,
+    re.IGNORECASE | re.DOTALL | re.VERBOSE,
 )
 _JOB_LINK_RE = re.compile(r'href="(/jobs/(?P<id>\d+)-[a-z0-9-]+)"')
 # Each card is wrapped in `<div class="cell-list ">…</div>` containing
@@ -79,10 +85,16 @@ _JOB_LINK_RE = re.compile(r'href="(/jobs/(?P<id>\d+)-[a-z0-9-]+)"')
 # so we can scope per-card field extraction without leaking across
 # cards.
 _CARD_RE = re.compile(
-    r'<div class="cell-list[^"]*">\s*<a[^>]+href="(/jobs/(?P<id>\d+)-[^"]+)"\s*>(?P<body>.*?)</a>\s*</div>',
-    re.DOTALL,
+    r"""
+    <div\ class="cell-list[^"]*">\s*
+    <a[^>]+href="(/jobs/(?P<id>\d+)-[^"]+)"\s*>
+    (?P<body>.*?)
+    </a>\s*
+    </div>
+    """,
+    re.DOTALL | re.VERBOSE,
 )
-_TITLE_RE = re.compile(r'<h3[^>]*>(?P<t>.*?)(?:<span[^>]*>NOVA</span>)?</h3>', re.DOTALL)
+_TITLE_RE = re.compile(r"<h3[^>]*>(?P<t>.*?)(?:<span[^>]*>NOVA</span>)?</h3>", re.DOTALL)
 _BRIEFCASE_RE = re.compile(r"<i[^>]+fa-briefcase[^>]*>\s*</i>(?P<v>[^<]+)")
 _LOCATION_RE = re.compile(r"<i[^>]+fa-map-marker-alt[^>]*>\s*</i>(?P<v>[^<]+)")
 _COMPANY_TYPE_RE = re.compile(r"<i[^>]+fa-building[^>]*>\s*</i>(?P<v>[^<]+)")
@@ -224,9 +236,9 @@ class ProgramathorScraper(BaseScraper):
                 page += 1
             if self.include_descriptions and jobs:
                 detail_sem = asyncio.Semaphore(DETAIL_CONCURRENCY)
-                await asyncio.gather(*(
-                    self._enrich_description(client, detail_sem, job) for job in jobs
-                ))
+                await asyncio.gather(
+                    *(self._enrich_description(client, detail_sem, job) for job in jobs)
+                )
         return jobs
 
     async def _enrich_description(
@@ -264,10 +276,11 @@ class ProgramathorScraper(BaseScraper):
             async with sem:
                 try:
                     response = await client.get(
-                        url, headers={
+                        url,
+                        headers={
                             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) "
-                                          "AppleWebKit/537.36 (KHTML, like Gecko) "
-                                          "Chrome/120.0.0.0 Safari/537.36",
+                            "AppleWebKit/537.36 (KHTML, like Gecko) "
+                            "Chrome/120.0.0.0 Safari/537.36",
                             "Accept": "text/html,*/*",
                             "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
                         },
@@ -275,9 +288,7 @@ class ProgramathorScraper(BaseScraper):
                 except httpx.HTTPError as exc:
                     last_exc = exc
                     if attempt == MAX_RETRIES:
-                        raise ScraperError(
-                            f"Programathor fetch failed for {url}: {exc}"
-                        ) from exc
+                        raise ScraperError(f"Programathor fetch failed for {url}: {exc}") from exc
                     await asyncio.sleep(RETRY_BASE_DELAY * attempt)
                     continue
             if response.status_code == 200:
@@ -296,17 +307,14 @@ class ProgramathorScraper(BaseScraper):
                     )
                 retry_after = response.headers.get("Retry-After")
                 delay = (
-                    float(retry_after) if retry_after and retry_after.isdigit()
-                    else RETRY_BASE_DELAY * (2 ** attempt)
+                    float(retry_after)
+                    if retry_after and retry_after.isdigit()
+                    else RETRY_BASE_DELAY * (2**attempt)
                 )
                 await asyncio.sleep(delay)
                 continue
-            raise ScraperError(
-                f"Programathor returned {response.status_code} for {url}"
-            )
-        raise ScraperError(
-            f"Programathor exhausted retries for {url}: {last_exc}"
-        )
+            raise ScraperError(f"Programathor returned {response.status_code} for {url}")
+        raise ScraperError(f"Programathor exhausted retries for {url}: {last_exc}")
 
     def _parse_listing(self, text: str):
         for card in _CARD_RE.finditer(text):
@@ -342,10 +350,7 @@ class ProgramathorScraper(BaseScraper):
         salary_min, salary_max, salary_currency = _parse_salary(salary_raw)
 
         # Skill tags (each in its own span)
-        skills = [
-            _strip_html(t).strip()
-            for t in _SKILL_TAG_RE.findall(body)
-        ]
+        skills = [_strip_html(t).strip() for t in _SKILL_TAG_RE.findall(body)]
         skills = [s for s in skills if s]
 
         # Remote detection (Programathor uses the literal "Remoto")

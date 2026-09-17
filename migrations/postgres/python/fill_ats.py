@@ -1,12 +1,14 @@
 import asyncio
 import csv
 from pathlib import Path
+
 import asyncpg
 
 ROOT = Path(__file__).resolve().parent.parent.parent.parent
 BASE_FOLDER = ROOT / "ats-companies"
 
 PG_DSN = "postgresql://postgres:password@localhost:5432/dorker_db"
+
 
 async def insert_ats_file(csv_path: Path, tier: int) -> None:
     ats_name = csv_path.stem
@@ -25,18 +27,24 @@ async def insert_ats_file(csv_path: Path, tier: int) -> None:
 
     conn = await asyncpg.connect(PG_DSN)
     try:
-        await conn.executemany("""
+        await conn.executemany(
+            """
             INSERT INTO companies (ats, slug, name, url, tier)
             VALUES ($1, $2, $3, $4, $5)
             ON CONFLICT DO NOTHING
-        """, records)
+        """,
+            records,
+        )
 
         stored_count = await conn.fetchval(
             "SELECT count(*) FROM companies WHERE ats = $1", ats_name
         )
-        print(f"[+] {csv_path.name:<25} | Parsed: {len(records):>5} | In DB for '{ats_name}': {stored_count:>5}")
+        print(
+            f"[+] {csv_path.name:<25} | Parsed: {len(records):>5} | In DB for '{ats_name}': {stored_count:>5}"
+        )
     finally:
         await conn.close()
+
 
 async def main() -> None:
     for tier_num in (1, 2, 3):
@@ -53,6 +61,6 @@ async def main() -> None:
             except Exception as e:
                 print(f"[!] ERROR in {csv_file.name}: {e}")
 
+
 if __name__ == "__main__":
     asyncio.run(main())
-    

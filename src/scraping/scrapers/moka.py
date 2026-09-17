@@ -189,11 +189,7 @@ class MokaScraper(BaseScraper):
         return f"{self._tenant_url()}/job/{job_id}"
 
     def _tenant_url(self) -> str:
-        board = (
-            "campus-recruitment"
-            if self.recruitment_type == "campus"
-            else "social-recruitment"
-        )
+        board = "campus-recruitment" if self.recruitment_type == "campus" else "social-recruitment"
         return f"https://{self.host}/{board}/{self.slug}/{self.site_id}"
 
     @staticmethod
@@ -203,9 +199,7 @@ class MokaScraper(BaseScraper):
         if parts and parts[0] in _HOST_ALIASES:
             host = _HOST_ALIASES[parts.pop(0)]
         if len(parts) < 2:
-            raise ScraperError(
-                f"Moka company_slug must be '<slug>/<siteId>', got {company_slug!r}"
-            )
+            raise ScraperError(f"Moka company_slug must be '<slug>/<siteId>', got {company_slug!r}")
         slug = parts[0]
         try:
             site_id = int(parts[1])
@@ -216,8 +210,7 @@ class MokaScraper(BaseScraper):
             recruitment_type = parts[2].lower()
             if recruitment_type not in {"social", "campus"}:
                 raise ScraperError(
-                    "Moka recruitment type must be 'social' or 'campus', "
-                    f"got {parts[2]!r}"
+                    f"Moka recruitment type must be 'social' or 'campus', got {parts[2]!r}"
                 )
         if len(parts) > 3:
             raise ScraperError(f"Moka company_slug has unexpected segments: {company_slug!r}")
@@ -256,9 +249,7 @@ def decrypt_moka(
     except (ValueError, TypeError) as exc:
         raise ScraperError(f"Moka data is not valid base64: {exc}") from exc
     if not ciphertext or len(ciphertext) % 16:
-        raise ScraperError(
-            f"Moka ciphertext length {len(ciphertext)} is not a multiple of 16"
-        )
+        raise ScraperError(f"Moka ciphertext length {len(ciphertext)} is not a multiple of 16")
 
     plaintext = AES.new(key, AES.MODE_CBC, aes_iv).decrypt(ciphertext)
     pad_length = plaintext[-1]

@@ -83,7 +83,7 @@ _EMPLOYMENT_TYPE_MAP = {
 _DEPARTMENT_BLOCK_RE = re.compile(
     r'<li id="bhrDepartmentID_(?P<dept_id>\d+)"[^>]*'
     r'class="BambooHR-ATS-Department-Item"[^>]*>'
-    r'(?P<body>.*?)'
+    r"(?P<body>.*?)"
     r'(?=<li id="bhrDepartmentID_|\Z)',
     re.DOTALL | re.IGNORECASE,
 )
@@ -94,7 +94,7 @@ _DEPARTMENT_NAME_RE = re.compile(
 _POSITION_RE = re.compile(
     r'<li id="bhrPositionID_(?P<id>\d+)"[^>]*'
     r'class="BambooHR-ATS-Jobs-Item"[^>]*>'
-    r'(?P<body>.*?)</li>',
+    r"(?P<body>.*?)</li>",
     re.DOTALL | re.IGNORECASE,
 )
 _POSITION_LINK_RE = re.compile(
@@ -140,9 +140,7 @@ class BambooHRScraper(BaseScraper):
             include_descriptions=include_descriptions,
             proxy=proxy,
         )
-        self.company_slug = require_host_label(
-            company_slug, provider="BambooHRScraper"
-        )
+        self.company_slug = require_host_label(company_slug, provider="BambooHRScraper")
 
     def get_description(self, job: Job) -> str | None:
         if job.description:
@@ -159,9 +157,7 @@ class BambooHRScraper(BaseScraper):
 
     async def afetch(self) -> list[Job]:
         async with self.make_fetcher() as fetch:
-            widget_html = await fetch.get_text(
-                WIDGET_TEMPLATE.format(slug=self.company_slug)
-            )
+            widget_html = await fetch.get_text(WIDGET_TEMPLATE.format(slug=self.company_slug))
             jobs = self._parse_widget(widget_html)
             if self.include_descriptions and jobs:
                 await self._enrich_from_detail_api(fetch, jobs)
@@ -178,11 +174,7 @@ class BambooHRScraper(BaseScraper):
             consumed_end = dept_match.end()
             dept_body = dept_match.group("body")
             dept_name_match = _DEPARTMENT_NAME_RE.search(dept_body)
-            dept_name = (
-                _strip_tags(dept_name_match.group("name"))
-                if dept_name_match
-                else None
-            )
+            dept_name = _strip_tags(dept_name_match.group("name")) if dept_name_match else None
             for position_match in _POSITION_RE.finditer(dept_body):
                 job = self._parse_position(
                     position_match.group("id"),
@@ -206,9 +198,7 @@ class BambooHRScraper(BaseScraper):
             jobs.append(job)
         return jobs
 
-    def _parse_position(
-        self, ats_id: str, body: str, *, department: str | None
-    ) -> Job | None:
+    def _parse_position(self, ats_id: str, body: str, *, department: str | None) -> Job | None:
         link = _POSITION_LINK_RE.search(body)
         if not link:
             return None
@@ -216,9 +206,14 @@ class BambooHRScraper(BaseScraper):
         if not title:
             return None
         href = link.group("href").strip()
-        url = href if href.startswith("http") else (
-            f"https:{href}" if href.startswith("//")
-            else f"https://{self.company_slug}.bamboohr.com{href}"
+        url = (
+            href
+            if href.startswith("http")
+            else (
+                f"https:{href}"
+                if href.startswith("//")
+                else f"https://{self.company_slug}.bamboohr.com{href}"
+            )
         )
         loc_match = _POSITION_LOCATION_RE.search(body)
         location = loc_match.group("loc").strip() if loc_match else None
@@ -234,9 +229,7 @@ class BambooHRScraper(BaseScraper):
             fetched_at=datetime.now(UTC),
         )
 
-    async def _enrich_from_detail_api(
-        self, fetch: Fetcher, jobs: list[Job]
-    ) -> None:
+    async def _enrich_from_detail_api(self, fetch: Fetcher, jobs: list[Job]) -> None:
         """Hydrate each job from `/careers/{id}/detail` JSON.
 
         Best-effort: failures (timeout, 404, JSON shape change) leave the
@@ -246,7 +239,10 @@ class BambooHRScraper(BaseScraper):
         await asyncio.gather(*(self._enrich_one(fetch, sem, j) for j in jobs))
 
     async def _enrich_one(
-        self, fetch: Fetcher, sem: asyncio.Semaphore, job: Job,
+        self,
+        fetch: Fetcher,
+        sem: asyncio.Semaphore,
+        job: Job,
     ) -> None:
         url = DETAIL_TEMPLATE.format(slug=self.company_slug, id=job.ats_id)
         async with sem:
@@ -296,11 +292,7 @@ def _apply_opening_to_job(job: Job, opening: dict) -> None:
                 break
 
     compensation = opening.get("compensation")
-    if (
-        isinstance(compensation, str)
-        and compensation.strip()
-        and not job.salary_summary
-    ):
+    if isinstance(compensation, str) and compensation.strip() and not job.salary_summary:
         job.salary_summary = compensation.strip()
 
     date_posted = opening.get("datePosted")

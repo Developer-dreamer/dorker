@@ -89,6 +89,7 @@ class WeWorkRemotelyScraper(BaseScraper):
                     jobs.append(job)
 
         async with self.make_fetcher() as fetch:
+
             async def per_category(slug: str) -> None:
                 url = f"{API_ROOT}/categories/{slug}.rss"
                 xml_text = await fetch.get_text(url)
@@ -182,6 +183,7 @@ def _format_location(*, country: str, region: str, state: str) -> str | None:
     real value we drop the 'Anywhere…' marker; when it's the only
     signal we keep it so remote-only rows aren't blank.
     """
+
     def is_anywhere(v: str) -> bool:
         return v.lower().startswith("anywhere")
 

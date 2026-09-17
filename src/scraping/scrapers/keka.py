@@ -150,9 +150,7 @@ class KekaScraper(BaseScraper):
             include_descriptions=include_descriptions,
             proxy=proxy,
         )
-        self.portal_url, self.host, self.portal = _normalize_portal_url(
-            company_slug
-        )
+        self.portal_url, self.host, self.portal = _normalize_portal_url(company_slug)
         self.company_slug = self.portal_url
         self.company_name = _string(company_name)
 
@@ -161,9 +159,7 @@ class KekaScraper(BaseScraper):
             html = await fetch.get_text(self.portal_url)
             identifier = _extract_identifier(html, self.host)
             api_root = f"https://{self.host}/careers/api"
-            jobs_request = fetch.get_json(
-                f"{api_root}/embedjobs/{self.portal}/active/{identifier}"
-            )
+            jobs_request = fetch.get_json(f"{api_root}/embedjobs/{self.portal}/active/{identifier}")
             if self.company_name:
                 jobs_payload = await jobs_request
                 company_payload: object = {}
@@ -191,22 +187,19 @@ class KekaScraper(BaseScraper):
     ) -> list[Job]:
         if not isinstance(payload, list):
             raise ScraperError(
-                f"Keka ({self.host}/{self.portal}) active jobs response "
-                "was not a list"
+                f"Keka ({self.host}/{self.portal}) active jobs response was not a list"
             )
         jobs: list[Job] = []
         seen_ids: set[str] = set()
         for index, item in enumerate(payload):
             if not isinstance(item, dict):
                 raise ScraperError(
-                    f"Keka ({self.host}/{self.portal}) row {index} "
-                    "was not an object"
+                    f"Keka ({self.host}/{self.portal}) row {index} was not an object"
                 )
             job = self._parse_job(item, company, identifier)
             if job.ats_id in seen_ids:
                 raise ScraperError(
-                    f"Keka ({self.host}/{self.portal}) returned duplicate "
-                    f"job ID {job.ats_id}"
+                    f"Keka ({self.host}/{self.portal}) returned duplicate job ID {job.ats_id}"
                 )
             seen_ids.add(job.ats_id or "")
             jobs.append(job)
@@ -269,18 +262,10 @@ class KekaScraper(BaseScraper):
             employment_type=employment_type,
             department=department,
             requisition_id=requisition_id,
-            commitment=(
-                "Full Time"
-                if job_type == 2
-                else "Part Time"
-                if job_type == 1
-                else None
-            ),
+            commitment=("Full Time" if job_type == 2 else "Part Time" if job_type == 1 else None),
             experience=_minimum_experience(experience_raw),
             description=(
-                description[:25_000]
-                if self.include_descriptions and description
-                else None
+                description[:25_000] if self.include_descriptions and description else None
             ),
             posted_at=_parse_datetime(item.get("publishedOn")),
             fetched_at=datetime.now(UTC),
@@ -297,18 +282,13 @@ def _normalize_portal_url(value: str) -> tuple[str, str, str]:
         parsed = urlparse(cleaned)
         port = parsed.port
     except ValueError as exc:
-        raise ScraperError(
-            "KekaScraper requires a public *.keka.com/careers URL"
-        ) from exc
+        raise ScraperError("KekaScraper requires a public *.keka.com/careers URL") from exc
     host = (parsed.hostname or "").lower()
     segments = [segment for segment in parsed.path.split("/") if segment]
     valid_path = (
         len(segments) in {1, 2}
         and segments[0].casefold() == "careers"
-        and (
-            len(segments) == 1
-            or _PORTAL_RE.fullmatch(segments[1]) is not None
-        )
+        and (len(segments) == 1 or _PORTAL_RE.fullmatch(segments[1]) is not None)
     )
     if (
         parsed.scheme != "https"
@@ -320,14 +300,10 @@ def _normalize_portal_url(value: str) -> tuple[str, str, str]:
         or parsed.fragment
         or not valid_path
     ):
-        raise ScraperError(
-            "KekaScraper requires a public *.keka.com/careers URL"
-        )
+        raise ScraperError("KekaScraper requires a public *.keka.com/careers URL")
     portal = segments[1].casefold() if len(segments) == 2 else "default"
     portal_url = (
-        f"https://{host}/careers"
-        if portal == "default"
-        else f"https://{host}/careers/{portal}"
+        f"https://{host}/careers" if portal == "default" else f"https://{host}/careers/{portal}"
     )
     return portal_url, host, portal
 
@@ -335,9 +311,7 @@ def _normalize_portal_url(value: str) -> tuple[str, str, str]:
 def _extract_identifier(html: str, host: str) -> str:
     match = _IDENTIFIER_RE.search(html) or _SCRIPT_IDENTIFIER_RE.search(html)
     if match is None:
-        raise ScraperError(
-            f"Keka ({host}) careers page omitted its portal identifier"
-        )
+        raise ScraperError(f"Keka ({host}) careers page omitted its portal identifier")
     return match.group("id").casefold()
 
 
@@ -350,12 +324,7 @@ def _company_name(
 ) -> str:
     if not isinstance(payload, dict):
         raise ScraperError(f"Keka ({host}) company response was not an object")
-    return (
-        explicit
-        or _string(payload.get("shortName"))
-        or _string(payload.get("name"))
-        or fallback
-    )
+    return explicit or _string(payload.get("shortName")) or _string(payload.get("name")) or fallback
 
 
 def _job_id(value: object) -> str:
@@ -409,11 +378,7 @@ def _locations(value: object) -> tuple[str | None, str | None]:
             country_name,
         ):
             text = _string(candidate)
-            if (
-                text
-                and text.casefold() not in {"na", "n/a", "none"}
-                and text not in pieces
-            ):
+            if text and text.casefold() not in {"na", "n/a", "none"} and text not in pieces:
                 pieces.append(text)
         display = ", ".join(pieces) or _string(item.get("name"))
         if display and display not in displays:
@@ -434,13 +399,8 @@ def _salary(
     minimum = _number(value.get("minimum"))
     maximum = _number(value.get("maximum"))
     summary = _string(summary_value)
-    salary_is_present = any(
-        candidate is not None
-        for candidate in (minimum, maximum, summary)
-    )
-    currency = (
-        _string(value.get("currency")) if salary_is_present else None
-    )
+    salary_is_present = any(candidate is not None for candidate in (minimum, maximum, summary))
+    currency = _string(value.get("currency")) if salary_is_present else None
     if currency and len(currency) != 3:
         currency = None
     period = (

@@ -88,7 +88,9 @@ class TeslaScraper(BaseScraper):
 
             proxy = cb.evomi_proxy_from_env()
             browser = await launch_async(
-                headless=True, humanize=True, proxy=proxy,
+                headless=True,
+                humanize=True,
+                proxy=proxy,
             )
             try:
                 page = await browser.new_page()
@@ -111,7 +113,9 @@ class TeslaScraper(BaseScraper):
 
         proxy = cb.evomi_proxy_from_env()
         browser = await launch_async(
-            headless=True, humanize=True, proxy=proxy,
+            headless=True,
+            humanize=True,
+            proxy=proxy,
         )
         try:
             page = await browser.new_page()
@@ -152,9 +156,7 @@ class TeslaScraper(BaseScraper):
             try:
                 payload = json.loads(resp["body"])
             except json.JSONDecodeError as exc:
-                raise ScraperError(
-                    f"Tesla: response did not parse as JSON ({exc})."
-                ) from exc
+                raise ScraperError(f"Tesla: response did not parse as JSON ({exc}).") from exc
 
             jobs = list(self._parse_payload(payload))
 
@@ -222,7 +224,9 @@ class TeslaScraper(BaseScraper):
                 # Whole-batch failure (e.g. page crashed). Log and
                 # keep going — partial coverage beats zero.
                 log.warning(
-                    "Tesla: detail batch %d failed: %s", i, exc,
+                    "Tesla: detail batch %d failed: %s",
+                    i,
+                    exc,
                 )
                 continue
             for item in results or []:
@@ -234,7 +238,8 @@ class TeslaScraper(BaseScraper):
                 await asyncio.sleep(_DETAIL_BATCH_DELAY_S)
         log.info(
             "Tesla: fetched %d/%d job descriptions",
-            len(out), len(job_ids),
+            len(out),
+            len(job_ids),
         )
         return out
 
@@ -333,8 +338,7 @@ def _format_description(detail: dict[str, Any]) -> str:
         ("Description", detail.get("jobDescription")),
         ("Responsibilities", detail.get("jobResponsibilities")),
         ("Requirements", detail.get("jobRequirements")),
-        ("Compensation & Benefits",
-         detail.get("jobCompensationAndBenefits")),
+        ("Compensation & Benefits", detail.get("jobCompensationAndBenefits")),
     )
     parts = []
     for label, value in sections:

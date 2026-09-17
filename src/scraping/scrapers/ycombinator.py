@@ -36,7 +36,7 @@ WEB_HOST = "https://www.ycombinator.com"
 COMPANIES_API = f"{API_HOST}/v0.1/companies"
 COMPANY_PAGE_TEMPLATE = f"{WEB_HOST}/companies/{{slug}}"
 PER_PAGE = 25  # YC's company API ignores ``per_page``; pagination is
-                # always 25 / page so we just walk pages.
+# always 25 / page so we just walk pages.
 MAX_CONCURRENCY = 4
 
 
@@ -152,10 +152,7 @@ class YCombinatorScraper(BaseScraper):
             postings = json.loads(raw_array)
         except json.JSONDecodeError:
             return []
-        return [
-            j for j in (self._parse_posting(p, slug=slug) for p in postings)
-            if j is not None
-        ]
+        return [j for j in (self._parse_posting(p, slug=slug) for p in postings) if j is not None]
 
     def _parse_posting(self, item: dict[str, Any], *, slug: str) -> Job | None:
         ats_id = str(item.get("id") or "").strip()
@@ -168,9 +165,7 @@ class YCombinatorScraper(BaseScraper):
         company = (item.get("companyName") or slug).strip()
         location = (item.get("location") or "").strip() or None
 
-        salary_min, salary_max, salary_currency = _parse_salary_range(
-            item.get("salaryRange")
-        )
+        salary_min, salary_max, salary_currency = _parse_salary_range(item.get("salaryRange"))
 
         # ``minExperience`` is "3+ years" / "5+ years" / "0 years" /
         # ""; pull the leading number when present.
@@ -191,9 +186,16 @@ class YCombinatorScraper(BaseScraper):
 
         raw: dict[str, Any] = {}
         for key in (
-            "role", "prettyRole", "roleSpecificType", "minSchoolYear",
-            "visa", "skills", "equityRange", "companyBatchName",
-            "lastActive", "askUs",
+            "role",
+            "prettyRole",
+            "roleSpecificType",
+            "minSchoolYear",
+            "visa",
+            "skills",
+            "equityRange",
+            "companyBatchName",
+            "lastActive",
+            "askUs",
         ):
             v = item.get(key)
             if v not in (None, "", []):
@@ -237,7 +239,9 @@ class YCombinatorScraper(BaseScraper):
     ) -> dict[str, Any]:
         async with sem:
             return await fetch.get_json(
-                url, params=params, headers={"Accept": "application/json"},
+                url,
+                params=params,
+                headers={"Accept": "application/json"},
             )
 
     async def _request_html(
@@ -250,7 +254,10 @@ class YCombinatorScraper(BaseScraper):
             # 404 = company page removed since we discovered it; treat
             # as 'no jobs' rather than crashing the run.
             response = await fetch.request(
-                "GET", url, headers={"Accept": "text/html,*/*"}, handled={404},
+                "GET",
+                url,
+                headers={"Accept": "text/html,*/*"},
+                handled={404},
             )
         if response.status_code == 404:
             return ""
@@ -293,7 +300,7 @@ def _extract_balanced_array(text: str, marker: str) -> str | None:
         elif c == "]":
             depth -= 1
             if depth == 0:
-                return text[bracket:i + 1]
+                return text[bracket : i + 1]
     return None
 
 
@@ -383,9 +390,7 @@ def _compose_description(item: dict[str, Any]) -> str | None:
             parts.append(_clean_description_text(value))
         elif isinstance(value, list):
             cleaned = [
-                _clean_description_text(v)
-                for v in value
-                if isinstance(v, str) and v.strip()
+                _clean_description_text(v) for v in value if isinstance(v, str) and v.strip()
             ]
             if cleaned:
                 parts.append("\n".join(cleaned))
@@ -432,4 +437,5 @@ def _parse_relative_age(raw: object) -> datetime | None:
     if delta <= 0:
         return None
     from datetime import timedelta
+
     return datetime.now() - timedelta(seconds=delta)

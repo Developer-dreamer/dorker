@@ -107,20 +107,17 @@ class JobviteScraper(BaseScraper):
                     if page == 0 and not jobs:
                         return []
                     raise ScraperError(
-                        f"Jobvite ({self.tenant_path}) catalogue became empty "
-                        "during pagination"
+                        f"Jobvite ({self.tenant_path}) catalogue became empty during pagination"
                     )
                 if reported_total is None:
                     reported_total = total
                 elif total != reported_total:
                     raise ScraperError(
-                        "Jobvite total changed during pagination "
-                        f"({reported_total} to {total})"
+                        f"Jobvite total changed during pagination ({reported_total} to {total})"
                     )
                 if start != expected_start:
                     raise ScraperError(
-                        "Jobvite pagination gap "
-                        f"(expected row {expected_start}, got {start})"
+                        f"Jobvite pagination gap (expected row {expected_start}, got {start})"
                     )
                 if len(page_jobs) != end - start + 1:
                     raise ScraperError(
@@ -129,9 +126,7 @@ class JobviteScraper(BaseScraper):
                     )
                 for job in page_jobs:
                     if not job.ats_id or job.ats_id in seen_ids:
-                        raise ScraperError(
-                            f"Jobvite returned duplicate job id {job.ats_id!r}"
-                        )
+                        raise ScraperError(f"Jobvite returned duplicate job id {job.ats_id!r}")
                     seen_ids.add(job.ats_id)
                     jobs.append(job)
                 if end >= total:
@@ -154,8 +149,7 @@ class JobviteScraper(BaseScraper):
         completed = [job for job in enriched if job is not None]
         if jobs and not completed:
             raise ScraperError(
-                f"Jobvite ({self.tenant_path}) lost every listed job "
-                "during detail validation"
+                f"Jobvite ({self.tenant_path}) lost every listed job during detail validation"
             )
         return completed
 
@@ -187,8 +181,7 @@ class JobviteScraper(BaseScraper):
                 )
         except ScraperError as exc:
             logger.warning(
-                "Retaining Jobvite job %s without detail metadata after "
-                "detail failure: %s",
+                "Retaining Jobvite job %s without detail metadata after detail failure: %s",
                 job.ats_id,
                 exc,
             )
@@ -198,8 +191,7 @@ class JobviteScraper(BaseScraper):
         _apply_detail(job, response.text)
         if not job.description:
             logger.warning(
-                "Dropping Jobvite job %s because its detail page omitted "
-                "a description",
+                "Dropping Jobvite job %s because its detail page omitted a description",
                 job.ats_id,
             )
             return None
@@ -212,34 +204,21 @@ class JobviteScraper(BaseScraper):
         soup = _parse_html(html_text)
         container = soup.select_one(".jv-job-list")
         if container is None:
-            raise ScraperError(
-                f"Jobvite ({self.tenant_path}) omitted the job-list container"
-            )
+            raise ScraperError(f"Jobvite ({self.tenant_path}) omitted the job-list container")
         anchors = container.select('a[href*="/job/"]')
         if not anchors:
             lowered = _clean_text(container.get_text(" ", strip=True)).lower()
-            if any(
-                marker in lowered
-                for marker in ("no jobs", "no positions", "no openings")
-            ):
+            if any(marker in lowered for marker in ("no jobs", "no positions", "no openings")):
                 return [], 0, 0, 0
-            raise ScraperError(
-                f"Jobvite ({self.tenant_path}) returned an empty job list"
-            )
+            raise ScraperError(f"Jobvite ({self.tenant_path}) returned an empty job list")
 
         pagination = soup.select_one(".jv-pagination-text")
-        match = _PAGE_TEXT_RE.match(
-            pagination.get_text(" ", strip=True) if pagination else ""
-        )
+        match = _PAGE_TEXT_RE.match(pagination.get_text(" ", strip=True) if pagination else "")
         if match is None:
-            raise ScraperError(
-                f"Jobvite ({self.tenant_path}) omitted valid pagination metadata"
-            )
+            raise ScraperError(f"Jobvite ({self.tenant_path}) omitted valid pagination metadata")
         start, end, total = (int(value) for value in match.groups())
         if not (1 <= start <= end <= total):
-            raise ScraperError(
-                f"Jobvite ({self.tenant_path}) returned invalid pagination range"
-            )
+            raise ScraperError(f"Jobvite ({self.tenant_path}) returned invalid pagination range")
 
         jobs: list[Job] = []
         for anchor in anchors:
@@ -248,11 +227,7 @@ class JobviteScraper(BaseScraper):
                 continue
             id_match = _JOB_ID_RE.search(href)
             name_cell = anchor.find_parent(class_="jv-job-list-name")
-            title_node = (
-                anchor.select_one(".jv-job-list-name")
-                or name_cell
-                or anchor
-            )
+            title_node = anchor.select_one(".jv-job-list-name") or name_cell or anchor
             if id_match is None:
                 continue
             title = _clean_text(title_node.get_text(" ", strip=True))
@@ -263,16 +238,11 @@ class JobviteScraper(BaseScraper):
             accepted_tenant_paths = [self.tenant_path]
             if self.tenant_path.startswith("careers/"):
                 accepted_tenant_paths.append(self.tenant_path.split("/", 1)[1])
-            if (
-                not _is_trusted_jobvite_url(detail_url)
-                or not any(
-                    parsed_url.path.startswith(f"/{tenant_path}/job/")
-                    for tenant_path in accepted_tenant_paths
-                )
+            if not _is_trusted_jobvite_url(detail_url) or not any(
+                parsed_url.path.startswith(f"/{tenant_path}/job/")
+                for tenant_path in accepted_tenant_paths
             ):
-                raise ScraperError(
-                    f"Jobvite ({self.tenant_path}) returned an unsafe job URL"
-                )
+                raise ScraperError(f"Jobvite ({self.tenant_path}) returned an unsafe job URL")
             row = anchor.find_parent("tr")
             location_node = anchor.select_one(".jv-job-list-location")
             if location_node is None and row is not None:
@@ -290,9 +260,7 @@ class JobviteScraper(BaseScraper):
                     ats_type=ATSType.JOBVITE,
                     ats_id=id_match.group(1),
                     location=location or None,
-                    is_remote=(
-                        True if location and "remote" in location.lower() else None
-                    ),
+                    is_remote=(True if location and "remote" in location.lower() else None),
                     fetched_at=datetime.now(UTC),
                 )
             )
@@ -311,13 +279,10 @@ def _normalize_tenant_path(value: str) -> str:
     segments = [segment for segment in raw.split("/") if segment]
     while segments and segments[-1] in {"search", "jobs", "viewall"}:
         segments.pop()
-    valid_shape = (
-        (len(segments) == 1 and segments[0] != "careers")
-        or (len(segments) == 2 and segments[0] == "careers")
+    valid_shape = (len(segments) == 1 and segments[0] != "careers") or (
+        len(segments) == 2 and segments[0] == "careers"
     )
-    if not valid_shape or not all(
-        _TENANT_SEGMENT_RE.fullmatch(segment) for segment in segments
-    ):
+    if not valid_shape or not all(_TENANT_SEGMENT_RE.fullmatch(segment) for segment in segments):
         raise ValueError(f"Invalid Jobvite tenant path: {value!r}")
     return "/".join(segments)
 
@@ -351,21 +316,15 @@ def _apply_detail(job: Job, html_text: str) -> None:
         employment_type = _employment_type(posting.get("employmentType"))
         if employment_type is not None:
             job.employment_type = employment_type
-        structured_remote = _is_remote_job_location_type(
-            posting.get("jobLocationType")
-        )
+        structured_remote = _is_remote_job_location_type(posting.get("jobLocationType"))
         if structured_remote:
             job.is_remote = True
 
         structured_location = _location_from_jsonld(posting.get("jobLocation"))
-        if structured_location and (
-            not job.location or _GENERIC_LOCATION_RE.match(job.location)
-        ):
+        if structured_location and (not job.location or _GENERIC_LOCATION_RE.match(job.location)):
             job.location = structured_location
             job.is_remote = (
-                True
-                if structured_remote or "remote" in structured_location.lower()
-                else None
+                True if structured_remote or "remote" in structured_location.lower() else None
             )
 
         _apply_salary(job, posting.get("baseSalary"))
@@ -375,11 +334,7 @@ def _apply_detail(job: Job, html_text: str) -> None:
         job.department = department
     if location and (not job.location or _GENERIC_LOCATION_RE.match(job.location)):
         job.location = location
-        job.is_remote = (
-            True
-            if job.is_remote or "remote" in location.lower()
-            else None
-        )
+        job.is_remote = True if job.is_remote or "remote" in location.lower() else None
 
     apply_link = soup.select_one("a.jv-button-apply[href]")
     if apply_link is not None:
@@ -400,15 +355,14 @@ def _apply_detail(job: Job, html_text: str) -> None:
         container = soup.select_one(".jv-job-detail-description")
         if container is not None:
             heading = container.find(
-                lambda tag: tag.name in {"h2", "h3"}
-                and _clean_text(tag.get_text(" ", strip=True)).lower()
-                == "description"
+                lambda tag: (
+                    tag.name in {"h2", "h3"}
+                    and _clean_text(tag.get_text(" ", strip=True)).lower() == "description"
+                )
             )
             if heading is not None:
                 heading.decompose()
-            job.description = _clean_text(
-                container.get_text("\n", strip=True)
-            )[:25_000] or None
+            job.description = _clean_text(container.get_text("\n", strip=True))[:25_000] or None
 
 
 def _parse_html(html_text: str) -> BeautifulSoup:
@@ -416,8 +370,7 @@ def _parse_html(html_text: str) -> BeautifulSoup:
         from bs4 import BeautifulSoup
     except ImportError as exc:
         raise ScraperError(
-            "Jobvite scraper requires beautifulsoup4; "
-            "install `ats-scrapers[scrapers]`"
+            "Jobvite scraper requires beautifulsoup4; install `ats-scrapers[scrapers]`"
         ) from exc
     return BeautifulSoup(html_text, "html.parser")
 
@@ -502,8 +455,7 @@ def _location_from_jsonld(value: object) -> str | None:
 def _is_remote_job_location_type(value: object) -> bool:
     values = value if isinstance(value, list) else [value]
     return any(
-        isinstance(item, str)
-        and item.strip().upper() in {"TELECOMMUTE", "REMOTE"}
+        isinstance(item, str) and item.strip().upper() in {"TELECOMMUTE", "REMOTE"}
         for item in values
     )
 
@@ -529,11 +481,7 @@ def _apply_salary(job: Job, value: object) -> None:
     minimum = _to_float(salary_value.get("minValue") or salary_value.get("value"))
     maximum = _to_float(salary_value.get("maxValue") or salary_value.get("value"))
     unit = salary_value.get("unitText")
-    period = (
-        _SALARY_PERIOD_MAP.get(str(unit).strip().upper())
-        if unit is not None
-        else None
-    )
+    period = _SALARY_PERIOD_MAP.get(str(unit).strip().upper()) if unit is not None else None
     if minimum is not None:
         job.salary_min = minimum
     if maximum is not None:

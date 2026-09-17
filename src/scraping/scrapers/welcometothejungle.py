@@ -103,9 +103,7 @@ class WTTJScraper(BaseScraper):
         self.index = f"wttj_jobs_production_{language}"
         self._url = f"https://{APP_ID}-dsn.algolia.net/1/indexes/{self.index}/query"
         sorted_index = f"{self.index}_published_at_desc"
-        self._sorted_url = (
-            f"https://{APP_ID}-dsn.algolia.net/1/indexes/{sorted_index}/query"
-        )
+        self._sorted_url = f"https://{APP_ID}-dsn.algolia.net/1/indexes/{sorted_index}/query"
 
     async def afetch(self) -> list[Job]:
         """Fetch every matching job. Uses a `published_at_timestamp` cursor
@@ -146,9 +144,7 @@ class WTTJScraper(BaseScraper):
                         all_jobs.append(self._parse_hit(hit))
                         new_count += 1
                         ts = hit.get("published_at_timestamp")
-                        if isinstance(ts, (int, float)) and (
-                            oldest_ts is None or ts < oldest_ts
-                        ):
+                        if isinstance(ts, (int, float)) and (oldest_ts is None or ts < oldest_ts):
                             oldest_ts = int(ts)
                     if new_count == 0 or oldest_ts == cursor_ts:
                         break
@@ -156,7 +152,9 @@ class WTTJScraper(BaseScraper):
                     page_count += 1
                     logger.debug(
                         "WTTJ cursor walk: %d unique jobs after %d pages, cursor=%s",
-                        len(all_jobs), page_count, cursor_ts,
+                        len(all_jobs),
+                        page_count,
+                        cursor_ts,
                     )
         return all_jobs
 
@@ -220,9 +218,17 @@ class WTTJScraper(BaseScraper):
         url = f"https://www.welcometothejungle.com/{self.language}/companies/{org_ref}/jobs/{slug}"
 
         raw: dict[str, Any] = {}
-        for k in ("contract_type", "remote", "education_level",
-                  "languages", "profession", "sector", "tags",
-                  "office_distribution", "telework"):
+        for k in (
+            "contract_type",
+            "remote",
+            "education_level",
+            "languages",
+            "profession",
+            "sector",
+            "tags",
+            "office_distribution",
+            "telework",
+        ):
             v = hit.get(k)
             if v:
                 raw[k] = v
@@ -241,11 +247,15 @@ class WTTJScraper(BaseScraper):
             salary_period=SALARY_PERIOD_MAP.get(hit.get("salary_period") or "yearly", "YEAR"),
             salary_min=salary_min,
             salary_max=salary_max,
-            salary_summary=_compose_salary_summary(salary_min, salary_max, hit.get("salary_currency")),
+            salary_summary=_compose_salary_summary(
+                salary_min, salary_max, hit.get("salary_currency")
+            ),
             experience=_to_int(hit.get("experience_level_minimum")),
             employment_type=CONTRACT_TYPE_MAP.get(hit.get("contract_type") or ""),
             department=department,
-            commitment=hit.get("contract_type") if isinstance(hit.get("contract_type"), str) else None,
+            commitment=hit.get("contract_type")
+            if isinstance(hit.get("contract_type"), str)
+            else None,
             requisition_id=hit.get("reference") if isinstance(hit.get("reference"), str) else None,
             description=_compose_description(hit) if self.include_descriptions else None,
             posted_at=_parse_iso(hit.get("published_at")),
@@ -281,7 +291,9 @@ def _to_float(value: object) -> float | None:
         return None
 
 
-def _compose_salary_summary(min_v: float | None, max_v: float | None, ccy: str | None) -> str | None:
+def _compose_salary_summary(
+    min_v: float | None, max_v: float | None, ccy: str | None
+) -> str | None:
     if min_v is None and max_v is None:
         return None
     ccy = ccy or ""

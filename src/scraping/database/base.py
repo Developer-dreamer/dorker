@@ -15,16 +15,17 @@ class ATSCompany(BaseModel):
     slug: str
     url: str | None
 
+
 class ATS(BaseModel):
     name: str
     tier: int
 
     companies: List[ATSCompany] = []
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(self.name)
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, ATS):
             return False
         return self.name == other.name
@@ -32,16 +33,20 @@ class ATS(BaseModel):
 
 class CompanyRepository(Protocol):
     async def get_tenants(self) -> List[ATS]: ...
-    async def update_company_stats(self, is_success: bool,
-                                   duration_ms: int,
-                                   err: Exception | None,
-                                   jobs_count: int,
-                                   company_id) -> None:...
+    async def update_company_stats(
+        self,
+        is_success: bool,
+        duration_ms: int,
+        err: Exception | None,
+        jobs_count: int,
+        company_id: int,
+    ) -> None: ...
+
 
 class DescriptionCache(Protocol):
     async def close(self) -> None: ...
     async def get(self, job: Job) -> str | None: ...
-    async def set(self, job: Job, description: str): ...
+    async def set(self, job: Job, description: str) -> None: ...
 
 
 def description_keys(job: Job) -> list[tuple[str, str]]:

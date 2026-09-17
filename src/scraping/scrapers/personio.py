@@ -106,7 +106,9 @@ class PersonioScraper(BaseScraper):
             for path in ENDPOINTS:
                 try:
                     response = await fetch.request(
-                        "GET", f"{base}{path}", handled=_HANDLED_STATUSES,
+                        "GET",
+                        f"{base}{path}",
+                        handled=_HANDLED_STATUSES,
                     )
                 except ScraperError as exc:
                     last_error = exc
@@ -127,9 +129,7 @@ class PersonioScraper(BaseScraper):
             if jobs:
                 if self.include_descriptions:
                     sem = asyncio.Semaphore(DETAIL_CONCURRENCY)
-                    await asyncio.gather(*(
-                        self._enrich_description(fetch, sem, j) for j in jobs
-                    ))
+                    await asyncio.gather(*(self._enrich_description(fetch, sem, j) for j in jobs))
                 return jobs
         if last_error:
             raise CompanyNotFoundError(
@@ -206,9 +206,17 @@ class PersonioScraper(BaseScraper):
                     break
 
         raw: dict[str, Any] = {}
-        for k in ("subcompany", "department", "office", "occupation",
-                  "occupationCategory", "yearsOfExperience",
-                  "employment_type", "schedule", "category"):
+        for k in (
+            "subcompany",
+            "department",
+            "office",
+            "occupation",
+            "occupationCategory",
+            "yearsOfExperience",
+            "employment_type",
+            "schedule",
+            "category",
+        ):
             v = item.get(k)
             if v:
                 raw[k] = v

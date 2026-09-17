@@ -62,23 +62,48 @@ DETAIL_CONCURRENCY = 6
 # These map to our standardized columns. All comparisons are
 # case-insensitive after stripping punctuation.
 _DEPARTMENT_LABELS = {
-    "career area", "function/business area", "function", "business unit",
-    "department", "category", "occupational area", "job category",
-    "team", "discipline",
+    "career area",
+    "function/business area",
+    "function",
+    "business unit",
+    "department",
+    "category",
+    "occupational area",
+    "job category",
+    "team",
+    "discipline",
 }
 _EMPLOYMENT_TYPE_LABELS = {
-    "employment class", "employment type", "work type", "working time",
-    "employment status", "type of employment", "contract type", "schedule",
+    "employment class",
+    "employment type",
+    "work type",
+    "working time",
+    "employment status",
+    "type of employment",
+    "contract type",
+    "schedule",
 }
 _LOCATION_LABELS = {
-    "location", "work location(s)", "work location", "office",
-    "primary location", "city", "country",
+    "location",
+    "work location(s)",
+    "work location",
+    "office",
+    "primary location",
+    "city",
+    "country",
 }
 _REMOTE_LABELS = {"remote?", "remote", "work mode", "workplace type"}
-_REQ_ID_LABELS = {"ref #", "ref. #", "ref no.", "reference number",
-                  "requisition id", "req id", "job id", "job ref"}
-_POSTED_LABELS = {"date published", "posted date", "publication date",
-                  "post date", "date posted"}
+_REQ_ID_LABELS = {
+    "ref #",
+    "ref. #",
+    "ref no.",
+    "reference number",
+    "requisition id",
+    "req id",
+    "job id",
+    "job ref",
+}
+_POSTED_LABELS = {"date published", "posted date", "publication date", "post date", "date posted"}
 
 _EMPLOYMENT_TYPE_NORMALIZED = {
     "permanent": "FULL_TIME",
@@ -100,16 +125,40 @@ _EMPLOYMENT_TYPE_NORMALIZED = {
 
 # Locale path prefixes that some tenants insert (`careers.ibm.com/en_US/...`).
 _LOCALE_PREFIXES = {
-    "en_US", "en_GB", "en_CA", "en_AU", "en_IN", "en_SG",
-    "fr_FR", "fr_CA", "es_ES", "es_MX", "de_DE", "it_IT",
-    "pt_BR", "pt_PT", "zh_CN", "zh_TW", "ja_JP", "ko_KR", "nl_NL",
+    "en_US",
+    "en_GB",
+    "en_CA",
+    "en_AU",
+    "en_IN",
+    "en_SG",
+    "fr_FR",
+    "fr_CA",
+    "es_ES",
+    "es_MX",
+    "de_DE",
+    "it_IT",
+    "pt_BR",
+    "pt_PT",
+    "zh_CN",
+    "zh_TW",
+    "ja_JP",
+    "ko_KR",
+    "nl_NL",
 }
 
 # Pseudo-anchor texts that aren't real jobs (action buttons rendered as <a>).
 _PSEUDO_TITLES = {
-    "apply", "apply now", "apply online", "learn more", "view job",
-    "view all", "see job", "more info", "details",
+    "apply",
+    "apply now",
+    "apply online",
+    "learn more",
+    "view job",
+    "view all",
+    "see job",
+    "more info",
+    "details",
 }
+
 
 class _BlockedTenantError(Exception):
     """Raised when a tenant returns 406 — escalates to the Browserbase path."""
@@ -167,7 +216,8 @@ class AvatureScraper(BaseScraper):
 
         async def run() -> str | None:
             async with httpx.AsyncClient(
-                timeout=self.timeout, follow_redirects=True,
+                timeout=self.timeout,
+                follow_redirects=True,
             ) as client:
                 sem = asyncio.Semaphore(1)
                 await self._enrich_with_detail(client, sem, copy)
@@ -199,7 +249,9 @@ class AvatureScraper(BaseScraper):
         return await self._fetch_via_browserbase_optional(base, company)
 
     async def _fetch_via_browserbase_optional(
-        self, base: str, company: str,
+        self,
+        base: str,
+        company: str,
     ) -> list[Job]:
         """Use Browserbase only when configured; otherwise return empty.
 
@@ -216,6 +268,7 @@ class AvatureScraper(BaseScraper):
         even when credentials exist (useful in CI / local dev).
         """
         import logging
+
         log = logging.getLogger(__name__)
 
         if os.getenv("ATS_SCRAPERS_DISABLE_BROWSERBASE"):
@@ -267,8 +320,7 @@ class AvatureScraper(BaseScraper):
             import httpcloak  # noqa: F401  — availability check
         except ImportError as exc:
             raise ScraperError(
-                "Avature 406 fallback needs httpcloak — "
-                "`pip install httpcloak`."
+                "Avature 406 fallback needs httpcloak — `pip install httpcloak`."
             ) from exc
 
         seen: set[str] = set()
@@ -299,10 +351,9 @@ class AvatureScraper(BaseScraper):
         # detail failure must not throw away the listing row.
         if self.include_descriptions:
             sem = asyncio.Semaphore(DETAIL_CONCURRENCY)
-            await asyncio.gather(*(
-                self._enrich_with_detail_via_httpcloak(sem, job)
-                for job in all_jobs
-            ))
+            await asyncio.gather(
+                *(self._enrich_with_detail_via_httpcloak(sem, job) for job in all_jobs)
+            )
         return all_jobs
 
     def _fetch_page_via_httpcloak_sync(self, base: str, offset: int) -> str:
@@ -317,8 +368,7 @@ class AvatureScraper(BaseScraper):
             )
         except Exception as exc:
             raise ScraperError(
-                f"Avature ({base}) httpcloak fetch failed at "
-                f"offset={offset}: {exc}"
+                f"Avature ({base}) httpcloak fetch failed at offset={offset}: {exc}"
             ) from exc
         if response.status_code == 406:
             raise _BlockedTenantError()
@@ -326,19 +376,18 @@ class AvatureScraper(BaseScraper):
             raise CompanyNotFoundError(f"Avature tenant not found: {base}")
         if response.status_code != 200:
             raise ScraperError(
-                f"Avature ({base}) httpcloak returned {response.status_code} "
-                f"at offset={offset}"
+                f"Avature ({base}) httpcloak returned {response.status_code} at offset={offset}"
             )
         return response.text
 
     async def _enrich_with_detail_via_httpcloak(
-        self, sem: asyncio.Semaphore, job: Job,
+        self,
+        sem: asyncio.Semaphore,
+        job: Job,
     ) -> None:
         async with sem:
             try:
-                response = await asyncio.to_thread(
-                    self._http_get_via_httpcloak_sync, str(job.url)
-                )
+                response = await asyncio.to_thread(self._http_get_via_httpcloak_sync, str(job.url))
             except Exception:
                 return
         if response is None or response.status_code != 200:
@@ -351,7 +400,9 @@ class AvatureScraper(BaseScraper):
 
         try:
             return httpcloak.get(
-                url, headers=_BROWSER_HEADERS, timeout=self.timeout,
+                url,
+                headers=_BROWSER_HEADERS,
+                timeout=self.timeout,
             )
         except Exception:
             return None
@@ -360,9 +411,7 @@ class AvatureScraper(BaseScraper):
         seen: set[str] = set()
         all_jobs: list[Job] = []
 
-        async with httpx.AsyncClient(
-            timeout=self.timeout, follow_redirects=True
-        ) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
             page_size = _page_size(base)
             for page_num in range(MAX_PAGES):
                 offset = page_num * page_size
@@ -384,14 +433,14 @@ class AvatureScraper(BaseScraper):
             # lives on /JobDetail/. We fetch concurrently with a small
             # semaphore so a slow tenant doesn't stall the pipeline.
             sem = asyncio.Semaphore(DETAIL_CONCURRENCY)
-            await asyncio.gather(*(
-                self._enrich_with_detail(client, sem, job)
-                for job in all_jobs
-            ))
+            await asyncio.gather(*(self._enrich_with_detail(client, sem, job) for job in all_jobs))
         return all_jobs
 
     async def _enrich_with_detail(
-        self, client: httpx.AsyncClient, sem: asyncio.Semaphore, job: Job,
+        self,
+        client: httpx.AsyncClient,
+        sem: asyncio.Semaphore,
+        job: Job,
     ) -> None:
         async with sem:
             try:
@@ -425,8 +474,7 @@ class AvatureScraper(BaseScraper):
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.post(
                 "https://api.browserbase.com/v1/sessions",
-                headers={"X-BB-API-Key": api_key,
-                         "Content-Type": "application/json"},
+                headers={"X-BB-API-Key": api_key, "Content-Type": "application/json"},
                 json={
                     "projectId": project_id,
                     "browserSettings": {
@@ -440,8 +488,7 @@ class AvatureScraper(BaseScraper):
             )
             if r.status_code != 201:
                 raise ScraperError(
-                    f"Browserbase session create failed: {r.status_code} "
-                    f"{r.text[:200]}"
+                    f"Browserbase session create failed: {r.status_code} {r.text[:200]}"
                 )
             session = r.json()
             ws_url = session["connectUrl"]
@@ -460,9 +507,7 @@ class AvatureScraper(BaseScraper):
                     offset = page_num * page_size
                     list_url = _paginated_search_url(base, offset)
                     try:
-                        await page.goto(
-                            list_url, wait_until="domcontentloaded", timeout=30_000
-                        )
+                        await page.goto(list_url, wait_until="domcontentloaded", timeout=30_000)
                     except Exception:
                         break
                     html_text = await page.content()
@@ -508,9 +553,7 @@ class AvatureScraper(BaseScraper):
                 await browser.close()
         return all_jobs
 
-    async def _fetch_page(
-        self, client: httpx.AsyncClient, base: str, offset: int
-    ) -> str:
+    async def _fetch_page(self, client: httpx.AsyncClient, base: str, offset: int) -> str:
         list_url = _paginated_search_url(base, offset)
         for attempt in range(1, MAX_RETRIES + 1):
             try:
@@ -538,7 +581,7 @@ class AvatureScraper(BaseScraper):
                         f"Avature ({base}) returned 406 at offset={offset} "
                         f"after {MAX_RETRIES} retries"
                     )
-                await asyncio.sleep(RETRY_BASE_DELAY * (2 ** attempt))
+                await asyncio.sleep(RETRY_BASE_DELAY * (2**attempt))
                 continue
             if response.status_code == 429 or 500 <= response.status_code < 600:
                 if attempt == MAX_RETRIES:
@@ -548,8 +591,9 @@ class AvatureScraper(BaseScraper):
                     )
                 retry_after = response.headers.get("Retry-After")
                 delay = (
-                    float(retry_after) if retry_after and retry_after.isdigit()
-                    else RETRY_BASE_DELAY * (2 ** attempt)
+                    float(retry_after)
+                    if retry_after and retry_after.isdigit()
+                    else RETRY_BASE_DELAY * (2**attempt)
                 )
                 await asyncio.sleep(delay)
                 continue
@@ -580,17 +624,16 @@ class AvatureScraper(BaseScraper):
         # department live as sibling elements. This handles all tenant
         # markups (Bloomberg `article--result`, IBM `div.job-item`, etc.)
         # without maintaining a per-tenant selector list.
-        anchors = soup.find_all(
-            "a", href=lambda h: bool(h) and _is_detail_href(str(h))
-        )
+        anchors = soup.find_all("a", href=lambda h: bool(h) and _is_detail_href(str(h)))
         seen_ids: set[str] = set()
         jobs: list[Job] = []
         for anchor in anchors:
             # Walk up to the first sensible container.
             container = anchor.find_parent(["article", "li", "tr"]) or anchor.find_parent(
                 "div",
-                class_=lambda v: bool(v) and any(
-                    k in str(v).lower() for k in ("job", "result", "listing", "article")
+                class_=lambda v: (
+                    bool(v)
+                    and any(k in str(v).lower() for k in ("job", "result", "listing", "article"))
                 ),
             )
             element = container or anchor
@@ -602,19 +645,13 @@ class AvatureScraper(BaseScraper):
         return jobs
 
 
-def _parse_job_element(
-    element: object, anchor: object, base: str, company: str
-) -> Job | None:
+def _parse_job_element(element: object, anchor: object, base: str, company: str) -> Job | None:
     href = (anchor.get("href") or "").strip()  # type: ignore[union-attr]
     if not href or not _is_detail_href(href):
         return None
 
     # Build absolute URL.
-    url = (
-        href
-        if href.startswith(("http://", "https://"))
-        else _join_avature_url(base, href)
-    )
+    url = href if href.startswith(("http://", "https://")) else _join_avature_url(base, href)
 
     # Job ID = path tail for JobDetail/ProjectDetail pages, or pipelineId
     # for the SearchJobsMaps/PipelineDetail variant.
@@ -660,14 +697,10 @@ def _parse_job_element(
     # Department: class contains "department" or "category".
     department: str | None = None
     dept_el = element.find(  # type: ignore[union-attr]
-        class_=lambda v: bool(v) and any(
-            k in str(v).lower() for k in ("department", "category")
-        )
+        class_=lambda v: bool(v) and any(k in str(v).lower() for k in ("department", "category"))
     )
     if dept_el is not None:
-        department = (
-            re.sub(r"\s+", " ", dept_el.get_text(strip=True)).strip() or None
-        )
+        department = re.sub(r"\s+", " ", dept_el.get_text(strip=True)).strip() or None
 
     return Job(
         url=url,
@@ -737,11 +770,7 @@ def _is_map_search(base: str) -> bool:
 
 
 def _is_detail_href(href: str) -> bool:
-    return (
-        "/JobDetail/" in href
-        or "/ProjectDetail/" in href
-        or "/PipelineDetail" in href
-    )
+    return "/JobDetail/" in href or "/ProjectDetail/" in href or "/PipelineDetail" in href
 
 
 def _join_avature_url(base: str, href: str) -> str:
@@ -786,9 +815,7 @@ def _parse_detail(html: str) -> tuple[dict[str, str], str | None]:
     try:
         from bs4 import BeautifulSoup
     except ImportError as exc:  # pragma: no cover
-        raise ScraperError(
-            "Avature scraper requires beautifulsoup4."
-        ) from exc
+        raise ScraperError("Avature scraper requires beautifulsoup4.") from exc
 
     soup = BeautifulSoup(html, "html.parser")
     fields: dict[str, str] = {}
@@ -798,24 +825,19 @@ def _parse_detail(html: str) -> tuple[dict[str, str], str | None]:
     # on <div>. ``find_all(class_=...)`` handles both element kinds.
     for blk in soup.find_all(class_="article--details"):
         field_rows = [
-            d for d in blk.find_all("div")
+            d
+            for d in blk.find_all("div")
             if "article__content__view__field" in (d.get("class") or [])
         ]
         labeled_count = 0
         for fr in field_rows:
-            lbl_el = fr.find(
-                "div", class_="article__content__view__field__label"
-            )
-            val_el = fr.find(
-                "div", class_="article__content__view__field__value"
-            )
+            lbl_el = fr.find("div", class_="article__content__view__field__label")
+            val_el = fr.find("div", class_="article__content__view__field__value")
             label_text = lbl_el.get_text(strip=True) if lbl_el else ""
             if label_text:
                 labeled_count += 1
                 if val_el is not None:
-                    value_text = re.sub(
-                        r"\s+", " ", val_el.get_text(" ", strip=True)
-                    )
+                    value_text = re.sub(r"\s+", " ", val_el.get_text(" ", strip=True))
                     if value_text:
                         fields[label_text] = value_text
 
@@ -826,14 +848,10 @@ def _parse_detail(html: str) -> tuple[dict[str, str], str | None]:
         # Unlabelled field rows = description chunks.
         body_added = False
         for fr in field_rows:
-            lbl_el = fr.find(
-                "div", class_="article__content__view__field__label"
-            )
+            lbl_el = fr.find("div", class_="article__content__view__field__label")
             if lbl_el and lbl_el.get_text(strip=True):
                 continue
-            val_el = fr.find(
-                "div", class_="article__content__view__field__value"
-            ) or fr
+            val_el = fr.find("div", class_="article__content__view__field__value") or fr
             text = val_el.get_text(separator="\n", strip=True)
             if text:
                 description_parts.append(text)
@@ -850,7 +868,9 @@ def _parse_detail(html: str) -> tuple[dict[str, str], str | None]:
 
 
 def _apply_detail_to_job(
-    job: Job, fields: dict[str, str], description: str | None,
+    job: Job,
+    fields: dict[str, str],
+    description: str | None,
 ) -> None:
     """Mutate ``job`` in place with values pulled from the detail page.
 
@@ -899,11 +919,11 @@ def _apply_detail_to_job(
     posted_raw = first(_POSTED_LABELS)
     if posted_raw and not job.posted_at:
         for fmt in (
-            "%A, %B %d, %Y",   # Monday, May 4, 2026
-            "%B %d, %Y",       # May 4, 2026
-            "%d %B %Y",        # 4 May 2026
+            "%A, %B %d, %Y",  # Monday, May 4, 2026
+            "%B %d, %Y",  # May 4, 2026
+            "%d %B %Y",  # 4 May 2026
             "%Y-%m-%d",
-            "%m-%d-%y",        # 05-05-26 (Ally)
+            "%m-%d-%y",  # 05-05-26 (Ally)
             "%d/%m/%Y",
         ):
             try:

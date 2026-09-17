@@ -63,9 +63,7 @@ class TeamtailorScraper(BaseScraper):
             include_descriptions=include_descriptions,
             proxy=proxy,
         )
-        self.company_slug = require_host_label(
-            company_slug, provider="TeamtailorScraper"
-        )
+        self.company_slug = require_host_label(company_slug, provider="TeamtailorScraper")
 
     async def afetch(self) -> list[Job]:
         url = RSS_TEMPLATE.format(slug=self.company_slug)
@@ -106,7 +104,7 @@ class TeamtailorScraper(BaseScraper):
         # Prefer the numeric ID from the URL — it's stable, public, and
         # shorter than the GUID UUID. Fall back to GUID if the URL lacks one.
         ats_id = ""
-        if (m := _URL_ID_RE.search(link)):
+        if m := _URL_ID_RE.search(link):
             ats_id = m.group(1)
         if not ats_id:
             ats_id = (item.findtext("guid") or "").strip()

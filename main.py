@@ -3,7 +3,7 @@ import logging
 import re
 from json import JSONDecodeError
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, cast
 from uuid import UUID
 
 import aiohttp
@@ -37,6 +37,7 @@ PERKS_SIGNAL_PATTERN = re.compile(
     r"b2b|contractor|fop|w2|c2c"
     r")\b"
 )
+
 
 def filter_job_description_optimized(raw_text: str, clf: Any, embedder: Any) -> str:
     blocks = [b.strip() for b in raw_text.split("\n\n") if b.strip()]
@@ -107,7 +108,8 @@ async def fetch_matching_raw_jobs(pool: asyncpg.Pool) -> list[asyncpg.Record]:
 
     async with pool.acquire() as conn:
         records = await conn.fetch(query)
-        return records
+        return cast(list[asyncpg.Record], records)
+
 
 async def fetch_golden_set(pool: asyncpg.Pool) -> list[asyncpg.Record]:
     query = """
@@ -129,7 +131,8 @@ async def fetch_golden_set(pool: asyncpg.Pool) -> list[asyncpg.Record]:
 
     async with pool.acquire() as conn:
         records = await conn.fetch(query)
-        return records
+        return cast(list[asyncpg.Record], records)
+
 
 class JobFactSheet(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -142,7 +145,6 @@ class JobFactSheet(BaseModel):
 
     # =========================================================================
     # PHASE 1: Concrete Technical Grounding (Literal token extractions)
-    # The model inspects explicit requirements without committing to taxonomy.
     # =========================================================================
     primary_backend_languages: list[str] = Field(
         default_factory=list,
@@ -169,7 +171,6 @@ class JobFactSheet(BaseModel):
 
     # =========================================================================
     # PHASE 2: Operational Signals & Explicit Flags
-    # Simple binary extractions derived directly from specific textual cues.
     # =========================================================================
     is_legacy_maintenance: bool = Field(
         default=False,
@@ -197,7 +198,6 @@ class JobFactSheet(BaseModel):
 
     # =========================================================================
     # PHASE 3: Location & Jurisdiction Details (Extractive tokens)
-    # Extracts concrete geographic entities before deciding high-level scope.
     # =========================================================================
     workplace_type: Literal["REMOTE", "HYBRID", "ON_SITE", "UNKNOWN"] = Field(
         ...,
@@ -221,14 +221,9 @@ class JobFactSheet(BaseModel):
             "Must be null if not an operational timezone corridor."
         ),
     )
-    # timezone_overlap_requested: Optional[str] = Field(
-    #     default=None,
-    #     description="Target timezone alignment if requested (e.g., 'EST', '4 hours US East overlap').",
-    # )
 
     # =========================================================================
     # PHASE 4: High-Level Classification Enums (Synthesis)
-    # Generated LAST. The model conditions on all tokens generated in Phases 1–3.
     # =========================================================================
     geographic_scope: Literal[
         "UNKNOWN",
@@ -318,7 +313,7 @@ def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
     # -------------------------------------------------------------------------
 
     # 1.1 Geographic & Legal Authorization Gate
-    if sheet.geographic_scope == "STRICT_DOMESTIC_ONLY":
+    if sheet.geographic_scope == "DOMESTIC" and sheet.target_jurisdiction != "UA":
         return MatchedJob(
             suitability_tier=SuitabilityTier.REJECTED,
             rejection_reason="Strict domestic residency, W-2 only, or citizenship/clearance required.",
@@ -397,7 +392,6 @@ def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
             tech_score -= 0.10 if sheet.is_experience_flexible else 0.20
             cons.append(f"Middle experience requirement ({yoe}+ YoE vs <1 yr commercial).")
     else:
-        # FALLBACK: If LLM couldn't find a number, but the title says "Senior"
         if is_senior_title:
             if sheet.is_experience_flexible:
                 tech_score -= 0.20
@@ -410,8 +404,10 @@ def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
                 pros.append("Flexible experience requirements stated in posting.")
 
     # 2.2 Primary Backend Language Alignment
-    req_langs = [l.strip().lower() for l in sheet.primary_backend_languages if l.strip()]
-    matched_langs = [l for l in req_langs if any(c in l for c in CANDIDATE_PRIMARY_LANGUAGES)]
+    req_langs = [lang.strip().lower() for lang in sheet.primary_backend_languages if lang.strip()]
+    matched_langs = [
+        lang for lang in req_langs if any(c in lang for c in CANDIDATE_PRIMARY_LANGUAGES)
+    ]
 
     if req_langs:
         if not matched_langs:
@@ -421,12 +417,11 @@ def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
             )
         else:
             pros.append(f"Direct match on primary language(s): {', '.join(matched_langs)}.")
-            unmatched_langs = [l for l in req_langs if l not in matched_langs]
+            unmatched_langs = [lang for lang in req_langs if lang not in matched_langs]
             if unmatched_langs:
                 tech_score -= min(0.20, 0.10 * len(unmatched_langs))
                 cons.append(f"Secondary language gap: {', '.join(unmatched_langs)}.")
     else:
-        # No explicit primary language extracted
         tech_score -= 0.10
         warnings.append("No explicit primary backend language identified in posting.")
 
@@ -451,22 +446,17 @@ def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
                 warnings=["Non-technical/Sales/Management role detected (False Positive)."]
             ),
         )
+
     # -------------------------------------------------------------------------
     # Step 3: Strategic Value Score Evaluation (Base: 1.0)
     # -------------------------------------------------------------------------
     strategic_score = 1.0
 
-    # 3.1 Work Arrangement Value
     if sheet.workplace_type == "REMOTE":
         pros.append("100% remote work arrangement.")
     elif sheet.workplace_type == "HYBRID":
         pros.append("Hybrid role with office located in Kyiv.")
 
-    # 3.2 Timezone Alignment
-    # if sheet.timezone_overlap_requested:
-    #     warnings.append(f"Timezone alignment requested: {sheet.timezone_overlap_requested}.")
-
-    # 3.3 Operational Cues & Uncompensated On-Call
     if sheet.has_uncompensated_oncall:
         strategic_score -= 0.15
         warnings.append("On-call rotation required without explicit compensation parameters.")
@@ -480,7 +470,6 @@ def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
     tech_score = max(0.0, min(1.0, round(tech_score, 2)))
     strategic_score = max(0.0, min(1.0, round(strategic_score, 2)))
 
-    # Confidence calculation based on extraction completeness
     confidence = 0.95
     if sheet.geographic_scope == "UNKNOWN":
         confidence -= 0.10
@@ -490,7 +479,6 @@ def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
         confidence -= 0.05
     confidence = max(0.50, round(confidence, 2))
 
-    # Determine Suitability Tier
     if tech_score >= 0.60 and strategic_score >= 0.60:
         tier = SuitabilityTier.SUITABLE
         strategic_reason = "High alignment with core technical stack and work arrangement."
@@ -524,20 +512,35 @@ def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
         analytics=Analytics(pros=pros, cons=cons, warnings=warnings),
     )
 
+
 INSERT_COLUMNS = (
-    "id", "job_id", "job_family", "geographic_scope", "workplace_type",
-    "office_location_city", "target_jurisdiction", "region", "min_years_experience",
-    "is_experience_flexible", "primary_backend_languages",
-    "secondary_tools", "is_legacy_maintenance",
-    "is_pure_network_or_systems", "has_mandatory_travel",
-    "has_uncompensated_oncall", "detected_operational_cues",
-    "model", "version", "iteration"
+    "id",
+    "job_id",
+    "job_family",
+    "geographic_scope",
+    "workplace_type",
+    "office_location_city",
+    "target_jurisdiction",
+    "region",
+    "min_years_experience",
+    "is_experience_flexible",
+    "primary_backend_languages",
+    "secondary_tools",
+    "is_legacy_maintenance",
+    "is_pure_network_or_systems",
+    "has_mandatory_travel",
+    "has_uncompensated_oncall",
+    "detected_operational_cues",
+    "model",
+    "version",
+    "iteration",
 )
 
 INSERT_QUERY = f"""
-    INSERT INTO jobs_fact_sheets ({', '.join(INSERT_COLUMNS)})
-    VALUES ({', '.join(f'${i+1}' for i in range(len(INSERT_COLUMNS)))});
+    INSERT INTO jobs_fact_sheets ({", ".join(INSERT_COLUMNS)})
+    VALUES ({", ".join(f"${i + 1}" for i in range(len(INSERT_COLUMNS)))});
 """
+
 
 async def process_job(
     job_dict: dict[str, Any],
@@ -565,11 +568,9 @@ async def process_job(
 
             response_data = await response.json()
 
-            # --- Extract Metrics ---
             eval_count = response_data.get("eval_count", 0)
             prompt_eval_count = response_data.get("prompt_eval_count", 0)
 
-            # Ollama returns durations in nanoseconds (1e9 ns = 1 second)
             eval_duration_s = response_data.get("eval_duration", 1) / 1e9
             prompt_duration_s = response_data.get("prompt_eval_duration", 1) / 1e9
             total_duration_s = response_data.get("total_duration", 1) / 1e9
@@ -587,8 +588,6 @@ async def process_job(
             try:
                 sheet = JobFactSheet.model_validate_json(response_data["response"])
 
-                # match = fact_sheet_to_match(sheet, job["title"])
-                # async with conn.transaction():
                 payload = {
                     **sheet.model_dump(),
                     "id": uuid6.uuid7(),
@@ -599,22 +598,6 @@ async def process_job(
                 }
 
                 await conn.execute(INSERT_QUERY, *(payload[col] for col in INSERT_COLUMNS))
-                    # await conn.execute(
-                    #     insert_match_query,
-                    #     uuid6.uuid7(),
-                    #     job["id"],
-                    #     True,
-                    #     match.suitability_tier,
-                    #     "PENDING" if match.strategic_reason else "DECLINED",
-                    #     match.technical_capability_score,
-                    #     match.strategic_value_score,
-                    #     match.confidence_score,
-                    #     match.strategic_reason,
-                    #     match.rejection_reason,
-                    #     match.analytics.model_dump_json(),
-                    #     match.internal_analysis_cot,
-                    #     MODEL,
-                    # )
 
             except ValidationError as e:
                 logger.warning(
@@ -634,7 +617,9 @@ async def run() -> None:
 
     clf, embedder = (
         joblib.load("/Users/serafym/Developer/dorker.space/dorker/block_classifier_nomic.pkl"),
-        SentenceTransformer("nomic-ai/nomic-embed-text-v1.5", trust_remote_code=True, local_files_only=True),
+        SentenceTransformer(
+            "nomic-ai/nomic-embed-text-v1.5", trust_remote_code=True, local_files_only=True
+        ),
     )
     embedder.max_seq_length = 5000
 
@@ -649,42 +634,18 @@ async def run() -> None:
 
     prompt_template = ranking_prompt_path.read_text(encoding="utf-8")
 
-    # insert_job_match_query = f"""INSERT INTO matches
-    #                         (id, job_id, is_technical, suitability_tier, pipeline_status, 
-    #                          technical_capability_score, strategic_value_score, confidence_score, 
-    #                          strategic_reason, rejection_reason, analytics, internal_analysis_cot, version, model)
-    #                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '{PIPELINE_VERSION}', $13)
-    #                """
-
-    # insert_sheet_query = f"""
-    #                     INSERT INTO jobs_fact_sheets (
-    #                         id,
-    #                         job_id,
-    #                         job_family,geographic_scope,workplace_type,office_location_city,target_jurisdiction,region,
-    #                         min_years_experience,is_experience_flexible,
-    #                         primary_backend_languages,secondary_tools,
-    #                         is_legacy_maintenance,is_pure_network_or_systems,has_mandatory_travel,has_uncompensated_oncall,
-    #                         detected_operational_cues,
-    #                         model, version
-    #                     ) VALUES (
-    #                         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, '{PIPELINE_VERSION}'
-    #                     );
-    #                 """
-
-    # Use aiohttp to prevent blocking the event loop
-    timeout = aiohttp.ClientTimeout(total=300)  # 5 min timeout per job
+    timeout = aiohttp.ClientTimeout(total=300)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         conn = await asyncpg.connect(PG_DSN)
         try:
-            # Using tqdm for a progress bar
             for job in jobs:
                 print("\n")
-                job = dict(job)
-                job["description"] = filter_job_description_optimized(job["description"], clf, embedder)
-
-                await process_job(
-                    job, prompt_template, session, conn
+                job_dict = dict(job)
+                job_dict["description"] = filter_job_description_optimized(
+                    job_dict["description"], clf, embedder
                 )
+
+                await process_job(job_dict, prompt_template, session, conn)
         finally:
             await conn.close()
             logger.info("Pipeline execution completed.")

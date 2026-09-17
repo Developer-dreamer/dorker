@@ -188,14 +188,11 @@ class EightfoldScraper(BaseScraper):
             # still fits inside the same WAF budget.
             if self.include_descriptions and all_jobs:
                 detail_sem = asyncio.Semaphore(DETAIL_CONCURRENCY)
-                await asyncio.gather(*(
-                    self._enrich_position_details(client, detail_sem, j)
-                    for j in all_jobs
-                ))
+                await asyncio.gather(
+                    *(self._enrich_position_details(client, detail_sem, j) for j in all_jobs)
+                )
 
-    async def _fetch_via_smartapply_httpx(
-        self, seen: set[str], all_jobs: list[Job]
-    ) -> None:
+    async def _fetch_via_smartapply_httpx(self, seen: set[str], all_jobs: list[Job]) -> None:
         """Fetch tenants backed by Eightfold's public SmartApply endpoint."""
         async with httpx.AsyncClient(
             timeout=self.timeout,
@@ -216,9 +213,7 @@ class EightfoldScraper(BaseScraper):
 
             async def task(offset: int) -> None:
                 async with sem:
-                    page = await self._fetch_page_smartapply_httpx(
-                        client, start=offset
-                    )
+                    page = await self._fetch_page_smartapply_httpx(client, start=offset)
                     self._collect(page.get("positions") or [], seen, all_jobs)
 
             await _gather_cancel_on_error(*(task(o) for o in offsets))
@@ -266,9 +261,7 @@ class EightfoldScraper(BaseScraper):
         if isinstance(desc_html, str) and desc_html.strip() and not job.description:
             job.description = _html_unescape_for_desc(desc_html, cap=25_000) or None
 
-    async def _fetch_page_httpx(
-        self, client: httpx.AsyncClient, *, start: int
-    ) -> dict[str, Any]:
+    async def _fetch_page_httpx(self, client: httpx.AsyncClient, *, start: int) -> dict[str, Any]:
         """One page with retry on 429/5xx (ported from the legacy Microsoft
         scraper, where ~1% of requests hit transient 502s on Eightfold)."""
         last_exc: Exception | None = None
@@ -293,8 +286,7 @@ class EightfoldScraper(BaseScraper):
                 last_exc = exc
                 if attempt == MAX_RETRIES:
                     raise ScraperError(
-                        f"Eightfold ({self.company_name}) fetch failed at "
-                        f"start={start}: {exc}"
+                        f"Eightfold ({self.company_name}) fetch failed at start={start}: {exc}"
                     ) from exc
                 await asyncio.sleep(RETRY_BASE_DELAY * attempt)
                 continue
@@ -303,9 +295,12 @@ class EightfoldScraper(BaseScraper):
             if elapsed > SLOW_REQUEST_THRESHOLD:
                 # Visibility into pathological tenants without spamming logs.
                 import logging
+
                 logging.getLogger(__name__).warning(
                     "Eightfold (%s) slow request: %.1fs at start=%d",
-                    self.company_name, elapsed, start,
+                    self.company_name,
+                    elapsed,
+                    start,
                 )
 
             if response.status_code == 200:
@@ -322,7 +317,11 @@ class EightfoldScraper(BaseScraper):
                     )
                 # Honour Retry-After if present, else exponential
                 retry_after = response.headers.get("Retry-After")
-                delay = float(retry_after) if retry_after and retry_after.isdigit() else RETRY_BASE_DELAY * (2 ** attempt)
+                delay = (
+                    float(retry_after)
+                    if retry_after and retry_after.isdigit()
+                    else RETRY_BASE_DELAY * (2**attempt)
+                )
                 await asyncio.sleep(delay)
                 continue
             if 500 <= response.status_code < 600:
@@ -396,7 +395,7 @@ class EightfoldScraper(BaseScraper):
                 delay = (
                     float(retry_after)
                     if retry_after and retry_after.isdigit()
-                    else RETRY_BASE_DELAY * (2 ** attempt)
+                    else RETRY_BASE_DELAY * (2**attempt)
                 )
                 await asyncio.sleep(delay)
                 continue
@@ -412,9 +411,7 @@ class EightfoldScraper(BaseScraper):
 
     # --- httpcloak path (sync, but parallelized via to_thread) ----------
 
-    def _fetch_via_httpcloak_sync(
-        self, seen: set[str], all_jobs: list[Job]
-    ) -> None:
+    def _fetch_via_httpcloak_sync(self, seen: set[str], all_jobs: list[Job]) -> None:
         try:
             import httpcloak  # noqa: F401  — availability check
         except ImportError as exc:
@@ -464,7 +461,8 @@ class EightfoldScraper(BaseScraper):
             ) from exc
         if response.status_code != 200:
             raise ScraperError(
-                f"Eightfold ({self.company_name}) httpcloak returned {response.status_code} at start={start}"
+                f"Eightfold ({self.company_name}) httpcloak returned {response.status_code} "
+                f"at start={start}"
             )
         return response.json().get("data") or {}
 
@@ -518,29 +516,35 @@ class EightfoldScraper(BaseScraper):
         )
 
         raw: dict[str, Any] = {}
-        for k in ("workLocationOption", "work_location_option",
-                  "locationFlexibility", "location_flexibility",
-                  "category", "team", "businessUnit", "business_unit",
-                  "skills", "yearsOfExperience", "employmentType"):
+        for k in (
+            "workLocationOption",
+            "work_location_option",
+            "locationFlexibility",
+            "location_flexibility",
+            "category",
+            "team",
+            "businessUnit",
+            "business_unit",
+            "skills",
+            "yearsOfExperience",
+            "employmentType",
+        ):
             v = item.get(k)
             if v:
                 raw[k] = v
 
         return Job(
             url=url,
-            title=(
-                item.get("name")
-                or item.get("posting_name")
-                or item.get("title")
-                or "Untitled"
-            ),
+            title=(item.get("name") or item.get("posting_name") or item.get("title") or "Untitled"),
             company=self.company_name,
             ats_type=self.ats,
             ats_id=ats_id,
             location=_format_location(item),
             is_remote=_extract_remote(item),
             department=item.get("department"),
-            requisition_id=str(requisition_id) if requisition_id and str(requisition_id) != ats_id else None,
+            requisition_id=str(requisition_id)
+            if requisition_id and str(requisition_id) != ats_id
+            else None,
             description=_strip_html(item.get("job_description") or "") or None,
             posted_at=_parse_ts(
                 item.get("postedTs")
@@ -572,9 +576,7 @@ class _WAFBlocked(Exception):  # noqa: N818
     fall back to httpcloak or surface the error."""
 
     def __init__(self, company_name: str, start: int) -> None:
-        super().__init__(
-            f"Eightfold ({company_name}) blocked by WAF at start={start}"
-        )
+        super().__init__(f"Eightfold ({company_name}) blocked by WAF at start={start}")
         self.company_name = company_name
         self.start = start
 
@@ -616,6 +618,7 @@ def _html_unescape_for_desc(value: object, *, cap: int = 25_000) -> str | None:
     Replaces the legacy _strip_html/_html_to_text path for descriptions
     only — title/company/salary fields still use the strip variant."""
     import html as _h
+
     if not isinstance(value, str):
         return None
     out = _h.unescape(value).strip()
@@ -656,8 +659,10 @@ def _extract_remote(item: dict[str, Any]) -> bool | None:
     fall through to None so consumers can still tell "we don't know" from
     "we know it's not remote"."""
     for key in (
-        "workLocationOption", "work_location_option",
-        "locationFlexibility", "location_flexibility",
+        "workLocationOption",
+        "work_location_option",
+        "locationFlexibility",
+        "location_flexibility",
     ):
         value = item.get(key)
         if not isinstance(value, str):

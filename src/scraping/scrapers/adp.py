@@ -218,16 +218,11 @@ class ADPWorkforceNowScraper(BaseScraper):
 
                 for index, item in enumerate(items):
                     if not isinstance(item, dict):
-                        raise ScraperError(
-                            f"ADP listing row {offset + index} was not an object"
-                        )
+                        raise ScraperError(f"ADP listing row {offset + index} was not an object")
                     job = self._parse_job(item, target)
                     existing = by_id.get(job.ats_id or "")
                     if existing is not None:
-                        if (
-                            existing.title != job.title
-                            or str(existing.url) != str(job.url)
-                        ):
+                        if existing.title != job.title or str(existing.url) != str(job.url):
                             raise ScraperError(
                                 f"ADP returned conflicting duplicate job id {job.ats_id!r}"
                             )
@@ -241,10 +236,9 @@ class ADPWorkforceNowScraper(BaseScraper):
 
             if self.include_descriptions and jobs:
                 semaphore = asyncio.Semaphore(DETAIL_CONCURRENCY)
-                await asyncio.gather(*(
-                    self._enrich_detail(fetch, semaphore, target, job)
-                    for job in jobs
-                ))
+                await asyncio.gather(
+                    *(self._enrich_detail(fetch, semaphore, target, job) for job in jobs)
+                )
 
         return jobs
 
@@ -320,11 +314,7 @@ class ADPWorkforceNowScraper(BaseScraper):
             country_iso=country_iso,
             region=_REGION_BY_COUNTRY.get(country_iso or ""),
             language=target.language.split("_", 1)[0].lower(),
-            is_remote=(
-                True
-                if any("remote" in value.casefold() for value in locations)
-                else None
-            ),
+            is_remote=(True if any("remote" in value.casefold() for value in locations) else None),
             salary_min=salary_min,
             salary_max=salary_max,
             salary_currency=salary_currency,
@@ -344,9 +334,7 @@ def _parse_target(raw_url: str) -> ADPTarget:
     parsed = urlparse(raw_url.strip())
     host = (parsed.hostname or "").casefold()
     if parsed.scheme not in {"http", "https"} or host not in _SUPPORTED_HOSTS:
-        raise ScraperError(
-            "ADP slug must be a public workforcenow.adp.com recruitment URL"
-        )
+        raise ScraperError("ADP slug must be a public workforcenow.adp.com recruitment URL")
     query = parse_qs(parsed.query)
     cid = _first_query_value(query, "cid")
     career_center_id = _first_query_value(query, "ccId")
@@ -436,12 +424,7 @@ def _salary_range(
             if raw_currency and len(raw_currency) == 3:
                 currency = raw_currency.upper()
                 break
-    if (
-        min_value is not None
-        and max_value is not None
-        and max_value > 0
-        and min_value > max_value
-    ):
+    if min_value is not None and max_value is not None and max_value > 0 and min_value > max_value:
         raise ScraperError("ADP returned an inverted positive salary range")
     return min_value, max_value, currency
 

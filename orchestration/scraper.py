@@ -2,7 +2,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List
+from typing import Any, Dict, List
 
 import asyncpg
 from rich.live import Live
@@ -34,7 +34,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("orchestrator")
 
-async def ui_worker(ui_queue: asyncio.Queue, dashboard: Dashboard, live: Live) -> None:
+
+async def ui_worker(
+    ui_queue: asyncio.Queue[Dict[str, Any] | None], dashboard: Dashboard, live: Live
+) -> None:
     while True:
         try:
             msg = await ui_queue.get()
@@ -43,7 +46,7 @@ async def ui_worker(ui_queue: asyncio.Queue, dashboard: Dashboard, live: Live) -
                 break
 
             msg_type = msg.get("type")
-            ats = msg.get("ats")
+            ats = msg.get("ats") or ""
 
             if msg_type == "start":
                 if ats in dashboard.pending:
@@ -71,25 +74,29 @@ async def ui_worker(ui_queue: asyncio.Queue, dashboard: Dashboard, live: Live) -
             ui_queue.task_done()
 
 
-async def get_active_ats_platforms(company_repo: CompanyRepository, cfg: DynamicConfigManager) -> List[ATS]:
-        """
-        Retrieves ATS platforms and orders them by tier.
-        Increases effectiveness of scraping by fetching more relevant jobs from better ATSs first.
-        E.g., Ashby, Greenhouse - Tier 1 (high technical job density), Breezy - Tier 2,  Workday - 3 (usually the longest running tenant, a lot of non technical jobs: nurses, drives, etc.)
-        """
-        db_ats = await company_repo.get_tenants()
-        cfg_ats = cfg.keys()
+async def get_active_ats_platforms(
+    company_repo: CompanyRepository, cfg: DynamicConfigManager
+) -> List[ATS]:
+    """
+    Retrieves ATS platforms and orders them by tier.
+    Increases effectiveness of scraping by fetching more relevant jobs from better ATSs first.
+    E.g., Ashby, Greenhouse - Tier 1 (high technical job density), Breezy - Tier 2,
+    Workday - 3 (usually the longest running tenant,
+    a lot of non technical jobs: nurses, drives, etc.)
+    """
+    db_ats = await company_repo.get_tenants()
+    cfg_ats = cfg.keys()
 
-        seen: set[ATS] = set()
-        result: list[ATS] = []
+    seen: set[ATS] = set()
+    result: list[ATS] = []
 
-        for ats in db_ats:
-            if ats not in seen and (ats.name in cfg_ats or cfg[ats.name].get("singleton")):
-                seen.add(ats)
-                result.append(ats)
+    for ats in db_ats:
+        if ats not in seen and (ats.name in cfg_ats or cfg[ats.name].get("singleton")):
+            seen.add(ats)
+            result.append(ats)
 
-        result.sort(key=lambda x: x.tier)
-        return result
+    result.sort(key=lambda x: x.tier)
+    return result
 
 
 async def main_loop() -> None:
@@ -103,7 +110,7 @@ async def main_loop() -> None:
 
         ats_list = await get_active_ats_platforms(company_repo, cfg)
 
-        ui_queue: asyncio.Queue = asyncio.Queue()
+        ui_queue: asyncio.Queue[Dict[str, Any] | None] = asyncio.Queue()
         dashboard = Dashboard([ats.name for ats in ats_list])
 
         with Live(dashboard.generate_layout(), refresh_per_second=4) as live:
@@ -117,7 +124,7 @@ async def main_loop() -> None:
                 company_repo,
                 description_cache,
                 ui_queue,
-                max_concurrent_ats=5
+                max_concurrent_ats=5,
             )
             await engine.run(ats_list)
 

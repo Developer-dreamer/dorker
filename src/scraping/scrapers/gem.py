@@ -163,14 +163,10 @@ class GemScraper(BaseScraper):
         result = batch[0] or {}
         if result.get("errors"):
             raise CompanyNotFoundError(
-                f"Gem board not found: {self.company_slug} "
-                f"({result['errors'][0].get('message')})"
+                f"Gem board not found: {self.company_slug} ({result['errors'][0].get('message')})"
             )
         data = (result.get("data") or {}).get("oatsExternalJobPostings") or {}
-        return [
-            p for p in (data.get("jobPostings") or [])
-            if isinstance(p, dict)
-        ]
+        return [p for p in (data.get("jobPostings") or []) if isinstance(p, dict)]
 
     async def _enrich_with_details(
         self,
@@ -202,7 +198,10 @@ class GemScraper(BaseScraper):
             ]
             try:
                 response = await fetch.request(
-                    "POST", GRAPHQL_URL, json=payload, handled=_DETAIL_HANDLED,
+                    "POST",
+                    GRAPHQL_URL,
+                    json=payload,
+                    handled=_DETAIL_HANDLED,
                 )
             except ScraperError:
                 return
@@ -222,8 +221,7 @@ class GemScraper(BaseScraper):
                     _apply_detail_to_job(job, detail)
 
         batches = [
-            ext_ids[i:i + DETAIL_BATCH_SIZE]
-            for i in range(0, len(ext_ids), DETAIL_BATCH_SIZE)
+            ext_ids[i : i + DETAIL_BATCH_SIZE] for i in range(0, len(ext_ids), DETAIL_BATCH_SIZE)
         ]
         await asyncio.gather(*(fetch_batch(b) for b in batches))
 
@@ -233,8 +231,7 @@ class GemScraper(BaseScraper):
         job_obj = item.get("job") or {}
         emp_raw = job_obj.get("employmentType") if isinstance(job_obj, dict) else None
         employment_type = (
-            _EMPLOYMENT_TYPE_MAP.get((emp_raw or "").upper())
-            if isinstance(emp_raw, str) else None
+            _EMPLOYMENT_TYPE_MAP.get((emp_raw or "").upper()) if isinstance(emp_raw, str) else None
         )
 
         # Department is nested in ``job.department.name``.
@@ -333,6 +330,7 @@ def _html_unescape_for_desc(value: object, *, cap: int = 25_000) -> str | None:
     Replaces the legacy _strip_html/_html_to_text path for descriptions
     only — title/company/salary fields still use the strip variant."""
     import html as _h
+
     if not isinstance(value, str):
         return None
     out = _h.unescape(value).strip()

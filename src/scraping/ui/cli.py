@@ -1,8 +1,10 @@
 import time
 from dataclasses import dataclass
+
 from rich.console import Group
 from rich.progress import BarColumn, Progress, TextColumn
 from rich.text import Text
+
 
 @dataclass
 class ATSState:
@@ -13,6 +15,7 @@ class ATSState:
     queued: int = 0
     dupes: int = 0
 
+
 @dataclass
 class Counts:
     success: int = 0
@@ -21,6 +24,7 @@ class Counts:
     jobs_scraped: int = 0
     jobs_queued: int = 0
     jobs_deduped: int = 0
+
 
 @dataclass
 class DescCounts:
@@ -54,7 +58,10 @@ class Dashboard:
 
         working_lines = [Text("Working:", style="orange3")]
         for ats, state in self.working.items():
-            line = f"- {ats} [{state.current}/{state.total}] | {state.slug} | {state.found} found, {state.queued} queued, {state.dupes} dupes"
+            line = (
+                f"- {ats} [{state.current}/{state.total}] | {state.slug} | {state.found} found,"
+                f" {state.queued} queued, {state.dupes} dupes"
+            )
             working_lines.append(Text(line, style="orange3"))
         if not self.working:
             working_lines.append(Text("- (none)", style="orange3"))

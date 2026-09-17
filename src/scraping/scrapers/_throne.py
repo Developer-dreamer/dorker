@@ -26,11 +26,7 @@ _EMPLOYMENT_TYPE_PATTERNS: dict[str, EmploymentType] = {
 
 def compose_description(*sources: object) -> str | None:
     """Concatenate description fields using the repository's 25k limit."""
-    parts = [
-        source.strip()
-        for source in sources
-        if isinstance(source, str) and source.strip()
-    ]
+    parts = [source.strip() for source in sources if isinstance(source, str) and source.strip()]
     if not parts:
         return None
     text = re.sub(r"\n{3,}", "\n\n", "\n\n".join(parts)).strip()
@@ -76,11 +72,7 @@ def extract_location(item: dict[str, Any]) -> str | None:
         if parts:
             return ", ".join(parts)
     city_list = item.get("city_list") or []
-    locations = [
-        label
-        for entry in city_list
-        if (label := extract_label(entry)) is not None
-    ]
+    locations = [label for entry in city_list if (label := extract_label(entry)) is not None]
     return "; ".join(dict.fromkeys(locations)) or None
 
 

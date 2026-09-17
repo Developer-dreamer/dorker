@@ -85,20 +85,15 @@ class HrmosScraper(BaseScraper):
                 html = await fetch.get_text(url, params={"page": page})
                 parsed = self._parse_page(html)
                 if parsed.total != first.total or parsed.company != first.company:
-                    raise ScraperError(
-                        f"HRMOS ({self.company_slug}) changed while paginating"
-                    )
+                    raise ScraperError(f"HRMOS ({self.company_slug}) changed while paginating")
                 jobs.extend(parsed.jobs)
 
         job_ids = [job.ats_id for job in jobs]
         if len(job_ids) != len(set(job_ids)):
-            raise ScraperError(
-                f"HRMOS ({self.company_slug}) returned duplicate job IDs"
-            )
+            raise ScraperError(f"HRMOS ({self.company_slug}) returned duplicate job IDs")
         if len(jobs) != first.total:
             raise ScraperError(
-                f"HRMOS ({self.company_slug}) expected {first.total} jobs, "
-                f"received {len(jobs)}"
+                f"HRMOS ({self.company_slug}) expected {first.total} jobs, received {len(jobs)}"
             )
         return jobs
 
@@ -107,9 +102,7 @@ class HrmosScraper(BaseScraper):
         company_node = soup.select_one(".sg-corporate-name")
         count_node = soup.select_one(".pg-count")
         if company_node is None or count_node is None:
-            raise ScraperError(
-                f"HRMOS ({self.company_slug}) returned an unrecognized careers page"
-            )
+            raise ScraperError(f"HRMOS ({self.company_slug}) returned an unrecognized careers page")
 
         company = _COMPANY_SUFFIX_RE.sub(
             "",
@@ -117,9 +110,7 @@ class HrmosScraper(BaseScraper):
         ).strip()
         count_match = _COUNT_RE.search(count_node.get_text(" ", strip=True))
         if not company or count_match is None:
-            raise ScraperError(
-                f"HRMOS ({self.company_slug}) omitted page metadata"
-            )
+            raise ScraperError(f"HRMOS ({self.company_slug}) omitted page metadata")
         total = int(count_match.group(1).replace(",", ""))
         displayed = int(count_match.group(2).replace(",", ""))
         company_options = _company_options(soup)
@@ -144,34 +135,24 @@ class HrmosScraper(BaseScraper):
         link = card.select_one('a[href*="/jobs/"]')
         title_node = card.select_one("h2")
         if link is None or title_node is None:
-            raise ScraperError(
-                f"HRMOS ({self.company_slug}) returned a malformed job card"
-            )
+            raise ScraperError(f"HRMOS ({self.company_slug}) returned a malformed job card")
         title = title_node.get_text(" ", strip=True)
         job_id, job_url = _trusted_job_url(
             link.get("href"),
             tenant=self.company_slug,
         )
         if not title:
-            raise ScraperError(
-                f"HRMOS ({self.company_slug}) job {job_id} omitted its title"
-            )
+            raise ScraperError(f"HRMOS ({self.company_slug}) job {job_id} omitted its title")
 
         tag_nodes = card.select(".sg-tags li")
-        tags = [
-            tag
-            for node in tag_nodes
-            if (tag := node.get_text(" ", strip=True))
-        ]
+        tags = [tag for node in tag_nodes if (tag := node.get_text(" ", strip=True))]
         company = next(
             (tag for tag in tags if tag in company_options),
             default_company,
         )
         location_node = card.select_one(".sg-tag-location")
         location = (
-            location_node.get_text(" ", strip=True)
-            if location_node is not None
-            else ""
+            location_node.get_text(" ", strip=True) if location_node is not None else ""
         ) or None
         commitment = next(
             (tag for tag in tags if tag in _EMPLOYMENT_TYPES),
@@ -185,11 +166,7 @@ class HrmosScraper(BaseScraper):
         )
         remote_text = " ".join(part for part in (title, location) if part)
         country_iso = "JP" if location and _JAPAN_LOCATION_RE.search(location) else None
-        raw_tags = [
-            tag
-            for tag in tags
-            if tag != location and tag != company and tag != commitment
-        ]
+        raw_tags = [tag for tag in tags if tag != location and tag != company and tag != commitment]
 
         return Job(
             url=job_url,

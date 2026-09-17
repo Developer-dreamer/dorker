@@ -90,13 +90,9 @@ class PaylocityScraper(BaseScraper):
         )
         self.board_id = _normalize_board_id(company_slug)
         self.company_name = (
-            company_name.strip()
-            if isinstance(company_name, str) and company_name.strip()
-            else None
+            company_name.strip() if isinstance(company_name, str) and company_name.strip() else None
         )
-        self.listing_url = (
-            f"{BASE_URL}/Recruiting/Jobs/All/{self.board_id}"
-        )
+        self.listing_url = f"{BASE_URL}/Recruiting/Jobs/All/{self.board_id}"
 
     async def afetch(self) -> list[Job]:
         async with self.make_fetcher() as fetch:
@@ -114,8 +110,7 @@ class PaylocityScraper(BaseScraper):
         completed = [job for job in enriched if job is not None]
         if jobs and not completed:
             raise ScraperError(
-                f"Paylocity ({self.board_id}) lost every listed job "
-                "during detail validation"
+                f"Paylocity ({self.board_id}) lost every listed job during detail validation"
             )
         return completed
 
@@ -139,15 +134,14 @@ class PaylocityScraper(BaseScraper):
     def _parse_listing(self, payload: dict[str, Any]) -> list[Job]:
         rows = payload.get("Jobs")
         if not isinstance(rows, list):
-            raise ScraperError(
-                f"Paylocity ({self.board_id}) omitted the Jobs list"
-            )
+            raise ScraperError(f"Paylocity ({self.board_id}) omitted the Jobs list")
         module_title = _string(payload.get("ModuleTitle"))
         module_id = _string(payload.get("ModuleId"))
         fallback_company = self.company_name or (
             module_title
             if module_title
-            and module_title.casefold() not in {
+            and module_title.casefold()
+            not in {
                 "career opportunities",
                 "employment opportunities",
                 "job opportunities",
@@ -159,22 +153,16 @@ class PaylocityScraper(BaseScraper):
         seen_ids: set[int] = set()
         for index, row in enumerate(rows):
             if not isinstance(row, dict):
-                raise ScraperError(
-                    f"Paylocity listing row {index} was not an object"
-                )
+                raise ScraperError(f"Paylocity listing row {index} was not an object")
             is_internal = row.get("IsInternal")
             if not isinstance(is_internal, bool):
-                raise ScraperError(
-                    f"Paylocity row {index} omitted the external-job flag"
-                )
+                raise ScraperError(f"Paylocity row {index} omitted the external-job flag")
             if is_internal:
                 continue
 
             job_id = _job_id(row.get("JobId"))
             if job_id in seen_ids:
-                raise ScraperError(
-                    f"Paylocity returned duplicate job id {job_id}"
-                )
+                raise ScraperError(f"Paylocity returned duplicate job id {job_id}")
             seen_ids.add(job_id)
             title = _required_string(row, "JobTitle")
             location_data = row.get("JobLocation")
@@ -186,11 +174,7 @@ class PaylocityScraper(BaseScraper):
             is_remote = (
                 explicit_remote
                 if isinstance(explicit_remote, bool)
-                else (
-                    True
-                    if location and "remote" in location.casefold()
-                    else None
-                )
+                else (True if location and "remote" in location.casefold() else None)
             )
             raw = {
                 key: value
@@ -199,31 +183,31 @@ class PaylocityScraper(BaseScraper):
                     "module_id": module_id,
                     "module_title": module_title,
                     "location_id": (
-                        location_data.get("LocationId")
-                        if isinstance(location_data, dict)
-                        else None
+                        location_data.get("LocationId") if isinstance(location_data, dict) else None
                     ),
                     "indeed_remote_type": row.get("IndeedRemoteType"),
                 }.items()
                 if value not in (None, "")
             }
 
-            jobs.append(Job(
-                url=f"{BASE_URL}/Recruiting/Jobs/Details/{job_id}",
-                title=title,
-                company=fallback_company,
-                ats_type=ATSType.PAYLOCITY,
-                ats_id=f"{self.board_id}:{job_id}",
-                location=location,
-                country_iso=_listing_country(location_data),
-                is_remote=is_remote,
-                department=_string(row.get("HiringDepartment")),
-                posted_at=_parse_date(row.get("PublishedDate")),
-                fetched_at=datetime.now(tz=UTC),
-                requisition_id=str(job_id),
-                apply_url=f"{BASE_URL}/Recruiting/Jobs/Apply/{job_id}",
-                raw=raw or None,
-            ))
+            jobs.append(
+                Job(
+                    url=f"{BASE_URL}/Recruiting/Jobs/Details/{job_id}",
+                    title=title,
+                    company=fallback_company,
+                    ats_type=ATSType.PAYLOCITY,
+                    ats_id=f"{self.board_id}:{job_id}",
+                    location=location,
+                    country_iso=_listing_country(location_data),
+                    is_remote=is_remote,
+                    department=_string(row.get("HiringDepartment")),
+                    posted_at=_parse_date(row.get("PublishedDate")),
+                    fetched_at=datetime.now(tz=UTC),
+                    requisition_id=str(job_id),
+                    apply_url=f"{BASE_URL}/Recruiting/Jobs/Apply/{job_id}",
+                    raw=raw or None,
+                )
+            )
         return jobs
 
     async def _enrich_detail(
@@ -241,8 +225,7 @@ class PaylocityScraper(BaseScraper):
                 )
         except ScraperError as exc:
             logger.warning(
-                "Retaining Paylocity job %s without detail metadata after "
-                "detail failure: %s",
+                "Retaining Paylocity job %s without detail metadata after detail failure: %s",
                 job.ats_id,
                 exc,
             )
@@ -281,12 +264,9 @@ def _normalize_board_id(value: str) -> str:
             or parsed.query
             or parsed.fragment
             or len(segments) != 4
-            or [segment.casefold() for segment in segments[:3]]
-            != ["recruiting", "jobs", "all"]
+            or [segment.casefold() for segment in segments[:3]] != ["recruiting", "jobs", "all"]
         ):
-            raise ValueError(
-                "Paylocity URL must be an https recruiting job-list URL"
-            )
+            raise ValueError("Paylocity URL must be an https recruiting job-list URL")
         raw = segments[3]
     try:
         return str(uuid.UUID(raw))
@@ -297,16 +277,12 @@ def _normalize_board_id(value: str) -> str:
 def _extract_page_data(html_text: str) -> dict[str, Any]:
     matches = list(_PAGE_DATA_RE.finditer(html_text))
     if len(matches) != 1:
-        raise ScraperError(
-            "Paylocity listing must contain exactly one window.pageData payload"
-        )
+        raise ScraperError("Paylocity listing must contain exactly one window.pageData payload")
     start = matches[0].end()
     try:
         payload, consumed = json.JSONDecoder().raw_decode(html_text[start:])
     except json.JSONDecodeError as exc:
-        raise ScraperError(
-            f"Paylocity listing pageData was not valid JSON: {exc}"
-        ) from exc
+        raise ScraperError(f"Paylocity listing pageData was not valid JSON: {exc}") from exc
     if not html_text[start + consumed :].lstrip().startswith(";"):
         raise ScraperError("Paylocity listing pageData was not terminated")
     if not isinstance(payload, dict):
@@ -319,16 +295,12 @@ def _apply_detail(job: Job, html_text: str) -> None:
     if posting is None:
         description = _find_legacy_description(html_text)
         if description is None:
-            raise ScraperError(
-                f"Paylocity detail page for {job.ats_id} omitted job content"
-            )
+            raise ScraperError(f"Paylocity detail page for {job.ats_id} omitted job content")
         job.description = description
         return
     description = posting.get("description")
     if not isinstance(description, str) or not description.strip():
-        raise ScraperError(
-            f"Paylocity detail page for {job.ats_id} omitted a description"
-        )
+        raise ScraperError(f"Paylocity detail page for {job.ats_id} omitted a description")
     job.description = description.strip()
 
     title = _string(posting.get("title"))
@@ -391,8 +363,7 @@ def _parse_html(html_text: str) -> BeautifulSoup:
         from bs4 import BeautifulSoup
     except ImportError as exc:
         raise ScraperError(
-            "Paylocity scraper requires beautifulsoup4; "
-            "install `ats-scrapers[scrapers]`"
+            "Paylocity scraper requires beautifulsoup4; install `ats-scrapers[scrapers]`"
         ) from exc
     return BeautifulSoup(html_text, "html.parser")
 
@@ -475,8 +446,7 @@ def _employment_type(value: object) -> EmploymentType | None:
 def _is_remote(value: object) -> bool:
     values = value if isinstance(value, list) else [value]
     return any(
-        isinstance(item, str)
-        and item.strip().upper() in {"REMOTE", "TELECOMMUTE"}
+        isinstance(item, str) and item.strip().upper() in {"REMOTE", "TELECOMMUTE"}
         for item in values
     )
 
@@ -487,12 +457,8 @@ def _apply_salary(job: Job, value: object) -> None:
     salary_value = value.get("value")
     if not isinstance(salary_value, dict):
         return
-    minimum = _to_float(
-        salary_value.get("minValue") or salary_value.get("value")
-    )
-    maximum = _to_float(
-        salary_value.get("maxValue") or salary_value.get("value")
-    )
+    minimum = _to_float(salary_value.get("minValue") or salary_value.get("value"))
+    maximum = _to_float(salary_value.get("maxValue") or salary_value.get("value"))
     currency = _string(value.get("currency"))
     unit = _string(salary_value.get("unitText"))
     if minimum is not None:

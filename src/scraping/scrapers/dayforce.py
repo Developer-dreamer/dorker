@@ -75,9 +75,7 @@ _COUNTRY_CODES: tuple[tuple[str, str, str], ...] = (
     ("ZA", "ZAF", "Africa"),
 )
 _COUNTRY_METADATA: dict[str, tuple[str, str]] = {
-    code: (iso2, region)
-    for iso2, iso3, region in _COUNTRY_CODES
-    for code in (iso2, iso3)
+    code: (iso2, region) for iso2, iso3, region in _COUNTRY_CODES for code in (iso2, iso3)
 }
 
 
@@ -108,9 +106,7 @@ class DayforceScraper(BaseScraper):
         )
         self.tenant, self.board = _normalize_tenant_board(company_slug)
         self.company_name = (
-            company_name.strip()
-            if isinstance(company_name, str) and company_name.strip()
-            else None
+            company_name.strip() if isinstance(company_name, str) and company_name.strip() else None
         )
 
     async def afetch(self) -> list[Job]:
@@ -124,23 +120,18 @@ class DayforceScraper(BaseScraper):
                 },
             )
         if not isinstance(payload, list):
-            raise ScraperError(
-                f"Dayforce ({self.tenant}/{self.board}) returned a non-list feed"
-            )
+            raise ScraperError(f"Dayforce ({self.tenant}/{self.board}) returned a non-list feed")
 
         variants_by_id: dict[str, list[tuple[Job, dict[str, Any]]]] = {}
         for index, item in enumerate(payload):
             if not isinstance(item, dict):
-                raise ScraperError(
-                    f"Dayforce feed row {index} was not an object"
-                )
+                raise ScraperError(f"Dayforce feed row {index} was not an object")
             job = self._parse_job(item)
             if not job.ats_id:
                 raise ScraperError(f"Dayforce feed row {index} omitted its job id")
             variants_by_id.setdefault(job.ats_id, []).append((job, item))
         return [
-            _select_job_variant(ats_id, variants)
-            for ats_id, variants in variants_by_id.items()
+            _select_job_variant(ats_id, variants) for ats_id, variants in variants_by_id.items()
         ]
 
     def _parse_job(self, item: dict[str, Any]) -> Job:
@@ -171,9 +162,7 @@ class DayforceScraper(BaseScraper):
         )
         employment_label = _string(item.get("EmploymentIndicator"))
         description = (
-            _clean_description(item.get("Description"))
-            if self.include_descriptions
-            else None
+            _clean_description(item.get("Description")) if self.include_descriptions else None
         )
         raw = {
             key: value
@@ -230,39 +219,23 @@ def _select_job_variant(
     companies: set[str] = set()
     for job, item in variants:
         culture = (_string(item.get("CultureCode")) or "").casefold()
-        cultures_to_titles.setdefault(culture, set()).add(
-            " ".join(job.title.split()).casefold()
-        )
+        cultures_to_titles.setdefault(culture, set()).add(" ".join(job.title.split()).casefold())
         feed_company = (
-            _string(item.get("CompanyName"))
-            or _string(item.get("ParentCompanyName"))
-            or ""
+            _string(item.get("CompanyName")) or _string(item.get("ParentCompanyName")) or ""
         )
         companies.add(" ".join(feed_company.split()).casefold())
 
-    if len(companies) != 1 or any(
-        len(titles) != 1 for titles in cultures_to_titles.values()
-    ):
-        raise ScraperError(
-            f"Dayforce returned conflicting duplicate job id {ats_id!r}"
-        )
+    if len(companies) != 1 or any(len(titles) != 1 for titles in cultures_to_titles.values()):
+        raise ScraperError(f"Dayforce returned conflicting duplicate job id {ats_id!r}")
 
     selected_job, _ = max(
         variants,
         key=lambda variant: _variant_rank(*variant),
     )
     cultures = sorted(
-        {
-            culture
-            for _, item in variants
-            if (culture := _string(item.get("CultureCode")))
-        }
+        {culture for _, item in variants if (culture := _string(item.get("CultureCode")))}
     )
-    locations = list(
-        dict.fromkeys(
-            job.location for job, _ in variants if job.location
-        )
-    )
+    locations = list(dict.fromkeys(job.location for job, _ in variants if job.location))
     raw = dict(selected_job.raw or {})
     if len(cultures) > 1:
         raw["AvailableCultures"] = cultures
@@ -298,9 +271,7 @@ def _normalize_tenant_board(value: str) -> tuple[str, str]:
             or parsed.query
             or parsed.fragment
         ):
-            raise ValueError(
-                "Dayforce URL must use https://jobs.dayforcehcm.com"
-            )
+            raise ValueError("Dayforce URL must use https://jobs.dayforcehcm.com")
         segments = [segment for segment in parsed.path.split("/") if segment]
     else:
         segments = [segment for segment in raw.split("/") if segment]
@@ -309,10 +280,7 @@ def _normalize_tenant_board(value: str) -> tuple[str, str]:
         if len(parts) < 2:
             return None
         tenant, board = parts[:2]
-        if (
-            not _SEGMENT_RE.fullmatch(tenant)
-            or not _SEGMENT_RE.fullmatch(board)
-        ):
+        if not _SEGMENT_RE.fullmatch(tenant) or not _SEGMENT_RE.fullmatch(board):
             return None
         remainder = [segment.casefold() for segment in parts[2:]]
         if remainder and not (
@@ -362,18 +330,12 @@ def _validated_details_url(
                 or segments[2].casefold() != "jobs"
                 or segments[3] != reference
             ):
-                raise ScraperError(
-                    f"Dayforce ({tenant}/{board}) returned an unsafe job URL"
-                )
+                raise ScraperError(f"Dayforce ({tenant}/{board}) returned an unsafe job URL")
             return HttpUrl(candidate)
         except (ValidationError, ValueError) as exc:
-            raise ScraperError(
-                f"Dayforce ({tenant}/{board}) returned an unsafe job URL"
-            ) from exc
+            raise ScraperError(f"Dayforce ({tenant}/{board}) returned an unsafe job URL") from exc
     locale = culture if culture and _LOCALE_RE.fullmatch(culture) else "en-US"
-    return HttpUrl(
-        f"https://{CAREERS_HOST}/{locale}/{tenant}/{board}/jobs/{reference}"
-    )
+    return HttpUrl(f"https://{CAREERS_HOST}/{locale}/{tenant}/{board}/jobs/{reference}")
 
 
 def _validated_apply_url(

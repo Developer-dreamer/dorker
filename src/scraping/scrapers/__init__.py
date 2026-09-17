@@ -25,6 +25,8 @@ from src.scraping.scrapers.bytedance import BytedanceScraper
 from src.scraping.scrapers.cornerstone import CornerstoneScraper
 from src.scraping.scrapers.darwinbox import DarwinboxScraper
 from src.scraping.scrapers.dayforce import DayforceScraper
+from src.scraping.scrapers.djinni import DjinniScraper
+from src.scraping.scrapers.dou_ua import DOUScraper
 from src.scraping.scrapers.eightfold import EightfoldScraper
 from src.scraping.scrapers.eures import EuresScraper
 from src.scraping.scrapers.gem import GemScraper
@@ -79,9 +81,6 @@ from src.scraping.scrapers.weworkremotely import WeWorkRemotelyScraper
 from src.scraping.scrapers.workable import WorkableScraper
 from src.scraping.scrapers.workday import WorkdayScraper
 from src.scraping.scrapers.ycombinator import YCombinatorScraper
-from src.scraping.scrapers.dou_ua import DOUScraper
-from src.scraping.scrapers.djinni import DjinniScraper
-
 
 __all__ = [
     "ADPWorkforceNowScraper",

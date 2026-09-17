@@ -198,9 +198,7 @@ class SuccessFactorsScraper(BaseScraper):
         try:
             root = _parse_xml(xml_text)
         except ET.ParseError as exc:
-            raise ScraperError(
-                f"SuccessFactors returned malformed XML: {exc}"
-            ) from exc
+            raise ScraperError(f"SuccessFactors returned malformed XML: {exc}") from exc
         if root.tag != "Job-Listing":
             raise ScraperError(
                 f"SuccessFactors returned non-job-listing XML for "
@@ -218,9 +216,7 @@ class SuccessFactorsScraper(BaseScraper):
             title_raw = _first_text(item.findtext("JobTitle"))
             if not requisition_id or not title_raw or requisition_id in seen:
                 continue
-            title, title_location = _split_legacy_title_location(
-                html.unescape(title_raw)
-            )
+            title, title_location = _split_legacy_title_location(html.unescape(title_raw))
             seen.add(requisition_id)
             job_url = urlunparse(
                 (
@@ -228,18 +224,14 @@ class SuccessFactorsScraper(BaseScraper):
                     feed_host,
                     "/sfcareer/jobreqcareer",
                     "",
-                    urlencode(
-                        {"jobId": requisition_id, "company": company_id}
-                    ),
+                    urlencode({"jobId": requisition_id, "company": company_id}),
                     "",
                 )
             )
             description = None
             if self.include_descriptions:
                 replacements = {
-                    child.tag: value
-                    for child in item
-                    if (value := _legacy_field_value(child))
+                    child.tag: value for child in item if (value := _legacy_field_value(child))
                 }
                 replacements["id"] = requisition_id
                 description = _clean_description(
@@ -272,9 +264,7 @@ class SuccessFactorsScraper(BaseScraper):
         try:
             root = _parse_xml(xml_text)
         except ET.ParseError as exc:
-            raise ScraperError(
-                f"SuccessFactors returned malformed XML: {exc}"
-            ) from exc
+            raise ScraperError(f"SuccessFactors returned malformed XML: {exc}") from exc
 
         # Some tenants front the feed with an HTML error page that parses
         # as XML but isn't RSS. Catch that.
@@ -303,9 +293,7 @@ class SuccessFactorsScraper(BaseScraper):
             return title.strip()
         return self.company_slug
 
-    def _parse_item(
-        self, item: ET.Element, *, company: str, host: str
-    ) -> Job | None:
+    def _parse_item(self, item: ET.Element, *, company: str, host: str) -> Job | None:
         link = (item.findtext("link") or "").strip()
         if not link:
             return None
@@ -439,11 +427,7 @@ def _legacy_labeled_fields(item: ET.Element) -> list[tuple[str, str]]:
     for child in item:
         label = _first_text(child.findtext("label"))
         value = _first_text(child.findtext("value"))
-        if (
-            not label
-            or not value
-            or _legacy_value_is_empty(value)
-        ):
+        if not label or not value or _legacy_value_is_empty(value):
             continue
         fields.append((label, value))
     return fields
@@ -451,10 +435,7 @@ def _legacy_labeled_fields(item: ET.Element) -> list[tuple[str, str]]:
 
 def _legacy_value_is_empty(value: str) -> bool:
     normalized = re.sub(r"\s+", " ", value).strip().casefold()
-    return (
-        normalized in _EMPTY_LEGACY_VALUES
-        or "not applicable" in normalized
-    )
+    return normalized in _EMPTY_LEGACY_VALUES or "not applicable" in normalized
 
 
 def _legacy_location(item: ET.Element) -> str | None:
@@ -491,10 +472,7 @@ def _legacy_location(item: ET.Element) -> str | None:
         atomic_values = [*cities, *states, *countries]
         if "," in generic or (
             len(atomic_values) >= 2
-            and all(
-                value.casefold() in generic_normalized
-                for value in atomic_values
-            )
+            and all(value.casefold() in generic_normalized for value in atomic_values)
         ):
             return html.unescape(generic)
 
@@ -603,9 +581,7 @@ def _parse_legacy_date(
     slash_format = "%d/%m/%Y" if day_first else "%m/%d/%Y"
     for date_format in (slash_format, "%Y-%m-%d"):
         try:
-            return datetime.strptime(value.strip(), date_format).replace(
-                tzinfo=UTC
-            )
+            return datetime.strptime(value.strip(), date_format).replace(tzinfo=UTC)
         except ValueError:
             continue
     return None

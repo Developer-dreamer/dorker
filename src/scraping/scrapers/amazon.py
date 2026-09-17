@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from typing import Any, ClassVar
 
 FACET_URL = "https://www.amazon.jobs/api/jobs/search"  # POST — facet discovery only
-SEARCH_URL = "https://www.amazon.jobs/en/search.json"   # GET — actual job fetching
+SEARCH_URL = "https://www.amazon.jobs/en/search.json"  # GET — actual job fetching
 PAGE_SIZE = 100
 PAGINATION_CAP = 10_000  # Amazon stops returning hits past offset+limit = 10K.
 MAX_CONCURRENCY = 6
@@ -127,9 +127,7 @@ class AmazonScraper(BaseScraper):
             async def category_bucket(name: str, count: int) -> None:
                 local_total = min(count, PAGINATION_CAP)
                 offsets = list(range(0, local_total, PAGE_SIZE))
-                await asyncio.gather(*(
-                    get_page({"business_category[]": name}, o) for o in offsets
-                ))
+                await asyncio.gather(*(get_page({"business_category[]": name}, o) for o in offsets))
 
             await asyncio.gather(*(category_bucket(n, c) for n, c in categories))
             return all_jobs
@@ -151,10 +149,7 @@ class AmazonScraper(BaseScraper):
         # an array). GET-endpoint payloads are flat. Handle both.
         fields = hit.get("fields") if isinstance(hit, dict) else None
         if isinstance(fields, dict):
-            item = {
-                k: (v[0] if isinstance(v, list) and v else v)
-                for k, v in fields.items()
-            }
+            item = {k: (v[0] if isinstance(v, list) and v else v) for k, v in fields.items()}
         else:
             item = hit if isinstance(hit, dict) else {}
 
@@ -162,12 +157,18 @@ class AmazonScraper(BaseScraper):
         # job number visible on every posting). Avoid the opaque internal
         # uuid in ``id`` since it isn't human-meaningful.
         req_id = str(
-            item.get("icimsJobId") or item.get("id_icims")
-            or item.get("jobCode") or item.get("id") or hit.get("id", "")
+            item.get("icimsJobId")
+            or item.get("id_icims")
+            or item.get("jobCode")
+            or item.get("id")
+            or hit.get("id", "")
         )
         path = (
-            item.get("urlNextStep") or item.get("url_next_step")
-            or item.get("job_path") or item.get("jobUrl") or ""
+            item.get("urlNextStep")
+            or item.get("url_next_step")
+            or item.get("job_path")
+            or item.get("jobUrl")
+            or ""
         )
         if path and not path.startswith("http"):
             url = f"https://www.amazon.jobs{path}"
@@ -195,8 +196,10 @@ class AmazonScraper(BaseScraper):
         # (``"Full-time"``, ``"Part-time"``); ``employment_type`` is a
         # strict enum, so map separately.
         schedule = (
-            item.get("job_schedule_type") or item.get("scheduleType")
-            or item.get("schedule") or None
+            item.get("job_schedule_type")
+            or item.get("scheduleType")
+            or item.get("schedule")
+            or None
         )
         employment_type = _map_employment_type(schedule, item)
 
@@ -208,13 +211,14 @@ class AmazonScraper(BaseScraper):
         company = "Amazon"
         title = item.get("title") or item.get("jobTitle") or "Untitled"
         posted_at = _parse_amazon_date(
-            item.get("posted_date") or item.get("postedDate")
-            or item.get("createdDate") or item.get("created_date")
+            item.get("posted_date")
+            or item.get("postedDate")
+            or item.get("createdDate")
+            or item.get("created_date")
         )
         team_label = _extract_team_label(item)
         department = (
-            item.get("job_category") or item.get("jobCategory")
-            or item.get("teamCategory") or None
+            item.get("job_category") or item.get("jobCategory") or item.get("teamCategory") or None
         )
         primary_location = (
             item.get("normalizedLocation")
@@ -230,17 +234,24 @@ class AmazonScraper(BaseScraper):
         # office posting. Single-location jobs keep the bare req_id.
         rows: list[Job] = []
         for idx, loc in enumerate(locations):
-            ats_id = (
-                req_id if (len(locations) == 1 or idx == 0)
-                else f"{req_id}@loc{idx}"
-            )
+            ats_id = req_id if (len(locations) == 1 or idx == 0) else f"{req_id}@loc{idx}"
             raw: dict[str, Any] = {}
             for src in (
-                "business_category", "businessCategory", "job_family",
-                "jobFamily", "basic_qualifications",
-                "preferred_qualifications", "city", "state", "country_code",
-                "country", "is_intern", "is_manager", "team_id",
-                "primary_search_label", "updated_time",
+                "business_category",
+                "businessCategory",
+                "job_family",
+                "jobFamily",
+                "basic_qualifications",
+                "preferred_qualifications",
+                "city",
+                "state",
+                "country_code",
+                "country",
+                "is_intern",
+                "is_manager",
+                "team_id",
+                "primary_search_label",
+                "updated_time",
             ):
                 v = item.get(src)
                 if v not in (None, "", []):
@@ -249,24 +260,26 @@ class AmazonScraper(BaseScraper):
                 raw["all_locations"] = [loc for loc in locations if loc]
                 raw["location_index"] = idx
 
-            rows.append(Job(
-                url=url,
-                title=title,
-                company=company,
-                ats_type=ATSType.AMAZON,
-                ats_id=ats_id,
-                location=loc,
-                department=department,
-                team=team_label,
-                description=description,
-                commitment=schedule,
-                employment_type=employment_type,
-                requisition_id=req_id or None,
-                apply_url=apply_url if apply_url != url else None,
-                posted_at=posted_at,
-                fetched_at=datetime.now(UTC),
-                raw=raw or None,
-            ))
+            rows.append(
+                Job(
+                    url=url,
+                    title=title,
+                    company=company,
+                    ats_type=ATSType.AMAZON,
+                    ats_id=ats_id,
+                    location=loc,
+                    department=department,
+                    team=team_label,
+                    description=description,
+                    commitment=schedule,
+                    employment_type=employment_type,
+                    requisition_id=req_id or None,
+                    apply_url=apply_url if apply_url != url else None,
+                    posted_at=posted_at,
+                    fetched_at=datetime.now(UTC),
+                    raw=raw or None,
+                )
+            )
         return rows
 
 
@@ -361,7 +374,8 @@ def _extract_team_label(item: dict[str, object]) -> str | None:
 
 
 def _map_employment_type(
-    schedule: object, item: dict[str, object],
+    schedule: object,
+    item: dict[str, object],
 ) -> str | None:
     """Coerce Amazon's free-form schedule into the Job model's strict
     enum. ``is_intern`` short-circuits to ``INTERN`` regardless of the
@@ -382,5 +396,3 @@ def _map_employment_type(
     if "temp" in s:
         return "TEMPORARY"
     return None
-
-

@@ -58,15 +58,11 @@ class GupyScraper(BaseScraper):
 
     async def afetch(self) -> list[Job]:
         async with self.make_fetcher() as fetch:
-            html = await fetch.get_text(
-                LISTING_TEMPLATE.format(slug=self.company_slug)
-            )
+            html = await fetch.get_text(LISTING_TEMPLATE.format(slug=self.company_slug))
             page_props = self._extract_page_props(html)
             jobs_payload = page_props.get("jobs")
             if not isinstance(jobs_payload, list):
-                raise ScraperError(
-                    f"Gupy ({self.company_slug}) listing missing jobs array"
-                )
+                raise ScraperError(f"Gupy ({self.company_slug}) listing missing jobs array")
 
             company = _extract_tenant_name(page_props) or self.company_slug
             jobs: list[Job] = []
@@ -83,10 +79,7 @@ class GupyScraper(BaseScraper):
             if self.include_descriptions and jobs:
                 semaphore = asyncio.Semaphore(DETAIL_CONCURRENCY)
                 await asyncio.gather(
-                    *(
-                        self._enrich_description(fetch, semaphore, job)
-                        for job in jobs
-                    )
+                    *(self._enrich_description(fetch, semaphore, job) for job in jobs)
                 )
             return jobs
 
@@ -128,8 +121,7 @@ class GupyScraper(BaseScraper):
         page_props = _safe_extract_page_props(html)
         if page_props is None:
             raise ScraperError(
-                f"Gupy ({self.company_slug}) returned HTML without "
-                "a parseable __NEXT_DATA__ block"
+                f"Gupy ({self.company_slug}) returned HTML without a parseable __NEXT_DATA__ block"
             )
         return page_props
 
@@ -140,22 +132,12 @@ class GupyScraper(BaseScraper):
         if not ats_id or not title:
             return None
 
-        workplace = (
-            item.get("workplace")
-            if isinstance(item.get("workplace"), dict)
-            else {}
-        )
-        address = (
-            workplace.get("address")
-            if isinstance(workplace.get("address"), dict)
-            else {}
-        )
+        workplace = item.get("workplace") if isinstance(item.get("workplace"), dict) else {}
+        address = workplace.get("address") if isinstance(workplace.get("address"), dict) else {}
         workplace_type = workplace.get("workplaceType")
         vacancy_type = item.get("type")
         employment_type = (
-            _EMPLOYMENT_TYPE_MAP.get(vacancy_type)
-            if isinstance(vacancy_type, str)
-            else None
+            _EMPLOYMENT_TYPE_MAP.get(vacancy_type) if isinstance(vacancy_type, str) else None
         )
 
         raw: dict[str, Any] = {}
@@ -262,8 +244,7 @@ def _compose_description(detail: dict[str, Any]) -> str | None:
             "prerequisites",
             "relevantExperiences",
         )
-        if isinstance((value := detail.get(key)), str)
-        and (text := _strip_html(value))
+        if isinstance((value := detail.get(key)), str) and (text := _strip_html(value))
     ]
     return "\n\n".join(chunks)[:25_000] or None
 

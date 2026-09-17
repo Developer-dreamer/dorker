@@ -137,8 +137,7 @@ class TheHubScraper(BaseScraper):
         is_remote = bool(item.get("isRemote"))
         description = _clean_description(item.get("description"))
         posted_at = _parse_iso(
-            item.get("publishedAt") or item.get("approvedAt")
-            or item.get("createdAt")
+            item.get("publishedAt") or item.get("approvedAt") or item.get("createdAt")
         )
 
         # The Hub's ``link`` field is the apply URL (often a Workable /
@@ -147,9 +146,7 @@ class TheHubScraper(BaseScraper):
         # Some postings ship link='' — must reject those before the
         # Pydantic HttpUrl validator does (it rejects empty strings).
         apply_raw = item.get("link")
-        apply_url = (
-            apply_raw.strip() if isinstance(apply_raw, str) else None
-        )
+        apply_url = apply_raw.strip() if isinstance(apply_raw, str) else None
         if not apply_url or not apply_url.startswith(("http://", "https://")):
             apply_url = None
 
@@ -157,7 +154,8 @@ class TheHubScraper(BaseScraper):
         # or a salaryRange object. We only set the canonical fields when
         # we have numeric values.
         salary_min, salary_max, salary_currency = _parse_salary(
-            item.get("salary"), item.get("salaryRange"),
+            item.get("salary"),
+            item.get("salaryRange"),
         )
 
         raw: dict[str, Any] = {}
@@ -201,8 +199,7 @@ def _format_location(loc: dict[str, Any]) -> str | None:
     if address:
         return address
     parts = [
-        (loc.get(k) or "").strip()
-        for k in ("locality", "country") if isinstance(loc.get(k), str)
+        (loc.get(k) or "").strip() for k in ("locality", "country") if isinstance(loc.get(k), str)
     ]
     parts = [p for p in parts if p]
     return ", ".join(parts) or None
@@ -242,7 +239,8 @@ def _parse_iso(value: object) -> datetime | None:
 
 
 def _parse_salary(
-    salary: object, salary_range: object,
+    salary: object,
+    salary_range: object,
 ) -> tuple[float | None, float | None, str | None]:
     """``salary`` is a free-text label ('competitive', 'undisclosed',
     sometimes a real number); ``salaryRange`` is structured. Prefer

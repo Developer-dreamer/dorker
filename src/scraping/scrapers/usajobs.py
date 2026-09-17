@@ -102,7 +102,8 @@ class USAJobsScraper(BaseScraper):
                 # Termination: stop when we've drained the reported page count.
                 page_total = (
                     int(result.get("UserArea", {}).get("NumberOfPages") or 0)
-                    if isinstance(result.get("UserArea"), dict) else 0
+                    if isinstance(result.get("UserArea"), dict)
+                    else 0
                 )
                 if page_total and page >= page_total:
                     break
@@ -117,21 +118,14 @@ class USAJobsScraper(BaseScraper):
         # error message points at the API-key env var.
         response = await fetch.request("GET", API_URL, params=params, handled={401})
         if response.status_code == 401:
-            raise ScraperError(
-                f"USAJOBS rejected the API key (401). Check {ENV_API_KEY}."
-            )
+            raise ScraperError(f"USAJOBS rejected the API key (401). Check {ENV_API_KEY}.")
         try:
             return response.json()
         except ValueError as exc:
-            raise ScraperError(
-                f"USAJOBS returned malformed JSON at page={page}: {exc}"
-            ) from exc
+            raise ScraperError(f"USAJOBS returned malformed JSON at page={page}: {exc}") from exc
 
     def _parse_item(self, item: dict[str, Any]) -> Job | None:
-        descriptor = (
-            item.get("MatchedObjectDescriptor")
-            if isinstance(item, dict) else None
-        )
+        descriptor = item.get("MatchedObjectDescriptor") if isinstance(item, dict) else None
         if not isinstance(descriptor, dict):
             return None
         ats_id = str(descriptor.get("PositionID") or "").strip()
@@ -159,9 +153,7 @@ class USAJobsScraper(BaseScraper):
                     location += f" (+{len(names) - 3} more)"
 
         emp = (descriptor.get("PositionSchedule") or [{}])[0]
-        emp_name = (
-            emp.get("Name") if isinstance(emp, dict) else None
-        )
+        emp_name = emp.get("Name") if isinstance(emp, dict) else None
         employment_type = _TYPE_MAP.get((emp_name or "").lower())
 
         # Salary: PositionRemuneration is a list of {MinimumRange, MaximumRange,
@@ -183,12 +175,12 @@ class USAJobsScraper(BaseScraper):
             salary_min = salary_max = None
             salary_currency = salary_period = None
 
-        ud = descriptor.get("UserArea", {}).get("Details", {}) if isinstance(
-            descriptor.get("UserArea"), dict
-        ) else {}
-        description_html = (
-            ud.get("JobSummary") if isinstance(ud, dict) else None
+        ud = (
+            descriptor.get("UserArea", {}).get("Details", {})
+            if isinstance(descriptor.get("UserArea"), dict)
+            else {}
         )
+        description_html = ud.get("JobSummary") if isinstance(ud, dict) else None
 
         apply_uri = descriptor.get("ApplyURI")
         if isinstance(apply_uri, list) and apply_uri:
@@ -197,9 +189,15 @@ class USAJobsScraper(BaseScraper):
             apply_uri = None
 
         raw: dict[str, Any] = {}
-        for k in ("DepartmentName", "JobCategory", "JobGrade",
-                  "QualificationSummary", "PositionFormattedDescription",
-                  "WhoMayApply", "SecurityClearanceRequired"):
+        for k in (
+            "DepartmentName",
+            "JobCategory",
+            "JobGrade",
+            "QualificationSummary",
+            "PositionFormattedDescription",
+            "WhoMayApply",
+            "SecurityClearanceRequired",
+        ):
             v = descriptor.get(k)
             if v:
                 raw[k] = v
@@ -232,6 +230,7 @@ def _html_unescape_for_desc(value: object, *, cap: int = 25_000) -> str | None:
     Replaces the legacy _strip_html/_html_to_text path for descriptions
     only — title/company/salary fields still use the strip variant."""
     import html as _h
+
     if not isinstance(value, str):
         return None
     out = _h.unescape(value).strip()

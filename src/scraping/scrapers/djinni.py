@@ -1,4 +1,5 @@
 """Djinni.co tech jobs scraper."""
+
 from __future__ import annotations
 
 import asyncio
@@ -20,17 +21,21 @@ API_ROOT = "https://djinni.co/jobs/"
 MAX_CONCURRENCY = 2
 DETAIL_CONCURRENCY = 2
 
+
 @ScraperRegistry.register(ATSType.DJINNI)
 class DjinniScraper(BaseScraper):
     """Djinni.co tech jobs scraper.
-    
+
     Single-source scraper: ``company_slug`` is ignored. Pass anything
     (``"any"``, ``""``) to fetch the entire board.
     """
+
     ats = ATSType.DJINNI
     default_headers: ClassVar[dict[str, str]] = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,"
+        "image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "Accept-Language": "en-US,en;q=0.9",
         "Accept-Encoding": "gzip, deflate, br, zstd",
         "Upgrade-Insecure-Requests": "1",
@@ -137,7 +142,9 @@ class DjinniScraper(BaseScraper):
             if comp_link:
                 job.company = comp_link.get_text(strip=True)
 
-        desc_node = main_node.find("div", class_=re.compile(r"col-sm-[789]|job-post__description|mb-4"))
+        desc_node = main_node.find(
+            "div", class_=re.compile(r"col-sm-[789]|job-post__description|mb-4")
+        )
         if not desc_node:
             divs = main_node.find_all("div")
             desc_node = max(divs, key=lambda d: len(d.get_text(strip=True))) if divs else main_node
@@ -190,19 +197,21 @@ class DjinniScraper(BaseScraper):
 
             salary_min, salary_max, salary_currency = _parse_salary(sal_text)
 
-            jobs.append(Job(
-                url=f"https://djinni.co{url}",
-                title=title,
-                company=company,
-                ats_type=self.ats,
-                ats_id=ats_id,
-                is_remote=is_remote,
-                salary_min=salary_min,
-                salary_max=salary_max,
-                salary_currency=salary_currency,
-                salary_period="MONTH" if salary_currency else None,
-                fetched_at=datetime.now(UTC),
-            ))
+            jobs.append(
+                Job(
+                    url=f"https://djinni.co{url}",
+                    title=title,
+                    company=company,
+                    ats_type=self.ats,
+                    ats_id=ats_id,
+                    is_remote=is_remote,
+                    salary_min=salary_min,
+                    salary_max=salary_max,
+                    salary_currency=salary_currency,
+                    salary_period="MONTH" if salary_currency else None,
+                    fetched_at=datetime.now(UTC),
+                )
+            )
 
         unique_jobs = {j.ats_id: j for j in jobs}
         return list(unique_jobs.values())
@@ -210,12 +219,15 @@ class DjinniScraper(BaseScraper):
     def _extract_last_page(self, html_text: str) -> int:
         try:
             from bs4 import BeautifulSoup
+
             soup = BeautifulSoup(html_text, "html.parser")
             pagination = soup.find("ul", class_="pagination")
             if not pagination:
                 return 1
             page_links = pagination.find_all("a", class_="page-link")
-            pages = [int(a.get_text(strip=True)) for a in page_links if a.get_text(strip=True).isdigit()]
+            pages = [
+                int(a.get_text(strip=True)) for a in page_links if a.get_text(strip=True).isdigit()
+            ]
             return max(pages) if pages else 1
         except Exception:
             return 1
@@ -229,13 +241,13 @@ def _parse_salary(raw: str | None) -> tuple[float | None, float | None, str | No
     if not currency:
         return None, None, None
 
-    cleaned = re.sub(r'\s+', '', raw)
+    cleaned = re.sub(r"\s+", "", raw)
     nums = [float(n) for n in re.findall(r"\d{3,}", cleaned)]
-    
+
     if not nums:
         return None, None, currency
-        
+
     if len(nums) == 1:
         return nums[0], nums[0], currency
-        
+
     return nums[0], nums[1], currency

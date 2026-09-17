@@ -71,9 +71,7 @@ class RecruiterboxScraper(BaseScraper):
             while True:
                 payload = await self._fetch_page(fetch, offset)
                 meta = payload.get("meta") if isinstance(payload, dict) else {}
-                objects = (
-                    payload.get("objects") if isinstance(payload, dict) else []
-                ) or []
+                objects = (payload.get("objects") if isinstance(payload, dict) else []) or []
                 for item in objects:
                     if not isinstance(item, dict):
                         continue
@@ -111,20 +109,14 @@ class RecruiterboxScraper(BaseScraper):
         # A 400 with {"client_name": "Invalid client name"} means the slug
         # isn't a Recruiterbox tenant — a provider quirk the shared Fetcher
         # hands back to us unmapped.
-        response = await fetch.request(
-            "GET", API_URL, params=params, handled=frozenset({400})
-        )
+        response = await fetch.request("GET", API_URL, params=params, handled=frozenset({400}))
         if response.status_code == 400:
             try:
                 err = response.json()
             except ValueError:
                 err = {}
-            if isinstance(err, dict) and "Invalid client name" in str(
-                err.get("client_name", "")
-            ):
-                raise CompanyNotFoundError(
-                    f"Recruiterbox tenant not found: {self.company_slug}"
-                )
+            if isinstance(err, dict) and "Invalid client name" in str(err.get("client_name", "")):
+                raise CompanyNotFoundError(f"Recruiterbox tenant not found: {self.company_slug}")
             raise ScraperError(
                 f"Recruiterbox 400 for {self.company_slug}: {err or response.text[:120]}"
             )
@@ -132,8 +124,7 @@ class RecruiterboxScraper(BaseScraper):
             return response.json()
         except ValueError as exc:
             raise ScraperError(
-                f"Recruiterbox returned malformed JSON for "
-                f"{self.company_slug}: {exc}"
+                f"Recruiterbox returned malformed JSON for {self.company_slug}: {exc}"
             ) from exc
 
     def _parse_opening(self, item: dict[str, Any]) -> Job | None:
@@ -143,17 +134,22 @@ class RecruiterboxScraper(BaseScraper):
         if not ats_id or not title or not url:
             return None
 
-        company = (
-            (item.get("client_name") or "").strip() or self.company_slug
-        )
+        company = (item.get("client_name") or "").strip() or self.company_slug
 
         is_remote = item.get("allows_remote")
         if not isinstance(is_remote, bool):
             is_remote = None
 
         raw: dict[str, Any] = {}
-        for k in ("position_type", "experience", "education", "industry",
-                  "department", "category", "responsibilities"):
+        for k in (
+            "position_type",
+            "experience",
+            "education",
+            "industry",
+            "department",
+            "category",
+            "responsibilities",
+        ):
             v = item.get(k)
             if v:
                 raw[k] = v
@@ -166,11 +162,11 @@ class RecruiterboxScraper(BaseScraper):
             ats_id=ats_id,
             location=_format_location(item.get("location")),
             is_remote=is_remote,
-            employment_type=_TYPE_MAP.get(
-                (item.get("position_type") or "").lower()
-            ),
+            employment_type=_TYPE_MAP.get((item.get("position_type") or "").lower()),
             team=item.get("team") or None,
-            commitment=item.get("position_type") if isinstance(item.get("position_type"), str) else None,
+            commitment=item.get("position_type")
+            if isinstance(item.get("position_type"), str)
+            else None,
             description=_html_unescape_for_desc(item.get("description")),
             posted_at=_parse_iso(item.get("created_on") or item.get("updated_on")),
             fetched_at=datetime.now(UTC),
@@ -195,6 +191,7 @@ def _html_unescape_for_desc(value: object, *, cap: int = 25_000) -> str | None:
     Replaces the legacy _strip_html/_html_to_text path for descriptions
     only — title/company/salary fields still use the strip variant."""
     import html as _h
+
     if not isinstance(value, str):
         return None
     out = _h.unescape(value).strip()

@@ -31,9 +31,7 @@ from src.scraping.scrapers.base import BaseScraper, ScraperRegistry
 if TYPE_CHECKING:
     from src.scraping.fetch import Fetcher
 
-PORTAL_URL = (
-    "https://www.paycomonline.net/v4/ats/web.php/portal/{token}/career-page"
-)
+PORTAL_URL = "https://www.paycomonline.net/v4/ats/web.php/portal/{token}/career-page"
 JOB_URL = "https://www.paycomonline.net/v4/ats/web.php/portal/{token}/jobs/{job_id}"
 SEARCH_PATH = "/api/ats/job-posting-previews/search"
 DETAIL_PATH = "/api/ats/job-postings/{job_id}"
@@ -118,9 +116,7 @@ class PaycomScraper(BaseScraper):
         self.portal_token = _normalize_portal_token(company_slug)
         self.company_slug = self.portal_token
         self.company_name = (
-            company_name.strip()
-            if isinstance(company_name, str) and company_name.strip()
-            else None
+            company_name.strip() if isinstance(company_name, str) and company_name.strip() else None
         )
         self.portal_url = PORTAL_URL.format(token=self.portal_token)
 
@@ -132,10 +128,7 @@ class PaycomScraper(BaseScraper):
                 service_url,
                 api_headers,
             )
-            jobs = [
-                self._parse_preview(preview, client_code)
-                for preview in previews
-            ]
+            jobs = [self._parse_preview(preview, client_code) for preview in previews]
             if not self.include_descriptions or not jobs:
                 return jobs
 
@@ -155,8 +148,7 @@ class PaycomScraper(BaseScraper):
         completed = [job for job in enriched if job is not None]
         if jobs and not completed:
             raise ScraperError(
-                f"Paycom ({self.portal_token}) lost every listed job "
-                "during detail validation"
+                f"Paycom ({self.portal_token}) lost every listed job during detail validation"
             )
         return completed
 
@@ -196,9 +188,7 @@ class PaycomScraper(BaseScraper):
                 f"Paycom ({self.portal_token}) returned invalid library config"
             ) from exc
         if not isinstance(lib_config, dict):
-            raise ScraperError(
-                f"Paycom ({self.portal_token}) library config was not an object"
-            )
+            raise ScraperError(f"Paycom ({self.portal_token}) library config was not an object")
         service_url = _trusted_service_url(
             _required_string(lib_config, "atsPortalMantleServiceUrl")
         )
@@ -239,22 +229,17 @@ class PaycomScraper(BaseScraper):
             if expected_total is None:
                 raw_total = payload.get("jobPostingPreviewsCount")
                 if not isinstance(raw_total, int) or raw_total < 0:
-                    raise ScraperError(
-                        f"Paycom ({self.portal_token}) search omitted a valid count"
-                    )
+                    raise ScraperError(f"Paycom ({self.portal_token}) search omitted a valid count")
                 expected_total = raw_total
             page = payload.get("jobPostingPreviews")
             if not isinstance(page, list):
-                raise ScraperError(
-                    f"Paycom ({self.portal_token}) search omitted the jobs list"
-                )
+                raise ScraperError(f"Paycom ({self.portal_token}) search omitted the jobs list")
             if not page:
                 break
             for index, item in enumerate(page):
                 if not isinstance(item, dict):
                     raise ScraperError(
-                        f"Paycom ({self.portal_token}) row {skip + index} "
-                        "was not an object"
+                        f"Paycom ({self.portal_token}) row {skip + index} was not an object"
                     )
                 previews.append(item)
             skip += len(page)
@@ -265,9 +250,7 @@ class PaycomScraper(BaseScraper):
             )
         ids = [_job_id(item.get("jobId")) for item in previews]
         if len(ids) != len(set(ids)):
-            raise ScraperError(
-                f"Paycom ({self.portal_token}) returned duplicate job IDs"
-            )
+            raise ScraperError(f"Paycom ({self.portal_token}) returned duplicate job IDs")
         return previews
 
     def _parse_preview(
@@ -307,9 +290,7 @@ class PaycomScraper(BaseScraper):
             commitment=position_type,
             apply_url=job_url,
             description=(
-                description[:25_000]
-                if self.include_descriptions and description
-                else None
+                description[:25_000] if self.include_descriptions and description else None
             ),
             posted_at=_parse_datetime(preview.get("postedOn")),
             fetched_at=datetime.now(UTC),
@@ -335,8 +316,7 @@ class PaycomScraper(BaseScraper):
                 )
             except ScraperError as exc:
                 logger.warning(
-                    "Retaining Paycom job %s without detail metadata after "
-                    "detail failure: %s",
+                    "Retaining Paycom job %s without detail metadata after detail failure: %s",
                     job.ats_id,
                     exc,
                 )
@@ -348,8 +328,7 @@ class PaycomScraper(BaseScraper):
             _apply_detail(job, payload)
         except (ScraperError, ValueError) as exc:
             logger.warning(
-                "Retaining Paycom job %s without detail metadata after "
-                "detail parsing failure: %s",
+                "Retaining Paycom job %s without detail metadata after detail parsing failure: %s",
                 job.ats_id,
                 exc,
             )
@@ -363,9 +342,7 @@ def _normalize_portal_token(value: str) -> str:
             parsed = urlparse(raw)
             port = parsed.port
         except ValueError as exc:
-            raise ScraperError(
-                "Paycom URL must be an HTTPS public career portal URL"
-            ) from exc
+            raise ScraperError("Paycom URL must be an HTTPS public career portal URL") from exc
         segments = [segment for segment in parsed.path.split("/") if segment]
         if (
             parsed.scheme != "https"
@@ -378,9 +355,7 @@ def _normalize_portal_token(value: str) -> str:
             or len(segments) < 5
             or segments[:4] != ["v4", "ats", "web.php", "portal"]
         ):
-            raise ScraperError(
-                "Paycom URL must be an HTTPS public career portal URL"
-            )
+            raise ScraperError("Paycom URL must be an HTTPS public career portal URL")
         raw = segments[4]
     if not _TOKEN_RE.fullmatch(raw):
         raise ScraperError(
@@ -422,9 +397,7 @@ def _trusted_service_url(value: str) -> str:
         parsed = urlparse(value)
         port = parsed.port
     except ValueError as exc:
-        raise ScraperError(
-            "Paycom portal returned an untrusted API service URL"
-        ) from exc
+        raise ScraperError("Paycom portal returned an untrusted API service URL") from exc
     host = (parsed.hostname or "").lower()
     if (
         parsed.scheme != "https"
@@ -468,8 +441,7 @@ def _apply_detail(job: Job, payload: object) -> None:
         google_job = _google_job_payload(detail.get("googleJobJson"))
     except ScraperError as exc:
         logger.warning(
-            "Ignoring malformed optional Google Jobs metadata for Paycom "
-            "job %s: %s",
+            "Ignoring malformed optional Google Jobs metadata for Paycom job %s: %s",
             job.ats_id,
             exc,
         )
@@ -485,9 +457,7 @@ def _apply_detail(job: Job, payload: object) -> None:
             job.company = company
 
     description = _detail_description(detail)
-    if description and (
-        not job.description or len(description) > len(job.description)
-    ):
+    if description and (not job.description or len(description) > len(job.description)):
         job.description = description[:25_000]
 
     location = _detail_location(detail)
@@ -516,10 +486,7 @@ def _apply_detail(job: Job, payload: object) -> None:
     commitment = position_type or google_employment
     if commitment:
         job.commitment = commitment
-        job.employment_type = (
-            _employment_type(position_type)
-            or _employment_type(google_employment)
-        )
+        job.employment_type = _employment_type(position_type) or _employment_type(google_employment)
     category = _string(detail.get("jobCategory"))
     if category:
         job.department = category
@@ -555,11 +522,7 @@ def _detail_description(detail: dict[str, Any]) -> str | None:
         if not body:
             continue
         title = _string(detail.get(title_key))
-        parts.append(
-            f"<h2>{html.escape(title)}</h2>{body}"
-            if title
-            else body
-        )
+        parts.append(f"<h2>{html.escape(title)}</h2>{body}" if title else body)
     return "\n".join(parts) or None
 
 
@@ -630,10 +593,7 @@ def _apply_google_salary(
     minimum = amount.get("minValue")
     maximum = amount.get("maxValue")
     exact = amount.get("value")
-    if (
-        not isinstance(exact, bool)
-        and isinstance(exact, int | float)
-    ):
+    if not isinstance(exact, bool) and isinstance(exact, int | float):
         minimum = exact if minimum is None else minimum
         maximum = exact if maximum is None else maximum
     if not isinstance(minimum, bool) and isinstance(minimum, int | float):

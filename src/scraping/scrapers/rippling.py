@@ -34,9 +34,7 @@ if TYPE_CHECKING:
     from src.scraping.fetch import Fetcher
 
 API_TEMPLATE = "https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs"
-DETAIL_TEMPLATE = (
-    "https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs/{id}"
-)
+DETAIL_TEMPLATE = "https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs/{id}"
 DETAIL_CONCURRENCY = 8
 
 # Detail enrichment is best-effort: any non-2xx keeps the listing row
@@ -94,9 +92,7 @@ class RipplingScraper(BaseScraper):
 
             if self.include_descriptions and jobs:
                 sem = asyncio.Semaphore(DETAIL_CONCURRENCY)
-                await asyncio.gather(*(
-                    self._enrich_detail(fetch, sem, j) for j in jobs
-                ))
+                await asyncio.gather(*(self._enrich_detail(fetch, sem, j) for j in jobs))
         return jobs
 
     async def _enrich_detail(
@@ -111,7 +107,9 @@ class RipplingScraper(BaseScraper):
         async with sem:
             try:
                 response = await fetch.request(
-                    "GET", url, handled=_DETAIL_HANDLED,
+                    "GET",
+                    url,
+                    handled=_DETAIL_HANDLED,
                 )
             except ScraperError:
                 return
@@ -127,15 +125,20 @@ class RipplingScraper(BaseScraper):
         # ``department`` arrives as ``{id, label}``; the label is what
         # users see in the careers UI.
         dept = item.get("department")
-        department = (
-            dept.get("label") or dept.get("id") if isinstance(dept, dict) else dept
-        )
+        department = dept.get("label") or dept.get("id") if isinstance(dept, dict) else dept
         if not isinstance(department, str):
             department = None
 
         raw: dict[str, Any] = {}
-        for k in ("department", "team", "employmentType", "workLocation",
-                  "workType", "experienceLevel", "compensation"):
+        for k in (
+            "department",
+            "team",
+            "employmentType",
+            "workLocation",
+            "workType",
+            "experienceLevel",
+            "compensation",
+        ):
             v = item.get(k)
             if v:
                 raw[k] = v
@@ -152,10 +155,9 @@ class RipplingScraper(BaseScraper):
             location=_extract_location(item),
             department=department,
             commitment=item.get("employmentType")
-            if isinstance(item.get("employmentType"), str) else None,
-            posted_at=_parse_iso(
-                item.get("createdAt") or item.get("created_at")
-            ),
+            if isinstance(item.get("employmentType"), str)
+            else None,
+            posted_at=_parse_iso(item.get("createdAt") or item.get("created_at")),
             fetched_at=datetime.now(UTC),
             raw=raw or None,
         )

@@ -349,7 +349,7 @@ async def migrate_table(
 
         buffer = []
         for r in raw_rows:
-            row_dict = dict(zip(col_names, r))
+            row_dict = dict(zip(col_names, r, strict=True))
             transformed = transform_fn(row_dict)
 
             # Check if record violates any unique constraint

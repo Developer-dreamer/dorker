@@ -106,7 +106,7 @@ _ONSITE_TELEWORKING = {"Presencial", "Híbrido", "Hybrid", "Mixto"}
 # We extract the string literal with a balanced walker (regex won't
 # do; the payload contains escaped quotes), then ``json.loads`` twice.
 _INITIAL_PROPS_MARKER = "window.__INITIAL_PROPS__"
-_JSON_PARSE_OPEN = 'JSON.parse('
+_JSON_PARSE_OPEN = "JSON.parse("
 
 
 @ScraperRegistry.register(ATSType.INFOJOBSES)
@@ -178,7 +178,9 @@ class InfoJobsSpainScraper(BaseScraper):
                 log.warning(
                     "InfoJobs Spain: stopping pagination at page %d (%s); "
                     "keeping %d jobs collected so far.",
-                    page, exc, len(jobs),
+                    page,
+                    exc,
+                    len(jobs),
                 )
                 break
             offers = payload.get("offers") or []
@@ -224,30 +226,31 @@ class InfoJobsSpainScraper(BaseScraper):
         # Explicit ctor proxy wins over the env-derived one.
         proxy = self.proxy or proxy_url_from_env()
         for attempt in range(1, MAX_RETRIES + 1):
-            result = await asyncio.to_thread(
-                _httpcloak_get_sync, url, self.timeout, proxy
-            )
+            result = await asyncio.to_thread(_httpcloak_get_sync, url, self.timeout, proxy)
             if isinstance(result, str):
                 return result
             last_status = result
             if last_status not in (403, 429) and not (500 <= last_status < 600):
-                raise ScraperError(
-                    f"InfoJobs Spain returned {last_status} for {url}"
-                )
+                raise ScraperError(f"InfoJobs Spain returned {last_status} for {url}")
             if attempt == MAX_RETRIES:
                 break
             await asyncio.sleep(RETRY_BASE_DELAY * (2 ** (attempt - 1)))
         raise ScraperError(
-            f"InfoJobs Spain returned {last_status} for {url} "
-            f"after {MAX_RETRIES} retries"
+            f"InfoJobs Spain returned {last_status} for {url} after {MAX_RETRIES} retries"
         )
 
     def _parse_offer(self, offer: dict[str, Any]) -> Job | None:
         code = offer.get("code")
         title = offer.get("title")
         link = offer.get("link")
-        if not (isinstance(code, str) and code and isinstance(title, str)
-                and title and isinstance(link, str) and link):
+        if not (
+            isinstance(code, str)
+            and code
+            and isinstance(title, str)
+            and title
+            and isinstance(link, str)
+            and link
+        ):
             return None
 
         url = _absolutize_link(link)
@@ -266,8 +269,9 @@ class InfoJobsSpainScraper(BaseScraper):
         teleworking_raw = offer.get("teleworking")
         is_remote = _infer_remote(teleworking_raw)
 
-        (salary_min, salary_max, salary_currency, salary_period,
-         salary_summary) = _parse_salary(offer.get("salary"))
+        (salary_min, salary_max, salary_currency, salary_period, salary_summary) = _parse_salary(
+            offer.get("salary")
+        )
 
         posted_at = _parse_published_at(offer.get("publishedAt"))
 
@@ -316,9 +320,7 @@ class InfoJobsSpainScraper(BaseScraper):
 # --- module-level helpers ---------------------------------------------------
 
 
-def _httpcloak_get_sync(
-    url: str, timeout: float, proxy: str | None = None
-) -> str | int:
+def _httpcloak_get_sync(url: str, timeout: float, proxy: str | None = None) -> str | int:
     """Sync ``httpcloak.get`` — returns the page text on 200, the
     bare status int otherwise so the async caller can retry vs.
     escalate. ``timeout`` is forwarded verbatim."""
@@ -369,8 +371,7 @@ def _extract_initial_props(html_text: str) -> dict[str, Any]:
         j += 1
     if j >= len(rest) or rest[j] not in {'"', "'"}:
         raise ScraperError(
-            "InfoJobs Spain: JSON.parse argument is not a string "
-            "literal — site shape changed."
+            "InfoJobs Spain: JSON.parse argument is not a string literal — site shape changed."
         )
     quote = rest[j]
     # Walk to the matching closing quote, honoring backslash escapes.
@@ -384,23 +385,16 @@ def _extract_initial_props(html_text: str) -> dict[str, Any]:
             break
         i += 1
     if i >= len(rest):
-        raise ScraperError(
-            "InfoJobs Spain: unterminated JSON.parse string literal."
-        )
-    quoted = rest[j:i + 1]
+        raise ScraperError("InfoJobs Spain: unterminated JSON.parse string literal.")
+    quoted = rest[j : i + 1]
     try:
         inner = _decode_js_string_literal(quoted)
         data = json.loads(inner)
     except json.JSONDecodeError as exc:
-        raise ScraperError(
-            f"InfoJobs Spain: __INITIAL_PROPS__ failed to parse: {exc}"
-        ) from exc
+        raise ScraperError(f"InfoJobs Spain: __INITIAL_PROPS__ failed to parse: {exc}") from exc
     if not isinstance(data, dict):
-        raise ScraperError(
-            "InfoJobs Spain: __INITIAL_PROPS__ did not decode to an object."
-        )
+        raise ScraperError("InfoJobs Spain: __INITIAL_PROPS__ did not decode to an object.")
     return data
-
 
 
 def _decode_js_string_literal(literal: str) -> str:
@@ -432,10 +426,8 @@ def _decode_js_string_literal(literal: str) -> str:
             raise json.JSONDecodeError("unterminated escape", literal, i)
         esc = literal[i]
         if esc == "u":
-            hex_digits = literal[i + 1:i + 5]
-            if len(hex_digits) != 4 or not all(
-                ch in "0123456789abcdefABCDEF" for ch in hex_digits
-            ):
+            hex_digits = literal[i + 1 : i + 5]
+            if len(hex_digits) != 4 or not all(ch in "0123456789abcdefABCDEF" for ch in hex_digits):
                 raise json.JSONDecodeError("invalid unicode escape", literal, i)
             out.append(chr(int(hex_digits, 16)))
             i += 5
@@ -444,17 +436,20 @@ def _decode_js_string_literal(literal: str) -> str:
         i += 1
     return "".join(out)
 
+
 def _page_url(listing_url: str, page: int) -> str:
     parts = urlsplit(listing_url)
-    query = [
-        (k, v)
-        for k, v in parse_qsl(parts.query, keep_blank_values=True)
-        if k != "page"
-    ]
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != "page"]
     query.append(("page", str(page)))
-    return urlunsplit((
-        parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment,
-    ))
+    return urlunsplit(
+        (
+            parts.scheme,
+            parts.netloc,
+            parts.path,
+            urlencode(query),
+            parts.fragment,
+        )
+    )
 
 
 def _absolutize_link(link: str) -> str:
@@ -544,10 +539,7 @@ def _parse_salary(
     currency = raw.get("currency")
     currency = currency if isinstance(currency, str) and len(currency) == 3 else None
     period_raw = raw.get("period")
-    period = (
-        _SALARY_PERIOD_MAP.get(period_raw)
-        if isinstance(period_raw, str) else None
-    )
+    period = _SALARY_PERIOD_MAP.get(period_raw) if isinstance(period_raw, str) else None
     # Human summary mirrors what the site renders: "1.200 € - 1.500 €
     # / mes". Keep it minimal and locale-agnostic so downstream
     # consumers don't have to parse a Spanish date string.

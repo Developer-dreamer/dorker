@@ -1,12 +1,11 @@
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 import aiosqlite
 import uuid6
 
-from src.analytics.models import MatchedJob
 from src.scraping.models import Job
 from src.shared.models.company import Company
 
@@ -49,16 +48,16 @@ async def run_migrations(db_path: str | Path, migrations_dir: str | Path) -> Non
 
                     # Record successful execution
                     await db.execute(
-                        "INSERT INTO schema_migrations (filename) VALUES (?)",
-                        (filename,)
+                        "INSERT INTO schema_migrations (filename) VALUES (?)", (filename,)
                     )
                     await db.commit()
                 except Exception as e:
-                    # Rollback implicitly handled if not committed, 
+                    # Rollback implicitly handled if not committed,
                     # but explicit log/raise is required to stop the pipeline
-                    raise RuntimeError(f"Migration failed on {filename}: {e}")
+                    raise RuntimeError(f"Migration failed on {filename}: {e}") from e
 
-async def get_db_connection(db_path: str) -> aiosqlite.Connection:
+
+async def get_db_connection(db_path: Path) -> aiosqlite.Connection:
     conn = await aiosqlite.connect(db_path, timeout=20.0)
 
     await conn.execute("PRAGMA journal_mode=WAL;")
@@ -68,9 +67,8 @@ async def get_db_connection(db_path: str) -> aiosqlite.Connection:
 
 
 async def get_companies_from_ats_randomly(
-        db_path: str | Path,
-        ats_name: str,
-        limit: int = 10) -> List[Company]:
+    db_path: str | Path, ats_name: str, limit: int = 10
+) -> List[Company]:
 
     query = """SELECT
                     ats_name as ats_name,
@@ -93,9 +91,12 @@ async def get_companies_from_ats_randomly(
             # Map directly using dictionary unpacking into the Pydantic model
             return [Company(**dict(row)) for row in rows]
 
-'''
+
+"""
 Do not forget to set company inside job model to company_slug before call
-'''
+"""
+
+
 async def save_job(db_path: str, job: Job) -> None:
     query = """
             INSERT INTO jobs (
@@ -139,28 +140,29 @@ async def save_job(db_path: str, job: Job) -> None:
             """
 
     params = {
-                "id": job.global_id,
-                "ats_type": job.ats_type.value,
-                "ats_id": job.ats_id or job.global_id,
-                "url": str(job.url),
-                "apply_url": str(job.apply_url) if job.apply_url else None,
-                "title": job.title,
-                "company_slug": job.company,
-                "location": job.location,
-                "country_iso": job.country_iso,
-                "region": job.region,
-                "employment_type": job.employment_type or "FULL_TIME",
-                "description": job.description or "",
-                "salary_min": job.salary_min,
-                "salary_max": job.salary_max,
-                "salary_currency": job.salary_currency,
-                "posted_at": job.posted_at.isoformat() if job.posted_at else None,
-                "fetched_at": (job.fetched_at or datetime.now(timezone.utc)).isoformat(),
-            }
+        "id": job.global_id,
+        "ats_type": job.ats_type.value,
+        "ats_id": job.ats_id or job.global_id,
+        "url": str(job.url),
+        "apply_url": str(job.apply_url) if job.apply_url else None,
+        "title": job.title,
+        "company_slug": job.company,
+        "location": job.location,
+        "country_iso": job.country_iso,
+        "region": job.region,
+        "employment_type": job.employment_type or "FULL_TIME",
+        "description": job.description or "",
+        "salary_min": job.salary_min,
+        "salary_max": job.salary_max,
+        "salary_currency": job.salary_currency,
+        "posted_at": job.posted_at.isoformat() if job.posted_at else None,
+        "fetched_at": (job.fetched_at or datetime.now(timezone.utc)).isoformat(),
+    }
 
     async with aiosqlite.connect(db_path) as db:
         await db.execute(query, params)
         await db.commit()
+
 
 async def job_exists(db_path: str, global_id: str) -> bool:
     query = """
@@ -172,6 +174,7 @@ async def job_exists(db_path: str, global_id: str) -> bool:
         async with db.execute(query, (global_id,)) as cursor:
             row = await cursor.fetchone()
             return row is not None
+
 
 async def save_technical_match(
     db: aiosqlite.Connection,
@@ -213,6 +216,7 @@ async def save_technical_match(
 
     return uuid
 
+
 async def save_unmatch(
     db: aiosqlite.Connection,
     job_id: str,
@@ -238,7 +242,7 @@ async def save_unmatch(
         :analytics
     );
     """
-    uuid =  str(uuid6.uuid7())
+    uuid = str(uuid6.uuid7())
     params = {
         "id": uuid,
         "job_id": job_id,
@@ -254,4 +258,3 @@ async def save_unmatch(
     await db.commit()
 
     return uuid
-

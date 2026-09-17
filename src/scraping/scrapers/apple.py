@@ -74,10 +74,9 @@ class AppleScraper(BaseScraper):
             # token header — both live for the fetcher's lifetime (one
             # underlying client session).
             csrf_response = await fetch.request("GET", CSRF_URL)
-            csrf_token = (
-                csrf_response.headers.get("x-apple-csrf-token")
-                or csrf_response.headers.get("X-Apple-CSRF-Token")
-            )
+            csrf_token = csrf_response.headers.get(
+                "x-apple-csrf-token"
+            ) or csrf_response.headers.get("X-Apple-CSRF-Token")
             if not csrf_token:
                 raise ScraperError("Apple did not return an x-apple-csrf-token header")
             csrf_headers = {"X-Apple-CSRF-Token": csrf_token}
@@ -123,9 +122,10 @@ class AppleScraper(BaseScraper):
                             f"Apple search page {page} failed after retries ({exc})"
                         ) from exc
                     _LOG.warning(
-                        "Apple search page %d failed after retries (%s); "
-                        "returning %d partial jobs",
-                        page, exc, len(all_jobs),
+                        "Apple search page %d failed after retries (%s); returning %d partial jobs",
+                        page,
+                        exc,
+                        len(all_jobs),
                     )
                     break
                 if response.status_code != 200:
@@ -133,8 +133,7 @@ class AppleScraper(BaseScraper):
                     # payload) — retrying won't help, and silently
                     # breaking would mask an integration bug.
                     raise ScraperError(
-                        f"Apple search returned {response.status_code}: "
-                        f"{response.text[:120]}"
+                        f"Apple search returned {response.status_code}: {response.text[:120]}"
                     )
                 data = response.json()
                 postings = (data.get("res") or {}).get("searchResults") or []
@@ -198,10 +197,7 @@ class AppleScraper(BaseScraper):
         # Apple ships ``postDateInGMT`` as an ISO timestamp; the
         # ``postingDate`` field is the formatted display string ("May
         # 06, 2026") and never parses as ISO.
-        posted_at = (
-            _parse_iso(item.get("postDateInGMT"))
-            or _parse_iso(item.get("postedDate"))
-        )
+        posted_at = _parse_iso(item.get("postDateInGMT")) or _parse_iso(item.get("postedDate"))
 
         # Apple's only schedule signal is ``standardWeeklyHours``.
         # 30+ → full-time; less → part-time.
@@ -225,10 +221,16 @@ class AppleScraper(BaseScraper):
             locations = [None]
 
         raw_base: dict[str, Any] = {}
-        for k in ("type", "managedPipelineRole", "isMultiLocation",
-                  "postExternal", "minimumQualifications",
-                  "preferredQualifications", "education",
-                  "keyQualifications"):
+        for k in (
+            "type",
+            "managedPipelineRole",
+            "isMultiLocation",
+            "postExternal",
+            "minimumQualifications",
+            "preferredQualifications",
+            "education",
+            "keyQualifications",
+        ):
             v = item.get(k)
             if v not in (None, "", [], False):
                 raw_base[k] = v
@@ -237,31 +239,30 @@ class AppleScraper(BaseScraper):
 
         rows: list[Job] = []
         for idx, loc in enumerate(locations):
-            ats_id = (
-                position_id if (len(locations) == 1 or idx == 0)
-                else f"{position_id}@loc{idx}"
-            )
+            ats_id = position_id if (len(locations) == 1 or idx == 0) else f"{position_id}@loc{idx}"
             raw = dict(raw_base)
             if len(locations) > 1:
                 raw["all_locations"] = [loc for loc in locations if loc]
                 raw["location_index"] = idx
-            rows.append(Job(
-                url=url,
-                title=title,
-                company="Apple",
-                ats_type=ATSType.APPLE,
-                ats_id=ats_id,
-                location=loc,
-                is_remote=is_remote,
-                team=team_label,
-                description=description,
-                employment_type=employment_type,
-                commitment=commitment,
-                requisition_id=req_id or position_id or None,
-                posted_at=posted_at,
-                fetched_at=datetime.now(UTC),
-                raw=raw or None,
-            ))
+            rows.append(
+                Job(
+                    url=url,
+                    title=title,
+                    company="Apple",
+                    ats_type=ATSType.APPLE,
+                    ats_id=ats_id,
+                    location=loc,
+                    is_remote=is_remote,
+                    team=team_label,
+                    description=description,
+                    employment_type=employment_type,
+                    commitment=commitment,
+                    requisition_id=req_id or position_id or None,
+                    posted_at=posted_at,
+                    fetched_at=datetime.now(UTC),
+                    raw=raw or None,
+                )
+            )
         return rows
 
 
@@ -391,11 +392,7 @@ async def _enrich_apple_details(
         hydrated_desc_by_position: dict[str, str] = {}
         for j in jobs:
             pid = (j.requisition_id or "").split("@")[0]
-            if (
-                pid in hydrated_positions
-                and j.description
-                and pid not in hydrated_desc_by_position
-            ):
+            if pid in hydrated_positions and j.description and pid not in hydrated_desc_by_position:
                 hydrated_desc_by_position[pid] = j.description
         for j in jobs:
             pid = (j.requisition_id or "").split("@")[0]

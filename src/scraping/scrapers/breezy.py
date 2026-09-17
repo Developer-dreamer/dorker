@@ -114,9 +114,7 @@ class BreezyScraper(BaseScraper):
         async with self.make_fetcher(follow_redirects=False) as fetch:
             payload = await self._fetch_listing(fetch)
         if not isinstance(payload, list):
-            raise ScraperError(
-                f"BreezyHR returned non-list JSON for {self.company_slug}"
-            )
+            raise ScraperError(f"BreezyHR returned non-list JSON for {self.company_slug}")
         seen: set[str] = set()
         jobs: list[Job] = []
         for item in payload:
@@ -135,9 +133,7 @@ class BreezyScraper(BaseScraper):
         if self.include_descriptions and jobs:
             async with self.make_fetcher() as fetch:
                 sem = asyncio.Semaphore(DETAIL_CONCURRENCY)
-                await asyncio.gather(*(
-                    self._enrich_description(fetch, sem, j) for j in jobs
-                ))
+                await asyncio.gather(*(self._enrich_description(fetch, sem, j) for j in jobs))
         return jobs
 
     async def _enrich_description(
@@ -149,7 +145,9 @@ class BreezyScraper(BaseScraper):
         async with sem:
             try:
                 response = await fetch.request(
-                    "GET", str(job.url), handled=_DETAIL_HANDLED,
+                    "GET",
+                    str(job.url),
+                    handled=_DETAIL_HANDLED,
                 )
             except ScraperError:
                 return
@@ -185,12 +183,12 @@ class BreezyScraper(BaseScraper):
                 # unauthenticated. Treat it as transient and back off.
                 if attempt == retries:
                     raise ScraperError(
-                        f"BreezyHR returned 403 for {self.company_slug} "
-                        f"after {retries} retries"
+                        f"BreezyHR returned 403 for {self.company_slug} after {retries} retries"
                     )
                 retry_after = response.headers.get("Retry-After")
                 delay = (
-                    float(retry_after) if retry_after and retry_after.isdigit()
+                    float(retry_after)
+                    if retry_after and retry_after.isdigit()
                     else min(
                         fetch_layer.DEFAULT_RETRY_BASE_DELAY * 2 ** (attempt - 1),
                         fetch_layer.DEFAULT_MAX_RETRY_DELAY,
@@ -258,9 +256,7 @@ def _extract_description(html: str) -> str | None:
     try:
         from bs4 import BeautifulSoup
     except ImportError as exc:  # pragma: no cover
-        raise ScraperError(
-            "BreezyHR detail-page enrichment requires beautifulsoup4."
-        ) from exc
+        raise ScraperError("BreezyHR detail-page enrichment requires beautifulsoup4.") from exc
 
     soup = BeautifulSoup(html, "html.parser")
     block = soup.find(class_="description")

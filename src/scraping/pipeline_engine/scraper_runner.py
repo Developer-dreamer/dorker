@@ -2,7 +2,7 @@ import asyncio
 import json
 import time
 from logging import Logger
-from typing import Any, Tuple
+from typing import Any
 from urllib.parse import urlparse
 
 from pydantic import ValidationError
@@ -19,18 +19,20 @@ STREAM_DESCRIPTION_CONCURRENCY = 8
 
 
 class ScraperRunner:
-    def __init__(self, logger: Logger,
-                       ats: ATS,
-                       cfg: DynamicConfigManager,
-                       priority_semaphore: PrioritySemaphore,
-                       description_cache: DescriptionCache,
-                       company_repo: CompanyRepository,
-                       db_queue: asyncio.Queue[JobDB | None],
-                       concurrency: int,
-                       timeout: float,
-                       max_tenants: int | None = None,
-                       ui_queue: asyncio.Queue | None = None
-                 ) -> None:
+    def __init__(
+        self,
+        logger: Logger,
+        ats: ATS,
+        cfg: DynamicConfigManager,
+        priority_semaphore: PrioritySemaphore,
+        description_cache: DescriptionCache,
+        company_repo: CompanyRepository,
+        db_queue: asyncio.Queue[JobDB | None],
+        concurrency: int,
+        timeout: float,
+        max_tenants: int | None = None,
+        ui_queue: asyncio.Queue[dict[str, Any] | None] | None = None,
+    ) -> None:
         self.logger = logger
 
         self.cfg = cfg
@@ -47,11 +49,14 @@ class ScraperRunner:
         if max_tenants:
             self.ats.companies = self.ats.companies[:max_tenants]
             if self.per_ats_cfg_copy.get("fail_closed_on_any_error"):
-                self.omitted_required_shards = self.configured_target_count - len(self.ats.companies)
+                self.omitted_required_shards = self.configured_target_count - len(
+                    self.ats.companies
+                )
 
         self.logger.info(
             f"[{ats.name}] [INFO] Starting pipeline: {len(self.ats.companies)} targets "
-            f"(concurrency={self.concurrency}, desc_concurrency={self.per_ats_cfg_copy.get('description_concurrency', self.concurrency)}, "
+            f"(concurrency={self.concurrency}, desc_concurrency="
+            f"{self.per_ats_cfg_copy.get('description_concurrency', self.concurrency)}, "
             f"timeout={self.timeout}s, singleton={bool(self.per_ats_cfg_copy.get('singleton'))})"
         )
 
@@ -69,7 +74,9 @@ class ScraperRunner:
         self.tenant_delay = float(self.per_ats_cfg_copy.get("tenant_delay_seconds", 0))
         self.description_delay = float(self.per_ats_cfg_copy.get("description_delay_seconds", 0))
 
-        self.uses_streaming = bool(self.per_ats_cfg_copy.get("singleton") and hasattr(cfg["scraper"], "fetch_stream"))
+        self.uses_streaming = bool(
+            self.per_ats_cfg_copy.get("singleton") and hasattr(cfg["scraper"], "fetch_stream")
+        )
 
         self.description_cache = description_cache
         self.company_repo = company_repo
@@ -87,7 +94,7 @@ class ScraperRunner:
             # Multi-tenant scrapers require a tenant-specific slug/token per request
             self.scraper = None
 
-        self.pending_descriptions: set[asyncio.Task[Tuple[int, Job]]] = set()
+        self.pending_descriptions: set[asyncio.Task[tuple[int, Job]]] = set()
 
         self.counts, self.desc_counts = Counts(), DescCounts()
 
@@ -99,7 +106,7 @@ class ScraperRunner:
         )
 
     @property
-    def static_config(self) -> dict:
+    def static_config(self) -> dict[str, Any]:
         """Returns the immutable/static runtime parameters of this instance."""
         return {
             "ats_name": self.ats.name,
@@ -138,8 +145,12 @@ class ScraperRunner:
             f"\n{'=' * 60}\n"
             f"[{self.ats.name}] RUN SUMMARY:\n"
             f"  Duration:         {elapsed:.1f}s (~{elapsed / 60:.1f} min)\n"
-            f"  Tenants:          {self.counts.success} success, {self.counts.not_found} not found, {self.counts.error} failed / {len(self.ats.companies)} total\n"
-            f"  Jobs Processed:   {self.counts.jobs_scraped:,} scraped -> {self.counts.jobs_queued:,} queued ({self.counts.jobs_deduped:,} deduped)\n"
+            f"  Tenants:          {self.counts.success} success, "
+            f"{self.counts.not_found} not found, "
+            f"{self.counts.error} failed / {len(self.ats.companies)} total\n"
+            f"  Jobs Processed:   {self.counts.jobs_scraped:,} "
+            f"scraped -> {self.counts.jobs_queued:,} "
+            f"queued ({self.counts.jobs_deduped:,} deduped)\n"
             f"  Throughput:       {rate:.1f} jobs/sec\n"
             f"  Descriptions:     {self.desc_counts.fetched} fetched over HTTP, "
             f"{self.desc_counts.cache} cache hits, {self.desc_counts.present} present in payload, "
@@ -151,40 +162,58 @@ class ScraperRunner:
 
         failure_threshold = max(1, (len(self.ats.companies) + 1) // 2)
         if self.uses_streaming and self.counts.error > 0:
-            self.logger.error(f"[{self.ats.name}] [FAILURE] Streaming scrape terminated with fatal error.")
-
-        if bool(self.per_ats_cfg_copy.get("fail_closed_on_empty")) and bool(self.ats.companies) and self.counts.jobs_queued == 0:
             self.logger.error(
-                f"[{self.ats.name}] [FAILURE] fail_closed_on_empty triggered: 0 jobs queued from {len(self.ats.companies)} tenants."
+                f"[{self.ats.name}] [FAILURE] Streaming scrape terminated with fatal error."
             )
 
-        required_not_found = self.counts.not_found if self.per_ats_cfg_copy.get("fail_closed_on_not_found") else 0
+        if (
+            bool(self.per_ats_cfg_copy.get("fail_closed_on_empty"))
+            and bool(self.ats.companies)
+            and self.counts.jobs_queued == 0
+        ):
+            self.logger.error(
+                f"[{self.ats.name}] [FAILURE] fail_closed_on_empty triggered: 0 jobs queued from "
+                f"{len(self.ats.companies)} tenants."
+            )
+
+        required_not_found = (
+            self.counts.not_found if self.per_ats_cfg_copy.get("fail_closed_on_not_found") else 0
+        )
         sharded_failure = (
             bool(self.per_ats_cfg_copy.get("fail_closed_on_any_error"))
             and (self.counts.error > 0 or self.omitted_required_shards > 0)
         ) or required_not_found > 0
         if sharded_failure:
-            required_failures = self.counts.error + self.omitted_required_shards + required_not_found
+            required_failures = (
+                self.counts.error + self.omitted_required_shards + required_not_found
+            )
             self.logger.error(
-                f"[{self.ats.name}] [FAILURE] Required shards failed: {required_failures}/{self.configured_target_count} "
-                f"failures (errors={self.counts.error}, omitted={self.omitted_required_shards}, not_found={required_not_found})."
+                f"[{self.ats.name}] [FAILURE] Required shards failed: "
+                f"{required_failures}/{self.configured_target_count} "
+                f"failures (errors={self.counts.error}, omitted={self.omitted_required_shards}, "
+                f"not_found={required_not_found})."
             )
 
         catastrophic_failure = (
-                bool(self.ats.companies) and self.counts.jobs_queued == 0 and self.counts.error >= failure_threshold
+            bool(self.ats.companies)
+            and self.counts.jobs_queued == 0
+            and self.counts.error >= failure_threshold
         )
         if catastrophic_failure:
             self.logger.error(
                 f"[{self.ats.name}] [FAILURE] Catastrophic failure: 0 jobs produced and "
-                f"{self.counts.error}/{len(self.ats.companies)} tenant errors exceeded threshold ({failure_threshold})."
+                f"{self.counts.error}/{len(self.ats.companies)} "
+                f"tenant errors exceeded threshold "
+                f"({failure_threshold})."
             )
 
         if self.counts.error >= failure_threshold:
             self.logger.warning(
-                f"[{self.ats.name}] [WARN] Kept partial data but {self.counts.error}/{len(self.ats.companies)} tenants failed."
+                f"[{self.ats.name}] [WARN] Kept partial data but "
+                f"{self.counts.error}/{len(self.ats.companies)} tenants failed."
             )
 
-    async def _run_streaming(self):
+    async def _run_streaming(self) -> None:
         company_id = self.ats.companies[0].id
         desc_stats = DescCounts()
 
@@ -198,7 +227,9 @@ class ScraperRunner:
                     desc_stats.present += 1
                 else:
                     self.pending_descriptions.add(
-                        asyncio.create_task(self._enrich_missing_stream_description(company_id, job))
+                        asyncio.create_task(
+                            self._enrich_missing_stream_description(company_id, job)
+                        )
                     )
                     if len(self.pending_descriptions) >= STREAM_DESCRIPTION_CONCURRENCY:
                         await self._drain_description_tasks()
@@ -217,10 +248,11 @@ class ScraperRunner:
                 task.cancel()
             self.counts.error = 1
             self.logger.error(
-                f"[{self.ats.name}] [ERROR] Streaming failed: {type(exc).__name__}: {str(exc)[:300]}"
+                f"[{self.ats.name}] [ERROR] Streaming failed: "
+                f"{type(exc).__name__}: {str(exc)[:300]}"
             )
 
-    async def _run_default(self, batch_size: int = 50):
+    async def _run_default(self, batch_size: int = 50) -> None:
         for i in range(0, len(self.ats.companies), batch_size):
             if await self._check_yield_or_exit(i):
                 return
@@ -228,7 +260,8 @@ class ScraperRunner:
             batch = self.ats.companies[i : i + batch_size]
             batch_t0 = time.time()
             self.logger.info(
-                f"[{self.ats.name}] [BATCH] Dispatching tenants {i + 1} to {min(i + batch_size, len(self.ats.companies))} "
+                f"[{self.ats.name}] [BATCH] Dispatching tenants {i + 1} to "
+                f"{min(i + batch_size, len(self.ats.companies))} "
                 f"of {len(self.ats.companies)}..."
             )
             await asyncio.gather(*(self._scrape_tenant(compn) for compn in batch))
@@ -236,16 +269,19 @@ class ScraperRunner:
             batch_elapsed = time.time() - batch_t0
             total_elapsed = time.time() - self.start
             self.logger.info(
-                f"[{self.ats.name}] [MILESTONE] Processed {min(i + batch_size, len(self.ats.companies))}/{len(self.ats.companies)} tenants "
+                f"[{self.ats.name}] [MILESTONE] Processed "
+                f"{min(i + batch_size, len(self.ats.companies))}/{len(self.ats.companies)} tenants "
                 f"(batch: {batch_elapsed:.1f}s, total: {total_elapsed:.0f}s) | "
-                f"Counts: {self.counts.success} OK, {self.counts.not_found} 404, {self.counts.error} ERR | "
-                f"Jobs queued: {self.counts.jobs_queued:,} (dupes dropped: {self.counts.jobs_deduped:,})"
+                f"Counts: {self.counts.success} OK, {self.counts.not_found} 404, "
+                f"{self.counts.error} ERR | Jobs queued: {self.counts.jobs_queued:,} "
+                f"(dupes dropped: {self.counts.jobs_deduped:,})"
             )
 
     async def _check_yield_or_exit(self, i: int) -> bool:
         if self.cfg.is_paused(self.ats.name):
             self.logger.info(
-                f"[{self.ats.name}] Paused via config at tenant {i}/{len(self.ats.companies)}. Releasing semaphore slot..."
+                f"[{self.ats.name}] Paused via config at tenant {i}/{len(self.ats.companies)}. "
+                f"Releasing semaphore slot..."
             )
             self.priority_semaphore.release()
 
@@ -254,7 +290,8 @@ class ScraperRunner:
 
             current_tier = self.cfg.get(self.ats.name).get("tier", self.ats.tier)
             self.logger.info(
-                f"[{self.ats.name}] Resuming. Re-acquiring semaphore slot with Tier {current_tier}..."
+                f"[{self.ats.name}] Resuming. "
+                f"Re-acquiring semaphore slot with Tier {current_tier}..."
             )
             await self.priority_semaphore.acquire(current_tier)
 
@@ -262,7 +299,8 @@ class ScraperRunner:
         elif self.cfg.is_yielded(self.ats.name):
             current_tier = self.cfg.get(self.ats.name).get("tier", 99)
             self.logger.info(
-                f"[{self.ats.name}] Yielding semaphore slot at tenant {i}/{len(self.ats.companies)} to re-queue at Tier {current_tier}..."
+                f"[{self.ats.name}] Yielding semaphore slot at tenant "
+                f"{i}/{len(self.ats.companies)} to re-queue at Tier {current_tier}..."
             )
             self.priority_semaphore.release()
 
@@ -275,7 +313,8 @@ class ScraperRunner:
         # 3. LIVE DISABLE CHECK
         if not self.cfg.is_enabled(self.ats.name):
             self.logger.warning(
-                f"[{self.ats.name}] Scraper disabled mid-run. Aborting at tenant {i}/{len(self.ats.companies)}."
+                f"[{self.ats.name}] Scraper disabled mid-run. "
+                f"Aborting at tenant {i}/{len(self.ats.companies)}."
             )
             return True
 
@@ -286,18 +325,18 @@ class ScraperRunner:
 
         company_dict = company.model_dump(exclude_none=True)
         kwargs_factory = self.per_ats_cfg_copy.get("kwargs")
-        slug = self.per_ats_cfg_copy.get("slug")(company_dict)
-        kw = {}
-        if slug:
-            kw = kwargs_factory(company_dict) if kwargs_factory else {}
+        slug_factory = self.per_ats_cfg_copy.get("slug")
+        slug = slug_factory(company_dict) if callable(slug_factory) else company.slug
+
+        kw: dict[str, Any] = {}
+        if slug and callable(kwargs_factory):
+            kw = kwargs_factory(company_dict)
 
         started = time.time()
         jobs: list[Job] = []
         scraper = None
-        err = None
-
+        err: str | None = None
         company_id = company.id
-        slug = company.slug
 
         async with self.sem:
             try:
@@ -306,7 +345,9 @@ class ScraperRunner:
                     slug,
                     kw,
                     self.timeout,
-                    include_descriptions=not bool(self.per_ats_cfg_copy.get("defer_descriptions_to_cache")),
+                    include_descriptions=not bool(
+                        self.per_ats_cfg_copy.get("defer_descriptions_to_cache")
+                    ),
                 )
             except ValidationError as e:
                 err = f"ValidationError: {e.errors()}"
@@ -327,17 +368,27 @@ class ScraperRunner:
             if err == "not_found":
                 self.counts.not_found += 1
                 self.logger.warning(
-                    f"  [{self.ats.name}] [{self.tenants_completed}/{len(self.ats.companies)}] 404 Not Found: '{slug}' ({elapsed:.1f}s)"
+                    f"  [{self.ats.name}] [{self.tenants_completed}/{len(self.ats.companies)}] "
+                    f"404 Not Found: '{slug}' ({elapsed:.1f}s)"
                 )
             elif err:
                 self.counts.error += 1
                 self.logger.error(
-                    f"  [{self.ats.name}] [{self.tenants_completed}/{len(self.ats.companies)}] FAILED: '{slug}' after {elapsed:.1f}s -> {err}"
+                    f"  [{self.ats.name}] [{self.tenants_completed}/{len(self.ats.companies)}] "
+                    f"FAILED: '{slug}' after {elapsed:.1f}s -> {err}"
                 )
             else:
                 self.counts.success += 1
 
-        await self.company_repo.update_company_stats(is_success, duration_ms, err, len(jobs), company_id)
+        err_exc: Exception | None = None
+        if err == "not_found":
+            err_exc = CompanyNotFoundError(f"Company '{slug}' not found")
+        elif err:
+            err_exc = RuntimeError(err)
+
+        await self.company_repo.update_company_stats(
+            is_success, duration_ms, err_exc, len(jobs), company_id
+        )
 
         tenant_desc_stats = DescCounts()
         tenant_queued = 0
@@ -353,7 +404,9 @@ class ScraperRunner:
                     continue
                 self.seen_keys.add(key)
 
-                if scraper is not None and not self.per_ats_cfg_copy.get("skip_description_enrichment"):
+                if scraper is not None and not self.per_ats_cfg_copy.get(
+                    "skip_description_enrichment"
+                ):
                     if await self.description_cache.get(job) or job.description:
                         await self._ensure_description(job, tenant_desc_stats)
                     else:
@@ -368,7 +421,6 @@ class ScraperRunner:
                 await self.db_queue.put(db_job)
                 self.counts.jobs_queued += 1
                 tenant_queued += 1
-
 
         if self.ui_queue:
             self.ui_queue.put_nowait(
@@ -387,13 +439,15 @@ class ScraperRunner:
         is_slow = elapsed >= float(self.per_ats_cfg_copy.get("slow_tenant_log_seconds", 300))
         tag = "SLOW TENANT" if is_slow else "OK"
         self.logger.info(
-            f"  [{self.ats.name}] [{self.tenants_completed}/{len(self.ats.companies)}] [{tag}] '{slug}' in {elapsed:.1f}s: "
+            f"[{self.ats.name}] [{self.tenants_completed}/{len(self.ats.companies)}] "
+            f"[{tag}] '{slug}' in {elapsed:.1f}s: "
             f"{len(jobs)} found -> {tenant_queued} queued, {tenant_deduped} dupes "
             f"(desc: {tenant_desc_stats.fetched} fetched, {tenant_desc_stats.cache} cached, "
             f"{tenant_desc_stats.present} present, {tenant_desc_stats.missing} missing)"
         )
 
-    async def _run_scraper(self,
+    async def _run_scraper(
+        self,
         scraper_cls: Any,
         slug: str,
         kwargs: dict[str, Any] | None = None,
@@ -416,8 +470,7 @@ class ScraperRunner:
         except Exception as exc:
             return slug, None, [], f"{type(exc).__name__}: {str(exc)[:120]}"
 
-
-    async def _write_streamed_job(self, company_id: int, job: Job):
+    async def _write_streamed_job(self, company_id: int, job: Job) -> None:
         db_job = JobDB.from_domain(company_id, job)
         await self.db_queue.put(db_job)
 
@@ -425,23 +478,26 @@ class ScraperRunner:
         self.counts.jobs_queued += 1
 
         if self.ui_queue:
-            self.ui_queue.put_nowait({
-                            "type": "progress",
-                            "ats": self.ats.name,
-                            "current": self.counts.jobs_queued,
-                            "total": self.counts.jobs_queued,
-                            "slug": "streaming...",
-                            "found": self.counts.jobs_scraped,
-                            "queued": self.counts.jobs_queued,
-                            "dupes": self.counts.jobs_deduped,
-                        })
+            self.ui_queue.put_nowait(
+                {
+                    "type": "progress",
+                    "ats": self.ats.name,
+                    "current": self.counts.jobs_queued,
+                    "total": self.counts.jobs_queued,
+                    "slug": "streaming...",
+                    "found": self.counts.jobs_scraped,
+                    "queued": self.counts.jobs_queued,
+                    "dupes": self.counts.jobs_deduped,
+                }
+            )
 
         if self.counts.jobs_queued % 5_000 == 0:
             elapsed = time.time() - self.start
             rate = self.counts.jobs_scraped / max(1.0, elapsed)
             self.logger.info(
                 f"  [{self.ats.name}] [STREAM PROGRESS] {self.counts.jobs_queued:,} jobs queued "
-                f"in {elapsed:.0f}s ({rate:.1f} jobs/s) | Pending tasks: {len(self.pending_descriptions)}"
+                f"in {elapsed:.0f}s ({rate:.1f} jobs/s) | "
+                f"Pending tasks: {len(self.pending_descriptions)}"
             )
 
     async def _drain_description_tasks(self, *, all_tasks: bool = False) -> None:
@@ -456,7 +512,9 @@ class ScraperRunner:
             await self._write_streamed_job(company_id, job)
         self.pending_descriptions.difference_update(done)
 
-    async def _ensure_description(self, job: Job, tenant_desc_counts: DescCounts | None = None):
+    async def _ensure_description(
+        self, job: Job, tenant_desc_counts: DescCounts | None = None
+    ) -> None:
         cached = await self.description_cache.get(job)
         fresh = job.description
 
@@ -510,7 +568,9 @@ class ScraperRunner:
             if tenant_desc_counts:
                 tenant_desc_counts.missing += 1
 
-    async def _enrich_missing_stream_description(self, company_id: int, job: Job) -> Tuple[int, Job]:
+    async def _enrich_missing_stream_description(
+        self, company_id: int, job: Job
+    ) -> tuple[int, Job]:
         await self._ensure_description(job)
         return company_id, job
 

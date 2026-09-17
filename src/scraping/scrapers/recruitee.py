@@ -39,7 +39,10 @@ class RecruiteeScraper(BaseScraper):
 
     ats = ATSType.RECRUITEE
 
-    default_headers: ClassVar[dict[str, str]] = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    default_headers: ClassVar[dict[str, str]] = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json",
+    }
 
     def __init__(
         self,
@@ -85,7 +88,11 @@ class RecruiteeScraper(BaseScraper):
         location = _format_location(offer)
         loc_obj = offer.get("location") if isinstance(offer.get("location"), dict) else {}
 
-        url = offer.get("careers_url") or offer.get("careers_apply_url") or _fallback_url(self.company_slug, offer)
+        url = (
+            offer.get("careers_url")
+            or offer.get("careers_apply_url")
+            or _fallback_url(self.company_slug, offer)
+        )
         apply_url = offer.get("careers_apply_url")
 
         is_remote = None
@@ -96,8 +103,16 @@ class RecruiteeScraper(BaseScraper):
         salary_obj = offer.get("salary") if isinstance(offer.get("salary"), dict) else {}
 
         raw: dict[str, Any] = {}
-        for k in ("category", "experience", "education", "tags", "industry",
-                  "function", "kind", "schedule"):
+        for k in (
+            "category",
+            "experience",
+            "education",
+            "tags",
+            "industry",
+            "function",
+            "kind",
+            "schedule",
+        ):
             v = offer.get(k)
             if v:
                 raw[k] = v
@@ -112,7 +127,9 @@ class RecruiteeScraper(BaseScraper):
             lat=_to_float(offer.get("lat") or loc_obj.get("lat")),
             lon=_to_float(offer.get("lng") or loc_obj.get("lng")),
             is_remote=is_remote,
-            employment_type=_map_employment_type(offer.get("employment_type_code") or offer.get("employment_type")),
+            employment_type=_map_employment_type(
+                offer.get("employment_type_code") or offer.get("employment_type")
+            ),
             department=offer.get("department") or offer.get("department_name"),
             commitment=commitment if isinstance(commitment, str) else None,
             apply_url=apply_url if isinstance(apply_url, str) and apply_url != url else None,

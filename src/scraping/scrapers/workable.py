@@ -40,9 +40,7 @@ if TYPE_CHECKING:
     from src.scraping.fetch import Fetcher
 
 API_TEMPLATE = "https://apply.workable.com/api/v1/widget/accounts/{slug}"
-MARKDOWN_TEMPLATE = (
-    "https://apply.workable.com/{slug}/jobs/view/{shortcode}.md"
-)
+MARKDOWN_TEMPLATE = "https://apply.workable.com/{slug}/jobs/view/{shortcode}.md"
 USER_AGENT = "Mozilla/5.0 (compatible; ats-scrapers/1.0)"
 DETAIL_CONCURRENCY = 4  # rate-limit-safe pool size for per-job .md fetches
 
@@ -85,15 +83,14 @@ class WorkableScraper(BaseScraper):
         url = API_TEMPLATE.format(slug=self.company_slug)
         async with self.make_fetcher() as fetch:
             payload = await fetch.get_json(
-                url, headers={"Accept": "application/json"},
+                url,
+                headers={"Accept": "application/json"},
             )
             jobs = [self._parse_job(item) for item in payload.get("jobs", [])]
 
             if self.include_descriptions and jobs:
                 sem = asyncio.Semaphore(DETAIL_CONCURRENCY)
-                await asyncio.gather(*(
-                    self._enrich_description(fetch, sem, j) for j in jobs
-                ))
+                await asyncio.gather(*(self._enrich_description(fetch, sem, j) for j in jobs))
         return jobs
 
     def get_description(self, job: Job) -> str | None:
@@ -165,8 +162,15 @@ class WorkableScraper(BaseScraper):
             is_remote = item["remote"]
 
         raw: dict[str, Any] = {}
-        for k in ("department", "function", "industry", "experience",
-                  "education", "language", "locations"):
+        for k in (
+            "department",
+            "function",
+            "industry",
+            "experience",
+            "education",
+            "language",
+            "locations",
+        ):
             v = item.get(k)
             if v:
                 raw[k] = v

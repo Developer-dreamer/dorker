@@ -87,17 +87,14 @@ _COMPANY_HEADER_RE = re.compile(
     r"\[\*\*([^*\n]{1,200})\*\*\]\((https?://wellfound\.com/company/[^)]+)\)"
 )
 # A job link: [Title](https://wellfound.com/jobs/{id}-{slug})
-_TITLE_RE = re.compile(
-    r"\[([^\]\n]{2,200})\]\(https?://wellfound\.com/jobs/(\d+)-([a-z0-9-]+)\)"
-)
-_SALARY_RANGE_RE = re.compile(
-    r"\$(\d+(?:\.\d+)?)\s*([Kk]?)\s*[–\-]\s*\$?(\d+(?:\.\d+)?)\s*([Kk]?)"
-)
+_TITLE_RE = re.compile(r"\[([^\]\n]{2,200})\]\(https?://wellfound\.com/jobs/(\d+)-([a-z0-9-]+)\)")
+_SALARY_RANGE_RE = re.compile(r"\$(\d+(?:\.\d+)?)\s*([Kk]?)\s*[–\-]\s*\$?(\d+(?:\.\d+)?)\s*([Kk]?)")
 _SALARY_SINGLE_RE = re.compile(r"\$(\d+(?:\.\d+)?)\s*([Kk]?)")
 # Posted-date is on its own line: 'today', 'yesterday', '3 days ago',
 # '2 months ago', etc.
 _RELATIVE_RE = re.compile(
-    r"^\s*(\d+)\s*(minute|hour|day|week|month|year)s?\s*ago\s*$", re.IGNORECASE,
+    r"^\s*(\d+)\s*(minute|hour|day|week|month|year)s?\s*ago\s*$",
+    re.IGNORECASE,
 )
 _TODAY_RE = re.compile(r"^\s*(today|yesterday|just posted)\s*$", re.IGNORECASE)
 _EXPERIENCE_RE = re.compile(r"^\s*(\d+)\s*years?\s*of\s*exp\b", re.IGNORECASE)
@@ -140,9 +137,7 @@ class WellfoundScraper(BaseScraper):
             include_descriptions=include_descriptions,
             proxy=proxy,
         )
-        self.firecrawl_api_key = (
-            firecrawl_api_key or os.environ.get("FIRECRAWL_API_KEY") or None
-        )
+        self.firecrawl_api_key = firecrawl_api_key or os.environ.get("FIRECRAWL_API_KEY") or None
         self.role_slugs = tuple(role_slugs)
 
     def get_description(self, job: Job) -> str | None:
@@ -197,9 +192,7 @@ class WellfoundScraper(BaseScraper):
             tasks = [fetch_overall()] + [per_role(s) for s in self.role_slugs]
             await asyncio.gather(*tasks)
             if self.include_descriptions and jobs:
-                await asyncio.gather(*(
-                    self._enrich_description(fetch, sem, job) for job in jobs
-                ))
+                await asyncio.gather(*(self._enrich_description(fetch, sem, job) for job in jobs))
         return jobs
 
     async def _enrich_description(
@@ -271,8 +264,7 @@ class WellfoundScraper(BaseScraper):
             # a hard error so the user knows, rather than silently
             # returning [] for the whole board.
             raise ScraperError(
-                f"Firecrawl returned {response.status_code} for {url}: "
-                f"{response.text[:200]}"
+                f"Firecrawl returned {response.status_code} for {url}: {response.text[:200]}"
             )
         try:
             payload = response.json()
@@ -331,14 +323,17 @@ def _parse_markdown(md: str):
         # start of the next marker (job or company), clamped so we
         # don't scan unbounded text.
         window_start = mm.end()
-        window_end = markers[i + 1][0] if i + 1 < len(markers) else min(
-            len(md), window_start + 800,
+        window_end = (
+            markers[i + 1][0]
+            if i + 1 < len(markers)
+            else min(
+                len(md),
+                window_start + 800,
+            )
         )
         window = md[window_start:window_end]
 
-        location, is_remote, salary_min, salary_max, posted, experience = (
-            _parse_job_window(window)
-        )
+        location, is_remote, salary_min, salary_max, posted, experience = _parse_job_window(window)
 
         yield Job(
             url=url,
@@ -402,8 +397,15 @@ def _markdown_to_text(value: str) -> str:
     return re.sub(r"[ \t\r\f\v]+", " ", value).strip()
 
 
-def _parse_job_window(window: str) -> tuple[
-    str | None, bool | None, float | None, float | None, datetime | None, int | None,
+def _parse_job_window(
+    window: str,
+) -> tuple[
+    str | None,
+    bool | None,
+    float | None,
+    float | None,
+    datetime | None,
+    int | None,
 ]:
     """Walk the metadata lines after a job title link and assign each
     line to the right field by shape:
@@ -462,7 +464,7 @@ def _parse_job_window(window: str) -> tuple[
         rm = _REMOTE_PREFIX_RE.match(line)
         if rm:
             is_remote = True
-            tail = line[rm.end():].lstrip(" •")
+            tail = line[rm.end() :].lstrip(" •")
             if tail and location is None:
                 location = tail
             elif location is None:
@@ -512,8 +514,12 @@ def _parse_relative(s: str) -> datetime | None:
     n = int(m.group(1))
     unit = m.group(2).lower()
     seconds_per = {
-        "minute": 60, "hour": 3600, "day": 86_400,
-        "week": 86_400 * 7, "month": 86_400 * 30, "year": 86_400 * 365,
+        "minute": 60,
+        "hour": 3600,
+        "day": 86_400,
+        "week": 86_400 * 7,
+        "month": 86_400 * 30,
+        "year": 86_400 * 365,
     }
     delta = n * seconds_per.get(unit, 0)
     if delta == 0:

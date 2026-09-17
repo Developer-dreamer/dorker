@@ -88,6 +88,7 @@ class MercorScraper(BaseScraper):
             jobs.append(job)
         return jobs
 
+
 def _parse_listing(item: dict[str, Any]) -> Job | None:
     listing_id = str(item.get("listingId") or "").strip()
     title = (item.get("title") or "").strip()
@@ -117,10 +118,7 @@ def _parse_listing(item: dict[str, Any]) -> Job | None:
     hours = item.get("hoursPerWeek")
     if isinstance(hours, (int, float)) and hours > 0:
         # Append hours/week to the commitment label when present.
-        commitment = (
-            f"{commitment} · {int(hours)}h/week"
-            if commitment else f"{int(hours)}h/week"
-        )
+        commitment = f"{commitment} · {int(hours)}h/week" if commitment else f"{int(hours)}h/week"
 
     # ``workArrangement`` is the canonical remote/hybrid/onsite signal.
     # ``location`` text often duplicates it ("Remote") so we set
@@ -138,10 +136,20 @@ def _parse_listing(item: dict[str, Any]) -> Job | None:
     description = raw_desc.strip()[:25_000] or None if isinstance(raw_desc, str) else None
 
     raw: dict[str, Any] = {}
-    for k in ("commitment", "category", "skills", "tags",
-              "experienceLevel", "remote", "tier", "workArrangement",
-              "eligibleResidenceLocation", "ineligibleResidenceLocation",
-              "offersEquity", "hoursPerWeek"):
+    for k in (
+        "commitment",
+        "category",
+        "skills",
+        "tags",
+        "experienceLevel",
+        "remote",
+        "tier",
+        "workArrangement",
+        "eligibleResidenceLocation",
+        "ineligibleResidenceLocation",
+        "offersEquity",
+        "hoursPerWeek",
+    ):
         v = item.get(k)
         if v not in (None, "", [], False):
             raw[k] = v

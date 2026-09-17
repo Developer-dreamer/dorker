@@ -103,16 +103,12 @@ class PageUpScraper(BaseScraper):
         seen_ids: set[str] = set()
         visited_urls: set[str] = set()
         expected_total: int | None = None
-        next_url: str | None = (
-            f"{self.base_url}/listing/?page=1&page-items={PAGE_SIZE}"
-        )
+        next_url: str | None = f"{self.base_url}/listing/?page=1&page-items={PAGE_SIZE}"
 
         async with self.make_fetcher() as fetch:
             while next_url is not None:
                 if next_url in visited_urls:
-                    raise ScraperError(
-                        f"PageUp ({self.tenant_path}) repeated a pagination URL"
-                    )
+                    raise ScraperError(f"PageUp ({self.tenant_path}) repeated a pagination URL")
                 visited_urls.add(next_url)
                 listing_html = await fetch.get_text(next_url)
                 page_jobs, next_url, remaining = self._parse_listing(listing_html)
@@ -120,9 +116,7 @@ class PageUpScraper(BaseScraper):
                     expected_total = len(page_jobs) + remaining
                 for job in page_jobs:
                     if not job.ats_id or job.ats_id in seen_ids:
-                        raise ScraperError(
-                            f"PageUp returned duplicate job id {job.ats_id!r}"
-                        )
+                        raise ScraperError(f"PageUp returned duplicate job id {job.ats_id!r}")
                     seen_ids.add(job.ats_id)
                     jobs.append(job)
 
@@ -141,8 +135,7 @@ class PageUpScraper(BaseScraper):
         completed = [job for job in enriched if job is not None]
         if jobs and not completed:
             raise ScraperError(
-                f"PageUp ({self.tenant_path}) lost every listed job "
-                "during detail validation"
+                f"PageUp ({self.tenant_path}) lost every listed job during detail validation"
             )
         return completed
 
@@ -197,8 +190,7 @@ class PageUpScraper(BaseScraper):
             return None
         if not job.description:
             logger.warning(
-                "Dropping PageUp job %s because its detail page omitted "
-                "a description",
+                "Dropping PageUp job %s because its detail page omitted a description",
                 job.ats_id,
             )
             return None
@@ -214,18 +206,14 @@ class PageUpScraper(BaseScraper):
             page_text = _clean_text(soup.get_text(" ", strip=True)).lower()
             if any(marker in page_text for marker in _NO_JOBS_MARKERS):
                 return [], None, None
-            raise ScraperError(
-                f"PageUp ({self.tenant_path}) omitted search results"
-            )
+            raise ScraperError(f"PageUp ({self.tenant_path}) omitted search results")
 
         anchors = container.select('a.job-link[href*="/job/"]')
         if not anchors:
             page_text = _clean_text(container.get_text(" ", strip=True)).lower()
             if any(marker in page_text for marker in _NO_JOBS_MARKERS):
                 return [], None, None
-            raise ScraperError(
-                f"PageUp ({self.tenant_path}) returned an empty job list"
-            )
+            raise ScraperError(f"PageUp ({self.tenant_path}) returned an empty job list")
 
         anchors_by_id: dict[str, Tag] = {}
         for anchor in anchors:
@@ -245,9 +233,7 @@ class PageUpScraper(BaseScraper):
             if _is_generic_link_text(existing_title):
                 anchors_by_id[job_id] = anchor
             elif not _is_generic_link_text(title):
-                raise ScraperError(
-                    f"PageUp returned duplicate job id {job_id!r}"
-                )
+                raise ScraperError(f"PageUp returned duplicate job id {job_id!r}")
 
         jobs: list[Job] = []
         for job_id, anchor in anchors_by_id.items():
@@ -298,9 +284,7 @@ class PageUpScraper(BaseScraper):
                     ats_id=f"{self.tenant_path}:{job_id}",
                     requisition_id=job_id,
                     location=location or None,
-                    is_remote=(
-                        True if location and "remote" in location.lower() else None
-                    ),
+                    is_remote=(True if location and "remote" in location.lower() else None),
                     employment_type=_employment_type(work_type),
                     department=department or None,
                     commitment=work_type or None,
@@ -311,40 +295,32 @@ class PageUpScraper(BaseScraper):
             )
 
         if not jobs:
-            raise ScraperError(
-                f"PageUp ({self.tenant_path}) returned no usable jobs"
-            )
+            raise ScraperError(f"PageUp ({self.tenant_path}) returned no usable jobs")
 
         results_wrapper = container.find_parent(id="search-results")
         more_link = (
-            results_wrapper.select_one("a.more-link[href]")
-            if results_wrapper is not None
-            else None
+            results_wrapper.select_one("a.more-link[href]") if results_wrapper is not None else None
         )
         if more_link is None:
             return jobs, None, None
         href = more_link.get("href")
         if not isinstance(href, str) or not href:
-            raise ScraperError(
-                f"PageUp ({self.tenant_path}) returned an invalid next page"
-            )
+            raise ScraperError(f"PageUp ({self.tenant_path}) returned an invalid next page")
         count_node = more_link.select_one(".count")
-        count_match = _COUNT_RE.search(
-            count_node.get_text(" ", strip=True) if count_node else ""
-        )
+        count_match = _COUNT_RE.search(count_node.get_text(" ", strip=True) if count_node else "")
         if count_match is None:
-            raise ScraperError(
-                f"PageUp ({self.tenant_path}) omitted remaining-job count"
-            )
+            raise ScraperError(f"PageUp ({self.tenant_path}) omitted remaining-job count")
         remaining = int(count_match.group(0).replace(",", ""))
         if remaining <= 0:
-            raise ScraperError(
-                f"PageUp ({self.tenant_path}) returned invalid remaining count"
-            )
-        return jobs, self._tenant_url(
-            href,
-            expected_segment="listing",
-        ), remaining
+            raise ScraperError(f"PageUp ({self.tenant_path}) returned invalid remaining count")
+        return (
+            jobs,
+            self._tenant_url(
+                href,
+                expected_segment="listing",
+            ),
+            remaining,
+        )
 
     def _tenant_url(self, href: str, *, expected_segment: str) -> str:
         try:
@@ -353,12 +329,9 @@ class PageUpScraper(BaseScraper):
             port = parsed.port
         except ValueError as exc:
             raise ScraperError(
-                f"PageUp ({self.tenant_path}) returned an unsafe "
-                f"{expected_segment} URL"
+                f"PageUp ({self.tenant_path}) returned an unsafe {expected_segment} URL"
             ) from exc
-        expected_prefix = (
-            f"/{self.tenant_path}/{expected_segment}"
-        ).casefold()
+        expected_prefix = (f"/{self.tenant_path}/{expected_segment}").casefold()
         normalized_path = parsed.path.casefold().rstrip("/")
         if (
             parsed.scheme != "https"
@@ -370,8 +343,7 @@ class PageUpScraper(BaseScraper):
             )
         ):
             raise ScraperError(
-                f"PageUp ({self.tenant_path}) returned an unsafe "
-                f"{expected_segment} URL"
+                f"PageUp ({self.tenant_path}) returned an unsafe {expected_segment} URL"
             )
         return resolved
 
@@ -387,9 +359,7 @@ def _normalize_tenant_path(value: str) -> str:
             or parsed.hostname != "careers.pageuppeople.com"
             or parsed.port not in (None, 443)
         ):
-            raise ValueError(
-                "PageUp tenant URL must use https://careers.pageuppeople.com"
-            )
+            raise ValueError("PageUp tenant URL must use https://careers.pageuppeople.com")
         raw = parsed.path.strip("/")
     segments = [segment for segment in raw.split("/") if segment]
     if segments and segments[0].lower() == "mob":
@@ -438,11 +408,7 @@ def _apply_detail(job: Job, html_text: str) -> None:
         "duration",
         "job duration",
     ):
-        job.commitment = (
-            f"{job.commitment}; {commitment}"
-            if job.commitment
-            else commitment
-        )
+        job.commitment = f"{job.commitment}; {commitment}" if job.commitment else commitment
     if department := _first_metadata(
         metadata,
         "department",
@@ -505,9 +471,7 @@ def _apply_detail(job: Job, html_text: str) -> None:
         "a.apply-link, a.back-link, a.employee-referral-link"
     ):
         node.decompose()
-    job.description = _clean_text(
-        description.get_text("\n", strip=True)
-    )[:25_000] or None
+    job.description = _clean_text(description.get_text("\n", strip=True))[:25_000] or None
 
 
 def _extract_metadata(container: Tag) -> dict[str, list[str]]:
@@ -575,16 +539,12 @@ def _parse_html(html_text: str) -> BeautifulSoup:
         from bs4 import BeautifulSoup
     except ImportError as exc:
         raise ScraperError(
-            "PageUp scraper requires beautifulsoup4; "
-            "install `ats-scrapers[scrapers]`"
+            "PageUp scraper requires beautifulsoup4; install `ats-scrapers[scrapers]`"
         ) from exc
     return BeautifulSoup(html_text, "html.parser")
 
 
 def _clean_text(value: str) -> str:
     unescaped = html.unescape(value)
-    lines = [
-        re.sub(r"[ \t\r\f\v]+", " ", line).strip()
-        for line in unescaped.splitlines()
-    ]
+    lines = [re.sub(r"[ \t\r\f\v]+", " ", line).strip() for line in unescaped.splitlines()]
     return "\n".join(line for line in lines if line).strip()

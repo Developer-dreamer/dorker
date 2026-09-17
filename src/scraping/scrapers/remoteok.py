@@ -60,8 +60,7 @@ class RemoteOKScraper(BaseScraper):
             payload = await fetch.get_json(API_URL)
         if not isinstance(payload, list):
             raise ScraperError(
-                f"Remote OK API shape changed — expected a list, "
-                f"got {type(payload).__name__}"
+                f"Remote OK API shape changed — expected a list, got {type(payload).__name__}"
             )
         # The response is a list whose first entry is API metadata
         # (a ``last_updated`` epoch + legal-notice text) followed by the

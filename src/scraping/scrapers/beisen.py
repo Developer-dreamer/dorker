@@ -29,9 +29,7 @@ MAX_PAGES = 1000
 
 _TENANT_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 _BSGLOBAL_RE = re.compile(r"var\s+BSGlobal\s*=\s*(\{)", re.DOTALL)
-_TENANT_ID_RE = re.compile(
-    r"(?:stcms\.beisen\.com/image|portal-oss\.zhiye\.com)/(\d+)"
-)
+_TENANT_ID_RE = re.compile(r"(?:stcms\.beisen\.com/image|portal-oss\.zhiye\.com)/(\d+)")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _BLOCK_END_RE = re.compile(r"</(?:div|li|p|tr|h[1-6])\s*>", re.IGNORECASE)
 _BREAK_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
@@ -91,9 +89,7 @@ class BeisenScraper(BaseScraper):
         self.language = language
         self.country_iso = country_iso.upper()
         self.company_name = (
-            company_name.strip()
-            if isinstance(company_name, str) and company_name.strip()
-            else None
+            company_name.strip() if isinstance(company_name, str) and company_name.strip() else None
         )
         self.base_url = f"https://{slug}.zhiye.com"
         self.portal_id: str | None = None
@@ -163,9 +159,7 @@ class BeisenScraper(BaseScraper):
 
         portal_id = _clean_text(config.get("PortalId"))
         if not portal_id:
-            raise ScraperError(
-                f"Beisen tenant {self.slug!r} is missing PortalId in BSGlobal"
-            )
+            raise ScraperError(f"Beisen tenant {self.slug!r} is missing PortalId in BSGlobal")
         tenant_ids = _TENANT_ID_RE.findall(text)
         self.portal_id = portal_id
         self.key = _clean_text(config.get("Key"))
@@ -204,13 +198,10 @@ class BeisenScraper(BaseScraper):
             },
         )
         if not isinstance(payload, dict):
-            raise ScraperError(
-                f"Beisen returned a non-object payload at page={page_index}"
-            )
+            raise ScraperError(f"Beisen returned a non-object payload at page={page_index}")
         if payload.get("Code") not in {200, "200"}:
             raise ScraperError(
-                "Beisen API failure "
-                f"at page={page_index} for {self.slug!r}: {payload!r}"
+                f"Beisen API failure at page={page_index} for {self.slug!r}: {payload!r}"
             )
         return payload
 
@@ -269,10 +260,8 @@ class BeisenScraper(BaseScraper):
             region="Asia" if self.country_iso in {"CN", "HK", "MO", "TW"} else None,
             description=description,
             salary_summary=_clean_text(item.get("Salary")),
-            department=_clean_text(item.get("Org"))
-            or _clean_text(item.get("Category")),
-            posted_at=_parse_date(item.get("ChangeDate"))
-            or _parse_date(item.get("PostDate")),
+            department=_clean_text(item.get("Org")) or _clean_text(item.get("Category")),
+            posted_at=_parse_date(item.get("ChangeDate")) or _parse_date(item.get("PostDate")),
             fetched_at=datetime.now(UTC),
             language=self.language,
             raw=raw,

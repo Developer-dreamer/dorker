@@ -44,7 +44,8 @@ if TYPE_CHECKING:
 LISTING_URL = "https://www.google.com/about/careers/applications/jobs/results"
 APPLICATIONS_BASE = "https://www.google.com/about/careers/applications/"
 
-MAX_PAGES = 500  # Defensive ceiling. Google currently exposes ~180 pages (~3,600 jobs) and we stop on a no-new-ids page; 100 was hard-capping us at exactly 2,000.
+MAX_PAGES = 500  # Defensive ceiling. Google currently exposes ~180 pages (~3,600 jobs) and we stop
+# on a no-new-ids page; 100 was hard-capping us at exactly 2,000.
 DETAIL_CONCURRENCY = 8  # cap per-tenant concurrent detail fetches
 
 _HEADERS = {
@@ -80,7 +81,8 @@ class GoogleScraper(BaseScraper):
 
         async def run() -> str | None:
             async with httpx.AsyncClient(
-                timeout=self.timeout, follow_redirects=True,
+                timeout=self.timeout,
+                follow_redirects=True,
             ) as client:
                 sem = asyncio.Semaphore(1)
                 await self._enrich_detail(client, sem, copy)
@@ -108,13 +110,9 @@ class GoogleScraper(BaseScraper):
         # non-200s are swallowed per job, so this stays on a plain
         # httpx client rather than the raising/retrying fetch layer.
         if self.include_descriptions and all_jobs:
-            async with httpx.AsyncClient(
-                timeout=self.timeout, follow_redirects=True
-            ) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
                 sem = asyncio.Semaphore(DETAIL_CONCURRENCY)
-                await asyncio.gather(*(
-                    self._enrich_detail(client, sem, j) for j in all_jobs
-                ))
+                await asyncio.gather(*(self._enrich_detail(client, sem, j) for j in all_jobs))
         return all_jobs
 
     async def _enrich_detail(
@@ -301,7 +299,7 @@ def _collect_section_body(heading_node) -> str:
                 # Strip the heading itself from the start
                 heading_text = heading_node.get_text(strip=True)
                 if text.startswith(heading_text):
-                    text = text[len(heading_text):].lstrip(":\n ")
+                    text = text[len(heading_text) :].lstrip(":\n ")
                 return text
 
     # Strategy 2: walk following-siblings of the heading

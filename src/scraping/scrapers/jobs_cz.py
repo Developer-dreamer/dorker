@@ -179,7 +179,10 @@ class JobsCzScraper(BaseScraper):
                     new_count += 1
                 log.info(
                     "jobs.cz: seed=%s → %d rows (%d new, total %d)",
-                    seed, len(slice_jobs), new_count, len(all_jobs),
+                    seed,
+                    len(slice_jobs),
+                    new_count,
+                    len(all_jobs),
                 )
 
         return all_jobs
@@ -232,9 +235,7 @@ class JobsCzScraper(BaseScraper):
         # network errors. 404 is a provider quirk — a seed slug that no
         # longer exists — and means "empty seed", not "company gone".
         async with sem:
-            response = await fetcher.request(
-                "GET", url, params=params, handled={404}
-            )
+            response = await fetcher.request("GET", url, params=params, handled={404})
         if response.status_code == 404:
             # A seed that no longer exists — treat as empty.
             return ""

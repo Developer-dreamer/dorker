@@ -92,12 +92,12 @@ RETRY_JITTER = 0.5  # ± fraction added to each backoff so concurrent
 # employers per leaf) are the levers that finally crack the dominant
 # leaves.
 _SUBDIVISION_FACETS = (
-    "berufsfeld",      # 144 buckets, full coverage
+    "berufsfeld",  # 144 buckets, full coverage
     "eintrittsdatum",  # 24 month windows; multi-tag (sum > total) so dedup is essential
-    "arbeitszeit",     # 5 work-time codes, multi-tag
-    "befristung",      # 3 contract types
-    "zeitarbeit",      # 2 (temp work y/n)
-    "arbeitgeber",     # top-100 employers per leaf — last-resort partition
+    "arbeitszeit",  # 5 work-time codes, multi-tag
+    "befristung",  # 3 contract types
+    "zeitarbeit",  # 2 (temp work y/n)
+    "arbeitgeber",  # top-100 employers per leaf — last-resort partition
 )
 MAX_SUBDIVISION_DEPTH = len(_SUBDIVISION_FACETS)
 
@@ -220,11 +220,13 @@ class BundesagenturScraper(BaseScraper):
                     seen.add(job.ats_id)
                     new_jobs.append(job)
             if self.include_descriptions:
-                await asyncio.gather(*(
-                    self._enrich_description(client, sem, job)
-                    for job in new_jobs
-                    if not job.description
-                ))
+                await asyncio.gather(
+                    *(
+                        self._enrich_description(client, sem, job)
+                        for job in new_jobs
+                        if not job.description
+                    )
+                )
             if on_job is not None:
                 for job in new_jobs:
                     await on_job(job)
@@ -234,7 +236,11 @@ class BundesagenturScraper(BaseScraper):
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             sem = asyncio.Semaphore(MAX_CONCURRENCY)
             await self._exhaust_query(
-                client, sem, base_params={}, depth=0, absorb=absorb,
+                client,
+                sem,
+                base_params={},
+                depth=0,
+                absorb=absorb,
             )
         return all_jobs
 
@@ -287,7 +293,9 @@ class BundesagenturScraper(BaseScraper):
         """
         try:
             first = await self._fetch_page(
-                client, sem, params={**base_params, "size": 1, "page": 1},
+                client,
+                sem,
+                params={**base_params, "size": 1, "page": 1},
             )
         except _PageFetchExhaustedError as exc:
             # Probe exhausted retries on a transient class (persistent WAF
@@ -304,7 +312,9 @@ class BundesagenturScraper(BaseScraper):
             logger.warning(
                 "Bundesagentur probe failed for params=%s depth=%d — "
                 "subtree skipped, output will undercount: %s",
-                base_params, depth, exc,
+                base_params,
+                depth,
+                exc,
             )
             return
         total = int(first.get("maxErgebnisse") or 0)
@@ -315,8 +325,11 @@ class BundesagenturScraper(BaseScraper):
 
         if total <= PAGINATION_CAP:
             await self._fan_out_pages(
-                client, sem,
-                base_params=base_params, total=total, absorb=absorb,
+                client,
+                sem,
+                base_params=base_params,
+                total=total,
+                absorb=absorb,
             )
             return
 
@@ -332,8 +345,11 @@ class BundesagenturScraper(BaseScraper):
         if facet_name is None or depth >= MAX_SUBDIVISION_DEPTH:
             # Out of facets — fall through and accept the 10k cap.
             await self._fan_out_pages(
-                client, sem,
-                base_params=base_params, total=PAGINATION_CAP, absorb=absorb,
+                client,
+                sem,
+                base_params=base_params,
+                total=PAGINATION_CAP,
+                absorb=absorb,
             )
             return
 
@@ -341,8 +357,11 @@ class BundesagenturScraper(BaseScraper):
         bucket_counts = _bucket_counts(facets, facet_name)
         if not bucket_counts:
             await self._fan_out_pages(
-                client, sem,
-                base_params=base_params, total=PAGINATION_CAP, absorb=absorb,
+                client,
+                sem,
+                base_params=base_params,
+                total=PAGINATION_CAP,
+                absorb=absorb,
             )
             return
 
@@ -351,13 +370,14 @@ class BundesagenturScraper(BaseScraper):
                 return
             child_params = {**base_params, facet_name: value}
             await self._exhaust_query(
-                client, sem,
-                base_params=child_params, depth=depth + 1, absorb=absorb,
+                client,
+                sem,
+                base_params=child_params,
+                depth=depth + 1,
+                absorb=absorb,
             )
 
-        await asyncio.gather(
-            *(child_bucket(v, c) for v, c in bucket_counts.items())
-        )
+        await asyncio.gather(*(child_bucket(v, c) for v, c in bucket_counts.items()))
 
     async def _fan_out_pages(
         self,
@@ -393,7 +413,11 @@ class BundesagenturScraper(BaseScraper):
                 logger.warning(
                     "Bundesagentur page %d/%d failed for params=%s — "
                     "page skipped (~%d jobs lost): %s",
-                    page, page_count, base_params, PAGE_SIZE, exc,
+                    page,
+                    page_count,
+                    base_params,
+                    PAGE_SIZE,
+                    exc,
                 )
                 continue
             await absorb(payload.get("stellenangebote") or [])
@@ -451,8 +475,9 @@ class BundesagenturScraper(BaseScraper):
                     )
                 retry_after = r.headers.get("Retry-After")
                 base = (
-                    float(retry_after) if retry_after and retry_after.isdigit()
-                    else RETRY_BASE_DELAY * (2 ** attempt)
+                    float(retry_after)
+                    if retry_after and retry_after.isdigit()
+                    else RETRY_BASE_DELAY * (2**attempt)
                 )
                 # Jitter: ± up to RETRY_JITTER × base, so concurrent retries
                 # don't synchronize and re-trigger the WAF together.
@@ -465,14 +490,11 @@ class BundesagenturScraper(BaseScraper):
             # NOT swallow it as a soft-fail; the scrape crashes loudly
             # rather than silently producing a wholesale undercount.
             raise ScraperError(
-                f"Bundesagentur returned {r.status_code} for {params}: "
-                f"{r.text[:120]}"
+                f"Bundesagentur returned {r.status_code} for {params}: {r.text[:120]}"
             )
         # Network errors exhausted the retry budget — same transient class
         # as persistent WAF, so callers can soft-fail just this fetch.
-        raise _PageFetchExhaustedError(
-            f"Bundesagentur exhausted retries for {params}: {last_exc}"
-        )
+        raise _PageFetchExhaustedError(f"Bundesagentur exhausted retries for {params}: {last_exc}")
 
     def _parse(self, item: dict[str, Any]) -> Job | None:
         ats_id = str(item.get("refnr") or "").strip()
@@ -496,7 +518,8 @@ class BundesagenturScraper(BaseScraper):
         employment_type: str | None = None
         if isinstance(arbeitszeit, str) and arbeitszeit.strip():
             commitment = _ARBEITSZEIT_LABELS.get(
-                arbeitszeit.strip().lower(), arbeitszeit.strip(),
+                arbeitszeit.strip().lower(),
+                arbeitszeit.strip(),
             )
             employment_type = _ARBEITSZEIT_TO_EMPLOYMENT_TYPE.get(
                 arbeitszeit.strip().lower(),
@@ -516,30 +539,37 @@ class BundesagenturScraper(BaseScraper):
         # — closest match to a department facet.
         berufsfeld = item.get("berufsfeld")
         department = (
-            berufsfeld.strip()
-            if isinstance(berufsfeld, str) and berufsfeld.strip()
-            else None
+            berufsfeld.strip() if isinstance(berufsfeld, str) and berufsfeld.strip() else None
         )
 
         # Industry / sector → ``team`` (the closest analog the API exposes).
         branche = item.get("branche")
         team = (
             branche.strip()
-            if isinstance(branche, str) and branche.strip()
-            and branche.strip() != department
+            if isinstance(branche, str) and branche.strip() and branche.strip() != department
             else None
         )
 
         raw: dict[str, Any] = {}
-        for k in ("branche", "berufsfeld", "befristung", "zeitarbeit",
-                  "arbeitgeberHashId", "kundennummerHash", "externeUrl",
-                  "arbeitszeit", "modifikationsTimestamp"):
+        for k in (
+            "branche",
+            "berufsfeld",
+            "befristung",
+            "zeitarbeit",
+            "arbeitgeberHashId",
+            "kundennummerHash",
+            "externeUrl",
+            "arbeitszeit",
+            "modifikationsTimestamp",
+        ):
             v = item.get(k)
             if v not in (None, ""):
                 raw[k] = v
 
         externe_url = item.get("externeUrl")
-        apply_url = externe_url if isinstance(externe_url, str) and externe_url.startswith("http") else None
+        apply_url = (
+            externe_url if isinstance(externe_url, str) and externe_url.startswith("http") else None
+        )
 
         return Job(
             url=url,
@@ -561,7 +591,9 @@ class BundesagenturScraper(BaseScraper):
                 and item.get("stellenangebotsBeschreibung").strip()
                 else None
             ),
-            posted_at=_parse_iso(item.get("eintrittsdatum") or item.get("aktuelleVeroeffentlichungsdatum")),
+            posted_at=_parse_iso(
+                item.get("eintrittsdatum") or item.get("aktuelleVeroeffentlichungsdatum")
+            ),
             fetched_at=datetime.now(UTC),
             raw=raw or None,
         )

@@ -50,15 +50,9 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-API_URL = (
-    "https://europa.eu/eures/api/jv-searchengine/public/jv-search/search"
-)
-DETAIL_URL_FMT = (
-    "https://europa.eu/eures/portal/jv-se/jv-details/{jv_id}?lang=en"
-)
-DETAIL_API_URL_FMT = (
-    "https://europa.eu/eures/api/jv-searchengine/public/jv/id/{jv_id}?lang=en"
-)
+API_URL = "https://europa.eu/eures/api/jv-searchengine/public/jv-search/search"
+DETAIL_URL_FMT = "https://europa.eu/eures/portal/jv-se/jv-details/{jv_id}?lang=en"
+DETAIL_API_URL_FMT = "https://europa.eu/eures/api/jv-searchengine/public/jv/id/{jv_id}?lang=en"
 PAGE_SIZE = 50  # API caps `resultsPerPage` at 50 (>50 returns 400).
 PAGE_LIMIT = 200  # `page` caps at 200 (page>200 returns 400).
 PAGINATION_CAP = PAGE_SIZE * PAGE_LIMIT  # 10,000 jobs per query.
@@ -68,9 +62,36 @@ MAX_SUBDIVISION_DEPTH = 4
 # 31 EURES countries (EU 27 + EEA 3 + Switzerland), as used by the
 # ``locationCodes`` filter. Codes match ISO 3166-1 alpha-2 lowercased.
 _COUNTRIES = (
-    "at", "be", "bg", "ch", "cy", "cz", "de", "dk", "ee", "el",
-    "es", "fi", "fr", "hr", "hu", "ie", "is", "it", "li", "lt",
-    "lu", "lv", "mt", "nl", "no", "pl", "pt", "ro", "se", "si",
+    "at",
+    "be",
+    "bg",
+    "ch",
+    "cy",
+    "cz",
+    "de",
+    "dk",
+    "ee",
+    "el",
+    "es",
+    "fi",
+    "fr",
+    "hr",
+    "hu",
+    "ie",
+    "is",
+    "it",
+    "li",
+    "lt",
+    "lu",
+    "lv",
+    "mt",
+    "nl",
+    "no",
+    "pl",
+    "pt",
+    "ro",
+    "se",
+    "si",
     "sk",
 )
 
@@ -148,9 +169,7 @@ class EuresScraper(BaseScraper):
         # to the factual summary; the row must stay searchable.
         try:
             async with self.make_fetcher(follow_redirects=False) as fetcher:
-                payload = await fetcher.get_json(
-                    DETAIL_API_URL_FMT.format(jv_id=job.ats_id)
-                )
+                payload = await fetcher.get_json(DETAIL_API_URL_FMT.format(jv_id=job.ats_id))
         except (ScraperError, ValueError):
             return _job_summary_description(job)
         return _extract_detail_description(payload) or _job_summary_description(job)
@@ -266,11 +285,14 @@ class EuresScraper(BaseScraper):
             # facets at all.
             async def per_country(cc: str) -> None:
                 await self._exhaust_query(
-                    fetcher, sem,
+                    fetcher,
+                    sem,
                     base={"locationCodes": [cc]},
-                    depth=0, used_dims=set(),
+                    depth=0,
+                    used_dims=set(),
                     absorb=absorb,
                 )
+
             await _gather_tolerant(
                 (per_country(c) for c in _COUNTRIES),
                 label="country",
@@ -297,14 +319,22 @@ class EuresScraper(BaseScraper):
 
         if total <= PAGINATION_CAP:
             await self._fan_out_pages(
-                fetcher, sem, base=base, total=total, absorb=absorb,
+                fetcher,
+                sem,
+                base=base,
+                total=total,
+                absorb=absorb,
             )
             return
 
         if depth >= MAX_SUBDIVISION_DEPTH:
             # Out of depth — accept the cap loss.
             await self._fan_out_pages(
-                fetcher, sem, base=base, total=PAGINATION_CAP, absorb=absorb,
+                fetcher,
+                sem,
+                base=base,
+                total=PAGINATION_CAP,
+                absorb=absorb,
             )
             return
 
@@ -314,17 +344,21 @@ class EuresScraper(BaseScraper):
         # most cleanly (regions are named NUTS-1 / NUTS-2 codes).
         if "region" not in used_dims and base.get("locationCodes"):
             children = _region_children_for(
-                first.get("facets") or {}, base["locationCodes"],
+                first.get("facets") or {},
+                base["locationCodes"],
             )
             if children:
+
                 async def child_region(code: str) -> None:
                     await self._exhaust_query(
-                        fetcher, sem,
+                        fetcher,
+                        sem,
                         base={**base, "locationCodes": [code]},
                         depth=depth + 1,
                         used_dims=used_dims | {"region"},
                         absorb=absorb,
                     )
+
                 await _gather_tolerant(
                     (child_region(c) for c in children),
                     label="region",
@@ -334,17 +368,21 @@ class EuresScraper(BaseScraper):
         if "sector" not in used_dims:
             facet = (first.get("facets") or {}).get("NACE_CODE") or {}
             sectors = [
-                e["code"] for e in (facet.get("facetEntriesList") or [])
+                e["code"]
+                for e in (facet.get("facetEntriesList") or [])
                 if (e.get("count") or 0) > 0
             ] or list(_NACE_SECTORS)
+
             async def child_sector(code: str) -> None:
                 await self._exhaust_query(
-                    fetcher, sem,
+                    fetcher,
+                    sem,
                     base={**base, "sectorCodes": [code]},
                     depth=depth + 1,
                     used_dims=used_dims | {"sector"},
                     absorb=absorb,
                 )
+
             await _gather_tolerant(
                 (child_sector(c) for c in sectors),
                 label="sector",
@@ -352,14 +390,17 @@ class EuresScraper(BaseScraper):
             return
 
         if "schedule" not in used_dims:
+
             async def child_sched(code: str) -> None:
                 await self._exhaust_query(
-                    fetcher, sem,
+                    fetcher,
+                    sem,
                     base={**base, "positionScheduleCodes": [code]},
                     depth=depth + 1,
                     used_dims=used_dims | {"schedule"},
                     absorb=absorb,
                 )
+
             await _gather_tolerant(
                 (child_sched(c) for c in _SCHEDULES),
                 label="schedule",
@@ -368,7 +409,11 @@ class EuresScraper(BaseScraper):
 
         # Exhausted dimensions — accept the cap loss for this slice.
         await self._fan_out_pages(
-            fetcher, sem, base=base, total=PAGINATION_CAP, absorb=absorb,
+            fetcher,
+            sem,
+            base=base,
+            total=PAGINATION_CAP,
+            absorb=absorb,
         )
 
     async def _fan_out_pages(
@@ -422,15 +467,17 @@ class EuresScraper(BaseScraper):
         for attempt in range(1, retries + 1):
             async with sem:
                 r = await fetcher.request(
-                    "POST", API_URL, json=body, handled={307, 400},
+                    "POST",
+                    API_URL,
+                    json=body,
+                    handled={307, 400},
                 )
             if r.status_code == 400:
                 return {"numberRecords": 0, "jvs": [], "facets": {}}
             if r.status_code == 307:
                 if attempt == retries:
                     raise ScraperError(
-                        f"EURES returned 307 after "
-                        f"{retries} retries for {base} page={page}"
+                        f"EURES returned 307 after {retries} retries for {base} page={page}"
                     )
                 retry_after = r.headers.get("Retry-After")
                 delay = (
@@ -446,12 +493,8 @@ class EuresScraper(BaseScraper):
             try:
                 return r.json()
             except ValueError as exc:
-                raise ScraperError(
-                    f"EURES returned non-JSON for {base}: {exc}"
-                ) from exc
-        raise ScraperError(
-            f"EURES exhausted retries for {base} page={page}"
-        )
+                raise ScraperError(f"EURES returned non-JSON for {base}: {exc}") from exc
+        raise ScraperError(f"EURES exhausted retries for {base} page={page}")
 
     def _parse(self, item: dict[str, Any]) -> Job | None:
         jv_id = item.get("id")
@@ -467,9 +510,7 @@ class EuresScraper(BaseScraper):
         # rationale around keeping the localized placeholder text
         # instead of canonicalizing it.
         employer = (
-            item.get("employerName")
-            or (item.get("employer") or {}).get("name")
-            or ""
+            item.get("employerName") or (item.get("employer") or {}).get("name") or ""
         ).strip()
 
         location = _flatten_location(item.get("locationMap") or {})
@@ -504,8 +545,13 @@ class EuresScraper(BaseScraper):
                 employment_type = "PART_TIME"
 
         raw: dict[str, Any] = {}
-        for k in ("euresFlag", "numberOfPosts", "lastModificationDate",
-                  "positionOfferingCode", "positionScheduleCode"):
+        for k in (
+            "euresFlag",
+            "numberOfPosts",
+            "lastModificationDate",
+            "positionOfferingCode",
+            "positionScheduleCode",
+        ):
             v = item.get(k)
             if v not in (None, "", []):
                 raw[k] = v
@@ -610,11 +656,7 @@ def _extract_detail_description(payload: dict[str, Any]) -> str | None:
         ordered_profiles = []
         if isinstance(preferred, str) and preferred in profiles:
             ordered_profiles.append(profiles[preferred])
-        ordered_profiles.extend(
-            profile
-            for lang, profile in profiles.items()
-            if lang != preferred
-        )
+        ordered_profiles.extend(profile for lang, profile in profiles.items() if lang != preferred)
         for profile in ordered_profiles:
             if not isinstance(profile, dict):
                 continue
@@ -629,9 +671,7 @@ def _extract_detail_description(payload: dict[str, Any]) -> str | None:
             skills = _detail_skills_text(profile.get("requiredSkills") or [])
             if skills:
                 candidates.append(skills)
-            instructions = _detail_instructions_text(
-                profile.get("applicationInstructions") or []
-            )
+            instructions = _detail_instructions_text(profile.get("applicationInstructions") or [])
             if instructions:
                 candidates.append(f"Application instructions: {instructions}")
 
@@ -736,9 +776,6 @@ def _region_children_for(
         if (entry.get("code") or "").lower() != target:
             continue
         children = entry.get("childrenList") or []
-        codes = [
-            c.get("code") for c in children
-            if c.get("code") and (c.get("count") or 0) > 0
-        ]
+        codes = [c.get("code") for c in children if c.get("code") and (c.get("count") or 0) > 0]
         return codes
     return []

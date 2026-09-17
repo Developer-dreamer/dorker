@@ -12,9 +12,11 @@ from .scrapers.base import ScraperRegistry
 
 # --- Extraction Helpers ---
 
+
 def _slug_col(row: dict[str, Any]) -> str | None:
     slug = (row.get("slug") or "").strip()
     return slug or None
+
 
 def _recruitee_slug(row: dict[str, Any]) -> str | None:
     url = (row.get("url") or "").strip()
@@ -28,6 +30,7 @@ def _recruitee_slug(row: dict[str, Any]) -> str | None:
             return m.group(1).lower()
     return (row.get("name") or "").strip() or None
 
+
 def _personio_slug(row: dict[str, Any]) -> str | None:
     if slug := _slug_col(row):
         return slug.lower()
@@ -37,6 +40,7 @@ def _personio_slug(row: dict[str, Any]) -> str | None:
         if m:
             return m.group(1).lower()
     return (row.get("name") or "").strip() or None
+
 
 def _avature_slug(row: dict[str, Any]) -> str | None:
     url = (row.get("url") or "").strip()
@@ -54,11 +58,13 @@ def _avature_slug(row: dict[str, Any]) -> str | None:
             return m.group(1).lower()
     return (row.get("name") or "").strip() or None
 
+
 def _successfactors_slug(row: dict[str, Any]) -> str | None:
     url = (row.get("url") or "").strip()
     if url:
         return url.rstrip("/")
     return _slug_col(row) or (row.get("name") or "").strip() or None
+
 
 def _rippling_slug(row: dict[str, Any]) -> str | None:
     if slug := _slug_col(row):
@@ -70,6 +76,7 @@ def _rippling_slug(row: dict[str, Any]) -> str | None:
             return m.group(1).lower()
     return (row.get("name") or "").strip() or None
 
+
 def _workable_slug(row: dict[str, Any]) -> str | None:
     if slug := _slug_col(row):
         return slug
@@ -80,6 +87,7 @@ def _workable_slug(row: dict[str, Any]) -> str | None:
             return m.group(1)
     return (row.get("name") or "").strip() or None
 
+
 def _lever_slug(row: dict[str, Any]) -> str | None:
     url = (row.get("url") or "").strip()
     if url.startswith("http"):
@@ -88,15 +96,19 @@ def _lever_slug(row: dict[str, Any]) -> str | None:
             return unquote(m.group(1))
     return _slug_col(row) or (row.get("name") or "").strip() or None
 
+
 def _greenhouse_slug(row: dict[str, Any]) -> str | None:
     if slug := _slug_col(row):
         return slug.lower()
     url = (row.get("url") or "").strip()
     if url.startswith("http"):
-        m = re.match(r"https?://(?:job-boards|boards)\.greenhouse\.io/([^/?#]+)", url, re.IGNORECASE)
+        m = re.match(
+            r"https?://(?:job-boards|boards)\.greenhouse\.io/([^/?#]+)", url, re.IGNORECASE
+        )
         if m:
             return m.group(1).lower()
     return (row.get("name") or "").strip() or None
+
 
 def _ashby_slug(row: dict[str, Any]) -> str | None:
     if slug := _slug_col(row):
@@ -107,6 +119,7 @@ def _ashby_slug(row: dict[str, Any]) -> str | None:
         if m:
             return m.group(1).lower()
     return (row.get("name") or "").strip() or None
+
 
 def _oracle_slug(row: dict[str, Any]) -> str | None:
     raw = (row.get("url") or "").strip()
@@ -123,6 +136,7 @@ def _oracle_slug(row: dict[str, Any]) -> str | None:
         site = m.group(1) if m else None
     return f"{base}?site_number={site}" if site else base
 
+
 def _icims_slug(row: dict[str, Any]) -> str | None:
     url = (row.get("url") or "").strip()
     if url:
@@ -134,16 +148,22 @@ def _icims_slug(row: dict[str, Any]) -> str | None:
             return url.split("?", 1)[0].rstrip("/")
     return _slug_col(row) or (row.get("name") or "").strip() or None
 
+
 def _eightfold_slug(row: dict[str, Any]) -> str | None:
     raw = (row.get("slug") or row.get("url") or row.get("name") or "").strip()
     return raw.replace("https://", "").replace("http://", "").split("/")[0].split(".")[0] or None
+
 
 def _eightfold_kwargs(row: dict[str, Any]) -> dict[str, Any]:
     kw: dict[str, Any] = {}
     raw_url = (row.get("url") or "").strip()
     if raw_url.startswith("http"):
         parsed = urlparse(raw_url)
-        kw["base_url"] = f"{parsed.scheme}://{parsed.netloc}" if (parsed.scheme and parsed.netloc) else raw_url.rstrip("/")
+        kw["base_url"] = (
+            f"{parsed.scheme}://{parsed.netloc}"
+            if (parsed.scheme and parsed.netloc)
+            else raw_url.rstrip("/")
+        )
     if domain := (row.get("domain") or "").strip():
         kw["domain"] = domain
     if name := (row.get("name") or "").strip():
@@ -161,9 +181,26 @@ SLUG_EXTRACTORS: dict[str, Callable[[dict[str, Any]], str | None]] = {
     "slug_or_name_or_url": lambda r: _slug_col(r) or r.get("name") or r.get("url"),
     "slug_or_url_or_name": lambda r: _slug_col(r) or r.get("url") or r.get("name"),
     "fixed_mercor": lambda r: "mercor",
-    "gem": lambda r: _slug_col(r) or ((r.get("url") or "").rstrip("/").rsplit("/", 1)[-1] if (r.get("url") or "").strip() else (r.get("name") or "").strip()),
-    "taleo": lambda r: ((r.get("url") or "").strip() if (r.get("url") or "").startswith("http") else f"https://{(r.get('url') or '').strip()}" if r.get("url") else None),
-    "join_com": lambda r: (_slug_col(r) or "").lower() or (r.get("url") or "").rstrip("/").rsplit("/", 1)[-1].lower() or None,
+    "gem": lambda r: (
+        _slug_col(r)
+        or (
+            (r.get("url") or "").rstrip("/").rsplit("/", 1)[-1]
+            if (r.get("url") or "").strip()
+            else (r.get("name") or "").strip()
+        )
+    ),
+    "taleo": lambda r: (
+        (r.get("url") or "").strip()
+        if (r.get("url") or "").startswith("http")
+        else f"https://{(r.get('url') or '').strip()}"
+        if r.get("url")
+        else None
+    ),
+    "join_com": lambda r: (
+        (_slug_col(r) or "").lower()
+        or (r.get("url") or "").rstrip("/").rsplit("/", 1)[-1].lower()
+        or None
+    ),
     "recruitee": _recruitee_slug,
     "personio": _personio_slug,
     "avature": _avature_slug,
@@ -181,7 +218,9 @@ SLUG_EXTRACTORS: dict[str, Callable[[dict[str, Any]], str | None]] = {
 KWARGS_EXTRACTORS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "none": lambda r: {},
     "company_name": lambda r: {"company_name": (r.get("name") or "").strip() or None},
-    "company_name_legacy": lambda r: {"company_name": (r.get("company_name") or "").strip() or None},
+    "company_name_legacy": lambda r: {
+        "company_name": (r.get("company_name") or "").strip() or None
+    },
     "workday": lambda r: {
         "max_fetch_seconds": float(os.environ.get("ATS_SCRAPERS_WORKDAY_TENANT_TIMEOUT", "900")),
         "company_name": (r.get("name") or "").strip() or None,
@@ -191,6 +230,7 @@ KWARGS_EXTRACTORS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
 
 
 # --- Dynamic Manager Singleton ---
+
 
 class DynamicConfigManager:
     def __init__(self, logger: Logger, config_path: Path):
@@ -218,8 +258,12 @@ class DynamicConfigManager:
             for ats, raw_cfg in raw_data.items():
                 cfg = {**defaults, **raw_cfg}
 
-                slug_fn = SLUG_EXTRACTORS.get(cfg.get("slug_extractor", "default"), SLUG_EXTRACTORS["default"])
-                kwargs_fn = KWARGS_EXTRACTORS.get(cfg.get("kwargs_extractor", "none"), KWARGS_EXTRACTORS["none"])
+                slug_fn = SLUG_EXTRACTORS.get(
+                    cfg.get("slug_extractor", "default"), SLUG_EXTRACTORS["default"]
+                )
+                kwargs_fn = KWARGS_EXTRACTORS.get(
+                    cfg.get("kwargs_extractor", "none"), KWARGS_EXTRACTORS["none"]
+                )
 
                 # Resolve scraper class from registry
                 scraper_cls = None
@@ -251,7 +295,7 @@ class DynamicConfigManager:
         self.reload()
         return bool(self._cached_configs.get(ats, {}).get("paused", False))
 
-    def is_yielded( self, ats: str) -> bool:
+    def is_yielded(self, ats: str) -> bool:
         self.reload()
         return bool(self._cached_configs.get(ats, {}).get("yield_slot", False))
 

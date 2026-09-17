@@ -88,9 +88,7 @@ class ManfredScraper(BaseScraper):
         )
         self.lang = lang.upper()
         if self.lang not in ("EN", "ES"):
-            raise ScraperError(
-                f"Manfred ``lang`` must be 'EN' or 'ES', got {lang!r}"
-            )
+            raise ScraperError(f"Manfred ``lang`` must be 'EN' or 'ES', got {lang!r}")
 
     def get_description(self, job: Job) -> str | None:
         if job.description:
@@ -110,8 +108,7 @@ class ManfredScraper(BaseScraper):
             payload = await fetch.get_json(API_URL, params={"lang": self.lang})
             if not isinstance(payload, list):
                 raise ScraperError(
-                    f"Manfred API shape changed — expected a list, "
-                    f"got {type(payload).__name__}"
+                    f"Manfred API shape changed — expected a list, got {type(payload).__name__}"
                 )
             seen: set[str] = set()
             jobs: list[Job] = []
@@ -166,9 +163,7 @@ class ManfredScraper(BaseScraper):
         # >= 50 as remote (the field's semantics is 'how much of the
         # week the role can be remote') — common Manfred postings are
         # 50% / 80% / 100%.
-        is_remote = (
-            remote_pct >= 50 if isinstance(remote_pct, (int, float)) else None
-        )
+        is_remote = remote_pct >= 50 if isinstance(remote_pct, (int, float)) else None
 
         salary_min = _to_pos_float(item.get("salaryFrom"))
         salary_max = _to_pos_float(item.get("salaryTo"))
@@ -256,11 +251,7 @@ def _compose_description(item: dict[str, Any]) -> str | None:
         if isinstance(value, str) and value.strip():
             parts.append(_markdown_to_text(value))
         elif isinstance(value, list):
-            cleaned = [
-                _markdown_to_text(v)
-                for v in value
-                if isinstance(v, str) and v.strip()
-            ]
+            cleaned = [_markdown_to_text(v) for v in value if isinstance(v, str) and v.strip()]
             if cleaned:
                 parts.append("\n".join(f"- {v}" for v in cleaned))
     text = "\n\n".join(p for p in parts if p).strip()

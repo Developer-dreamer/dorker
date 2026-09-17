@@ -31,9 +31,7 @@ if TYPE_CHECKING:
 # ``content=true`` opts the API into returning the full HTML description
 # in each job entry. The flag adds ~5x to the response size but saves
 # us per-job detail fetches across ~3,000 boards.
-API_TEMPLATE = (
-    "https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true"
-)
+API_TEMPLATE = "https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true"
 
 _TAG_RE = re.compile(r"<[^>]+>")
 
@@ -78,9 +76,7 @@ class GreenhouseScraper(BaseScraper):
         # set when the posting first went live). ``updated_at`` only
         # tells us when an internal field changed (often noise). Prefer
         # first_published for "posted_at" semantics.
-        posted_at = _parse_iso(item.get("first_published")) or _parse_iso(
-            item.get("updated_at")
-        )
+        posted_at = _parse_iso(item.get("first_published")) or _parse_iso(item.get("updated_at"))
 
         # ``requisition_id`` is sometimes a placeholder ("See Opening
         # ID", "TBD"); only keep when it looks like a real identifier.
@@ -89,7 +85,10 @@ class GreenhouseScraper(BaseScraper):
         if isinstance(req_raw, (str, int)):
             req_str = str(req_raw).strip()
             if req_str and req_str.lower() not in (
-                "see opening id", "tbd", "n/a", "tba",
+                "see opening id",
+                "tbd",
+                "n/a",
+                "tba",
             ):
                 requisition_id = req_str
 

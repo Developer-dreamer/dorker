@@ -101,16 +101,16 @@ _TITLE_RE = re.compile(
     # a non-standard scheme.
     r'<a[^>]+class="[^"]*job_title_link[^"]*"[^>]+'
     r'href="/apply/jobs/details/(?P<id>[A-Za-z0-9_-]+)[^"]*"[^>]*>'
-    r'(?P<title>.*?)</a>',
+    r"(?P<title>.*?)</a>",
     re.DOTALL | re.IGNORECASE,
 )
 _DEPT_RE = re.compile(
     r'<span[^>]*class="[^"]*resumator_department[^"]*"[^>]*>'
-    r'(?P<dept>.*?)</span>',
+    r"(?P<dept>.*?)</span>",
     re.DOTALL | re.IGNORECASE,
 )
 # Location lives in the SECOND <td> of the row — naive: take the last <td>.
-_LAST_TD_RE = re.compile(r'<td[^>]*>(?P<body>(?:(?!<td).)*?)</td>\s*$', re.DOTALL | re.IGNORECASE)
+_LAST_TD_RE = re.compile(r"<td[^>]*>(?P<body>(?:(?!<td).)*?)</td>\s*$", re.DOTALL | re.IGNORECASE)
 _TAG_RE = re.compile(r"<[^>]+>")
 
 
@@ -147,7 +147,9 @@ class JazzHRScraper(BaseScraper):
 
         async def run() -> str | None:
             async with httpx.AsyncClient(
-                timeout=self.timeout, follow_redirects=True, proxy=self.proxy,
+                timeout=self.timeout,
+                follow_redirects=True,
+                proxy=self.proxy,
             ) as client:
                 sem = asyncio.Semaphore(1)
                 await self._enrich_detail(client, sem, copy)
@@ -181,12 +183,12 @@ class JazzHRScraper(BaseScraper):
         # Best-effort: errors fall through silently.
         if self.include_descriptions and jobs:
             async with httpx.AsyncClient(
-                timeout=self.timeout, follow_redirects=True, proxy=self.proxy,
+                timeout=self.timeout,
+                follow_redirects=True,
+                proxy=self.proxy,
             ) as client:
                 sem = asyncio.Semaphore(DETAIL_CONCURRENCY)
-                await asyncio.gather(*(
-                    self._enrich_detail(client, sem, j) for j in jobs
-                ))
+                await asyncio.gather(*(self._enrich_detail(client, sem, j) for j in jobs))
         return jobs
 
     async def _enrich_detail(
@@ -226,8 +228,7 @@ class JazzHRScraper(BaseScraper):
             import httpcloak  # noqa: F401
         except ImportError as exc:
             raise ScraperError(
-                "httpcloak required for this tenant; install with "
-                "`pip install httpcloak`"
+                "httpcloak required for this tenant; install with `pip install httpcloak`"
             ) from exc
         return self._fetch_page_httpcloak()
 
@@ -246,17 +247,12 @@ class JazzHRScraper(BaseScraper):
                 **kwargs,
             )
         except Exception as exc:
-            raise ScraperError(
-                f"JazzHR ({self.company_slug}) httpcloak failed: {exc}"
-            ) from exc
+            raise ScraperError(f"JazzHR ({self.company_slug}) httpcloak failed: {exc}") from exc
         if response.status_code == 404:
-            raise CompanyNotFoundError(
-                f"JazzHR tenant not found: {self.company_slug}"
-            )
+            raise CompanyNotFoundError(f"JazzHR tenant not found: {self.company_slug}")
         if response.status_code != 200:
             raise ScraperError(
-                f"JazzHR ({self.company_slug}) httpcloak returned "
-                f"{response.status_code}"
+                f"JazzHR ({self.company_slug}) httpcloak returned {response.status_code}"
             )
         return response.text
 
@@ -278,9 +274,7 @@ class JazzHRScraper(BaseScraper):
             if not title:
                 continue
             dept_match = _DEPT_RE.search(body)
-            department = (
-                _strip_tags(dept_match.group("dept")) if dept_match else None
-            ) or None
+            department = (_strip_tags(dept_match.group("dept")) if dept_match else None) or None
             location = self._extract_location(body)
             jobs.append(
                 Job(
@@ -360,9 +354,7 @@ def _apply_jsonld_to_job(job: Job, html_text: str) -> None:
             # JazzHR uses bare dates (``2026-04-18``); fromisoformat
             # accepts both bare and full timestamps.
             with contextlib.suppress(ValueError):
-                job.posted_at = datetime.fromisoformat(
-                    date_raw.replace("Z", "+00:00")
-                )
+                job.posted_at = datetime.fromisoformat(date_raw.replace("Z", "+00:00"))
 
     if not job.requisition_id:
         code = posting.get("uniqueJobCode")
@@ -493,9 +485,7 @@ def _salary_from_jsonld(
     summary = None
     if sal_min is not None or sal_max is not None:
         if sal_min == sal_max and sal_min is not None:
-            summary = (
-                f"{currency} {sal_min:,.0f}" if currency else f"{sal_min:,.0f}"
-            )
+            summary = f"{currency} {sal_min:,.0f}" if currency else f"{sal_min:,.0f}"
         else:
             base = (
                 f"{currency} {sal_min:,.0f}–{sal_max:,.0f}"

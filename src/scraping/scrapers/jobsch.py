@@ -90,17 +90,49 @@ _DESCRIPTION_BLOCK_RE = re.compile(
 # query.
 _QUERY_SEEDS: tuple[str, ...] = (
     # English
-    "developer", "manager", "engineer", "sales", "marketing", "finance",
-    "designer", "analyst", "consultant", "support", "operations", "hr",
-    "lead", "senior", "junior", "intern", "specialist", "executive",
+    "developer",
+    "manager",
+    "engineer",
+    "sales",
+    "marketing",
+    "finance",
+    "designer",
+    "analyst",
+    "consultant",
+    "support",
+    "operations",
+    "hr",
+    "lead",
+    "senior",
+    "junior",
+    "intern",
+    "specialist",
+    "executive",
     # German
-    "entwickler", "verkauf", "ingenieur", "buchhaltung", "leiter",
-    "projektleiter", "kundenberater", "fachkraft", "assistent", "praktikant",
+    "entwickler",
+    "verkauf",
+    "ingenieur",
+    "buchhaltung",
+    "leiter",
+    "projektleiter",
+    "kundenberater",
+    "fachkraft",
+    "assistent",
+    "praktikant",
     # French
-    "développeur", "responsable", "vente", "ingénieur", "comptable",
-    "stagiaire", "assistant", "directeur",
+    "développeur",
+    "responsable",
+    "vente",
+    "ingénieur",
+    "comptable",
+    "stagiaire",
+    "assistant",
+    "directeur",
     # Italian
-    "sviluppatore", "vendita", "ingegnere", "responsabile",
+    "sviluppatore",
+    "vendita",
+    "ingegnere",
+    "responsabile",
 )
 
 
@@ -185,10 +217,7 @@ class JobsChScraper(BaseScraper):
                 "to a residential proxy (Evomi or similar) to enable the "
                 "fallback path."
             )
-        log.info(
-            "jobs.ch: direct request 403'd — retrying via PROXY "
-            "residential fallback."
-        )
+        log.info("jobs.ch: direct request 403'd — retrying via PROXY residential fallback.")
         return await self._fetch_all_seeds(proxy_url=proxy_url)
 
     async def _fetch_all_seeds(self, *, proxy_url: str | None) -> list[Job]:
@@ -213,18 +242,17 @@ class JobsChScraper(BaseScraper):
             all_jobs.append(job)
         log.info(
             "jobs.ch: empty query → %d rows (%d new)",
-            len(first_slice), len(all_jobs),
+            len(first_slice),
+            len(all_jobs),
         )
 
         for seed in self.query_seeds:
             try:
-                slice_jobs = await self._run_fetch(
-                    proxy_url=proxy_url, query=seed
-                )
+                slice_jobs = await self._run_fetch(proxy_url=proxy_url, query=seed)
             except _BlockedError:
                 log.warning(
-                    "jobs.ch: query=%s blocked even via PROXY; "
-                    "skipping this seed.", seed,
+                    "jobs.ch: query=%s blocked even via PROXY; skipping this seed.",
+                    seed,
                 )
                 continue
             new_count = 0
@@ -236,16 +264,17 @@ class JobsChScraper(BaseScraper):
                 new_count += 1
             log.info(
                 "jobs.ch: query=%s → %d rows (%d new, total %d)",
-                seed, len(slice_jobs), new_count, len(all_jobs),
+                seed,
+                len(slice_jobs),
+                new_count,
+                len(all_jobs),
             )
 
         if self.include_descriptions and all_jobs:
             await self._enrich_descriptions(all_jobs, proxy_url=proxy_url)
         return all_jobs
 
-    async def _run_fetch(
-        self, *, proxy_url: str | None, query: str | None
-    ) -> list[Job]:
+    async def _run_fetch(self, *, proxy_url: str | None, query: str | None) -> list[Job]:
         seen: set[str] = set()
         jobs: list[Job] = []
         lock = asyncio.Lock()
@@ -282,16 +311,12 @@ class JobsChScraper(BaseScraper):
                 return jobs
 
             usable = min(total, MAX_USABLE_OFFSET)
-            page_count = min(
-                (usable + PER_PAGE - 1) // PER_PAGE, self.max_pages
-            )
+            page_count = min((usable + PER_PAGE - 1) // PER_PAGE, self.max_pages)
             offsets = [PER_PAGE * i for i in range(1, page_count)]
 
             async def one(offset: int) -> None:
                 try:
-                    payload = await self._fetch_page(
-                        fetcher, sem, start=offset, query=query
-                    )
+                    payload = await self._fetch_page(fetcher, sem, start=offset, query=query)
                 except _BlockedError:
                     if not already_in_proxy_mode:
                         raise
@@ -301,9 +326,7 @@ class JobsChScraper(BaseScraper):
             await asyncio.gather(*(one(o) for o in offsets))
         return jobs
 
-    async def _enrich_descriptions(
-        self, jobs: list[Job], *, proxy_url: str | None
-    ) -> None:
+    async def _enrich_descriptions(self, jobs: list[Job], *, proxy_url: str | None) -> None:
         client_kwargs: dict[str, Any] = {
             "timeout": self.timeout,
             "follow_redirects": True,
@@ -313,9 +336,9 @@ class JobsChScraper(BaseScraper):
 
         async with httpx.AsyncClient(**client_kwargs) as client:
             detail_sem = asyncio.Semaphore(DETAIL_CONCURRENCY)
-            await asyncio.gather(*(
-                self._enrich_description(client, detail_sem, job) for job in jobs
-            ))
+            await asyncio.gather(
+                *(self._enrich_description(client, detail_sem, job) for job in jobs)
+            )
 
     async def _enrich_description(
         self,
@@ -364,9 +387,7 @@ class JobsChScraper(BaseScraper):
             # Datacenter IP block — escalate to ``afetch`` so it can
             # retry the whole fetch through the residential proxy.
             # Don't burn retries here.
-            raise _BlockedError(
-                f"jobs.ch returned 403 at start={start}"
-            )
+            raise _BlockedError(f"jobs.ch returned 403 at start={start}")
         if response.status_code == 422:
             # Past the search-engine cap (rare; API caps deep
             # pagination differently per query). Treat as exhausted.
@@ -374,9 +395,7 @@ class JobsChScraper(BaseScraper):
         try:
             return response.json()
         except ValueError as exc:
-            raise ScraperError(
-                f"jobs.ch returned non-JSON at start={start}: {exc}"
-            ) from exc
+            raise ScraperError(f"jobs.ch returned non-JSON at start={start}: {exc}") from exc
 
     def _parse(self, item: dict[str, Any]) -> Job | None:
         ats_id = str(item.get("job_id") or "")
@@ -398,19 +417,20 @@ class JobsChScraper(BaseScraper):
         # full-time; mixed lists indicate flexibility.
         grades = item.get("employment_grades") or []
         is_full_time = grades == [100]
-        employment_type = "FULL_TIME" if is_full_time else (
-            "PART_TIME" if grades and all(g < 100 for g in grades) else None
+        employment_type = (
+            "FULL_TIME"
+            if is_full_time
+            else ("PART_TIME" if grades and all(g < 100 for g in grades) else None)
         )
 
-        posted_at = _parse_iso(
-            item.get("publication_date") or item.get("initial_publication_date")
-        )
+        posted_at = _parse_iso(item.get("publication_date") or item.get("initial_publication_date"))
 
         raw: dict[str, Any] = {}
         if grades:
             raw["employment_grades"] = grades
         languages = [
-            entry.get("language") for entry in (item.get("language_skills") or [])
+            entry.get("language")
+            for entry in (item.get("language_skills") or [])
             if isinstance(entry, dict) and entry.get("language")
         ]
         if languages:
@@ -488,5 +508,3 @@ def _strip_html(value: str) -> str:
     text = html.unescape(value)
     text = _TAG_RE.sub(" ", text)
     return re.sub(r"\s+", " ", text).strip()
-
-

@@ -88,7 +88,9 @@ class MetaScraper(BaseScraper):
             captured.append(payload)
 
         browser = await launch_async(
-            headless=True, humanize=True, proxy=proxy,
+            headless=True,
+            humanize=True,
+            proxy=proxy,
         )
         try:
             page = await browser.new_page()
@@ -110,9 +112,7 @@ class MetaScraper(BaseScraper):
             await self._enrich_detail_descriptions(jobs)
         return jobs
 
-    def _parse_responses(
-        self, responses: list[dict[str, Any]]
-    ) -> list[Job]:
+    def _parse_responses(self, responses: list[dict[str, Any]]) -> list[Job]:
         fetched_at = datetime.now(tz=UTC)
         seen: set[str] = set()
         jobs: list[Job] = []
@@ -217,13 +217,13 @@ class MetaScraper(BaseScraper):
 
         sem = asyncio.Semaphore(_DETAIL_CONCURRENCY)
         async with httpx.AsyncClient(
-            timeout=self.timeout, follow_redirects=True,
+            timeout=self.timeout,
+            follow_redirects=True,
             headers={"User-Agent": "Mozilla/5.0"},
         ) as client:
-            await asyncio.gather(*(
-                self._enrich_one_detail(client, sem, jobs, i, job)
-                for i, job in targets
-            ))
+            await asyncio.gather(
+                *(self._enrich_one_detail(client, sem, jobs, i, job) for i, job in targets)
+            )
 
     async def _enrich_one_detail(
         self,
@@ -261,9 +261,7 @@ def _description_from_detail_html(text: str) -> str | None:
             desc = item.get("description")
             resp = item.get("responsibilities")
             parts = [
-                value.strip()
-                for value in (desc, resp)
-                if isinstance(value, str) and value.strip()
+                value.strip() for value in (desc, resp) if isinstance(value, str) and value.strip()
             ]
             if parts:
                 return "\n\n".join(parts)

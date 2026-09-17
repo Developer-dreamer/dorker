@@ -69,24 +69,12 @@ _RESULT_HREF_RE = re.compile(
     r'[^>]*\bhref=["\']([^"\']+)["\']',
     re.IGNORECASE,
 )
-_TITLE_RE = re.compile(
-    r'<span\s+class="noctitle"[^>]*>(.*?)</span>', re.IGNORECASE | re.DOTALL
-)
-_BUSINESS_RE = re.compile(
-    r'<li\s+class="business"[^>]*>(.*?)</li>', re.IGNORECASE | re.DOTALL
-)
-_LOCATION_RE = re.compile(
-    r'<li\s+class="location"[^>]*>(.*?)</li>', re.IGNORECASE | re.DOTALL
-)
-_DATE_RE = re.compile(
-    r'<li\s+class="date"[^>]*>(.*?)</li>', re.IGNORECASE | re.DOTALL
-)
-_SALARY_RE = re.compile(
-    r'<li\s+class="salary"[^>]*>(.*?)</li>', re.IGNORECASE | re.DOTALL
-)
-_TELEWORK_RE = re.compile(
-    r'<span\s+class="telework"[^>]*>(.*?)</span>', re.IGNORECASE | re.DOTALL
-)
+_TITLE_RE = re.compile(r'<span\s+class="noctitle"[^>]*>(.*?)</span>', re.IGNORECASE | re.DOTALL)
+_BUSINESS_RE = re.compile(r'<li\s+class="business"[^>]*>(.*?)</li>', re.IGNORECASE | re.DOTALL)
+_LOCATION_RE = re.compile(r'<li\s+class="location"[^>]*>(.*?)</li>', re.IGNORECASE | re.DOTALL)
+_DATE_RE = re.compile(r'<li\s+class="date"[^>]*>(.*?)</li>', re.IGNORECASE | re.DOTALL)
+_SALARY_RE = re.compile(r'<li\s+class="salary"[^>]*>(.*?)</li>', re.IGNORECASE | re.DOTALL)
+_TELEWORK_RE = re.compile(r'<span\s+class="telework"[^>]*>(.*?)</span>', re.IGNORECASE | re.DOTALL)
 _APPMETHOD_RE = re.compile(
     r'<span\s+class="appmethod"[^>]*>(.*?)</span>', re.IGNORECASE | re.DOTALL
 )
@@ -102,26 +90,69 @@ _WS_RE = re.compile(r"\s+")
 # Canadian province / territory abbreviations seen in location strings
 # like ``Calgary, AB`` or ``Burlington (ON)``. Used to set ``country_iso``
 # defensively even when the location string lacks ", Canada".
-_CA_PROVINCES = frozenset({
-    "AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU",
-    "ON", "PE", "QC", "SK", "YT",
-})
+_CA_PROVINCES = frozenset(
+    {
+        "AB",
+        "BC",
+        "MB",
+        "NB",
+        "NL",
+        "NS",
+        "NT",
+        "NU",
+        "ON",
+        "PE",
+        "QC",
+        "SK",
+        "YT",
+    }
+)
 
 # English listings render dates as ``May 08, 2026``; French listings use
 # ``08 mai 2026``. ``_parse_date`` supports both locale-specific forms.
 _MONTHS_EN = {
-    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5,
-    "june": 6, "july": 7, "august": 8, "september": 9, "october": 10,
-    "november": 11, "december": 12,
+    "january": 1,
+    "february": 2,
+    "march": 3,
+    "april": 4,
+    "may": 5,
+    "june": 6,
+    "july": 7,
+    "august": 8,
+    "september": 9,
+    "october": 10,
+    "november": 11,
+    "december": 12,
     # Abbreviations that occasionally appear.
-    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7,
-    "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "sept": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
 }
 _MONTHS_FR = {
-    "janvier": 1, "février": 2, "fevrier": 2, "mars": 3,
-    "avril": 4, "mai": 5, "juin": 6, "juillet": 7, "août": 8,
-    "aout": 8, "septembre": 9, "octobre": 10, "novembre": 11,
-    "décembre": 12, "decembre": 12,
+    "janvier": 1,
+    "février": 2,
+    "fevrier": 2,
+    "mars": 3,
+    "avril": 4,
+    "mai": 5,
+    "juin": 6,
+    "juillet": 7,
+    "août": 8,
+    "aout": 8,
+    "septembre": 9,
+    "octobre": 10,
+    "novembre": 11,
+    "décembre": 12,
+    "decembre": 12,
 }
 
 
@@ -148,9 +179,7 @@ class JobBankCAScraper(BaseScraper):
             proxy=proxy,
         )
         if max_pages is not None and max_pages < 1:
-            raise ScraperError(
-                f"Job Bank max_pages must be positive, got {max_pages}"
-            )
+            raise ScraperError(f"Job Bank max_pages must be positive, got {max_pages}")
         self._full_catalogue = max_pages is None
         self.max_pages = min(max_pages or MAX_PAGES, MAX_PAGES)
         # ``en`` (default) → english site. ``fr`` → ``?lang=fra`` variant.
@@ -169,7 +198,8 @@ class JobBankCAScraper(BaseScraper):
         exhausted = False
         sem = asyncio.Semaphore(MAX_CONCURRENCY)
         async with httpx.AsyncClient(
-            timeout=self.timeout, follow_redirects=True,
+            timeout=self.timeout,
+            follow_redirects=True,
             proxy=self.proxy,
             headers={
                 "User-Agent": DEFAULT_USER_AGENT,
@@ -187,9 +217,7 @@ class JobBankCAScraper(BaseScraper):
                 html_text = await self._fetch_page(client, sem, page)
                 fetched = datetime.now(tz=UTC)
                 page_jobs = self._parse_page(html_text, fetched_at=fetched)
-                article_count = sum(
-                    1 for _ in _ARTICLE_OPEN_RE.finditer(html_text)
-                )
+                article_count = sum(1 for _ in _ARTICLE_OPEN_RE.finditer(html_text))
                 if len(page_jobs) != article_count:
                     raise ScraperError(
                         f"Job Bank page={page} contained {article_count} "
@@ -197,13 +225,9 @@ class JobBankCAScraper(BaseScraper):
                     )
                 if not page_jobs:
                     if 'id="results-count"' not in html_text:
-                        raise ScraperError(
-                            f"Job Bank page={page} lacked result markup"
-                        )
+                        raise ScraperError(f"Job Bank page={page} lacked result markup")
                     if _ARTICLE_OPEN_RE.search(html_text):
-                        raise ScraperError(
-                            f"Job Bank page={page} contained unparseable articles"
-                        )
+                        raise ScraperError(f"Job Bank page={page} contained unparseable articles")
                     exhausted = True
                     break
                 added = 0
@@ -215,18 +239,17 @@ class JobBankCAScraper(BaseScraper):
                     added += 1
                 logger.debug(
                     "jobbankca page=%d parsed=%d new=%d cumulative=%d",
-                    page, len(page_jobs), added, len(jobs),
+                    page,
+                    len(page_jobs),
+                    added,
+                    len(jobs),
                 )
                 repeated_pages = repeated_pages + 1 if added == 0 else 0
                 if repeated_pages >= 2:
-                    raise ScraperError(
-                        "Job Bank repeated only known jobs on consecutive pages"
-                    )
+                    raise ScraperError("Job Bank repeated only known jobs on consecutive pages")
                 page += 1
         if self._full_catalogue and not jobs:
-            raise ScraperError(
-                "Job Bank full-catalogue scrape returned no jobs"
-            )
+            raise ScraperError("Job Bank full-catalogue scrape returned no jobs")
         if self._full_catalogue and not exhausted:
             raise ScraperError(
                 f"Job Bank reached its {MAX_PAGES}-page safety limit before "
@@ -266,22 +289,22 @@ class JobBankCAScraper(BaseScraper):
                     )
                 retry_after = r.headers.get("Retry-After")
                 delay = (
-                    float(retry_after) if retry_after and retry_after.isdigit()
-                    else RETRY_BASE_DELAY * (2 ** attempt)
+                    float(retry_after)
+                    if retry_after and retry_after.isdigit()
+                    else RETRY_BASE_DELAY * (2**attempt)
                 )
                 await asyncio.sleep(delay)
                 continue
-            raise ScraperError(
-                f"Job Bank Canada returned {r.status_code} on page={page}"
-            )
-        raise ScraperError(
-            f"Job Bank Canada exhausted retries on page={page}: {last_exc}"
-        )
+            raise ScraperError(f"Job Bank Canada returned {r.status_code} on page={page}")
+        raise ScraperError(f"Job Bank Canada exhausted retries on page={page}: {last_exc}")
 
     # --- parsing ------------------------------------------------------------
 
     def _parse_page(
-        self, html_text: str, *, fetched_at: datetime | None = None,
+        self,
+        html_text: str,
+        *,
+        fetched_at: datetime | None = None,
     ) -> list[Job]:
         """Split the page into ``<article>`` blocks and parse each.
 
@@ -294,14 +317,17 @@ class JobBankCAScraper(BaseScraper):
             return jobs
         positions.append(len(html_text))
         for i in range(len(positions) - 1):
-            chunk = html_text[positions[i]:positions[i + 1]]
+            chunk = html_text[positions[i] : positions[i + 1]]
             job = self._parse_job(chunk, fetched_at=fetched_at)
             if job is not None:
                 jobs.append(job)
         return jobs
 
     def _parse_job(
-        self, chunk: str, *, fetched_at: datetime | None = None,
+        self,
+        chunk: str,
+        *,
+        fetched_at: datetime | None = None,
     ) -> Job | None:
         m = _ARTICLE_OPEN_RE.search(chunk)
         if not m:
@@ -452,7 +478,10 @@ def _parse_date(value: str | None) -> datetime | None:
         if month is not None:
             try:
                 return datetime(
-                    int(m.group(3)), month, int(m.group(2)), tzinfo=UTC,
+                    int(m.group(3)),
+                    month,
+                    int(m.group(2)),
+                    tzinfo=UTC,
                 )
             except ValueError:
                 return None
@@ -464,7 +493,10 @@ def _parse_date(value: str | None) -> datetime | None:
         return None
     try:
         return datetime(
-            int(french.group(3)), month, int(french.group(1)), tzinfo=UTC,
+            int(french.group(3)),
+            month,
+            int(french.group(1)),
+            tzinfo=UTC,
         )
     except ValueError:
         return None

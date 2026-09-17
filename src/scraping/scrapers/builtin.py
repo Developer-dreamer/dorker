@@ -70,8 +70,8 @@ class BuiltInScraper(BaseScraper):
 
     default_headers: ClassVar[dict[str, str]] = {
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) "
-                      "AppleWebKit/537.36 (KHTML, like Gecko) "
-                      "Chrome/120.0.0.0 Safari/537.36",
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36",
         "Accept": "text/html,*/*",
     }
 
@@ -126,7 +126,9 @@ class BuiltInScraper(BaseScraper):
                     log.warning(
                         "Built In: stopping pagination at page %d (%s); "
                         "keeping %d jobs collected so far.",
-                        page, exc, len(jobs),
+                        page,
+                        exc,
+                        len(jobs),
                     )
                     break
                 new = sum(1 for j in page_jobs if j.ats_id not in seen)
@@ -157,10 +159,7 @@ class BuiltInScraper(BaseScraper):
                 payload = json.loads(match.group(1))
             except json.JSONDecodeError:
                 continue
-            graph = (
-                payload.get("@graph", [payload])
-                if isinstance(payload, dict) else payload
-            )
+            graph = payload.get("@graph", [payload]) if isinstance(payload, dict) else payload
             if not isinstance(graph, list):
                 graph = [graph]
             for node in graph:
@@ -239,8 +238,7 @@ class BuiltInScraper(BaseScraper):
 
         if find_spec("httpcloak") is None:
             raise ScraperError(
-                "Built In's 403 fallback needs httpcloak — "
-                "`pip install ats-scrapers[scrapers]`."
+                "Built In's 403 fallback needs httpcloak — `pip install ats-scrapers[scrapers]`."
             )
 
         last_status: int | None = None
@@ -283,6 +281,7 @@ def _html_unescape_for_desc(value: object, *, cap: int = 25_000) -> str | None:
     Replaces the legacy _strip_html/_html_to_text path for descriptions
     only — title/company/salary fields still use the strip variant."""
     import html as _h
+
     if not isinstance(value, str):
         return None
     out = _h.unescape(value).strip()

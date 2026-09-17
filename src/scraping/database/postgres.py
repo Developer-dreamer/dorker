@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from logging import Logger
-from typing import Any, List
+from typing import Any, List, Sequence
 
 import asyncpg
 from asyncpg import Pool
@@ -10,7 +10,7 @@ from src.scraping.models import Job, JobDB
 from .base import ATS, ATSCompany, description_keys
 
 
-def _sanitize_record(record: tuple | list) -> tuple:
+def _sanitize_record(record: Sequence[Any]) -> tuple[Any, ...]:
     return tuple(val.replace("\x00", "") if isinstance(val, str) else val for val in record)
 
 
@@ -37,24 +37,27 @@ class JobRepositoryPostgres:
         if not buffer:
             return
 
-        async with (self.pool.acquire() as conn):
+        async with self.pool.acquire() as conn:
             try:
                 async with conn.transaction():
                     await conn.executemany(query, buffer)
             except asyncpg.PostgresError as exc:
                 self.logger.warning(
-                    f"[DB Writer] Batch insert failed ({type(exc).__name__}). Falling back to row-by-row insert."
+                    f"[DB Writer] Batch insert failed ({type(exc).__name__}). "
+                    f"Falling back to row-by-row insert."
                 )
                 for row in buffer:
                     try:
                         await conn.execute(query, *row)
                     except asyncpg.ForeignKeyViolationError as fk_err:
                         self.logger.error(
-                            f"[DB Writer] Dropping job record due to invalid foreign key: {fk_err.detail} | Job URL: {row[3]}"
+                            f"[DB Writer] Dropping job record due to invalid foreign key: "
+                            f"{fk_err.detail} | Job URL: {row[3]}"
                         )
                     except asyncpg.PostgresError as row_err:
                         self.logger.error(
-                            f"[DB Writer] Dropping job record due to DB error: {row_err} | Job URL: {row[3]}"
+                            f"[DB Writer] Dropping job record due to DB error: {row_err} "
+                            f"| Job URL: {row[3]}"
                         )
             except Exception as unhandled:
                 self.logger.critical(
@@ -83,6 +86,7 @@ class JobRepositoryPostgres:
             job.fetched_at or datetime.now(timezone.utc),
         )
 
+
 class CompanyRepositoryPostgres:
     def __init__(self, logger: Logger, pool: Pool) -> None:
         self.logger = logger
@@ -97,7 +101,7 @@ class CompanyRepositoryPostgres:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(query)
 
-        seen_ats = dict()
+        seen_ats: dict[str, Any] = dict()
         for row in rows:
             ats_name = row["ats"]
 
@@ -105,10 +109,12 @@ class CompanyRepositoryPostgres:
                 seen_ats[ats_name] = ATS(name=ats_name, tier=row["tier"])
 
             ats = seen_ats[ats_name]
-            company = ATSCompany(id=row["id"],
-                                 name=row["name"],
-                                 slug=row["slug"],
-                                 url=row["url"],)
+            company = ATSCompany(
+                id=row["id"],
+                name=row["name"],
+                slug=row["slug"],
+                url=row["url"],
+            )
             ats.companies.append(company)
 
         return list(seen_ats.values())
@@ -126,31 +132,46 @@ class CompanyRepositoryPostgres:
         return [ATSCompany(**dict(row)) for row in rows]
 
     async def update_company_stats(
-        self, is_success: bool, duration_ms: int, err: Exception | None, jobs_count: int, company_id
+        self,
+        is_success: bool,
+        duration_ms: int,
+        err: Exception | None,
+        jobs_count: int,
+        company_id: int,
     ) -> None:
         query = """
                     UPDATE companies
-                    SET 
+                    SET
                         last_attempt_at = CURRENT_TIMESTAMP,
-                        last_success_at = CASE WHEN $1::boolean THEN CURRENT_TIMESTAMP ELSE last_success_at END,
-                        last_scrape_duration_ms = $2::integer,
-                        consecutive_errors = CASE WHEN $1::boolean THEN 0 ELSE consecutive_errors + 1 END,
-                        last_error_message = $3::text,
-                        last_job_count = CASE WHEN $1::boolean THEN $4::integer ELSE last_job_count END,
-                        consecutive_zero_jobs = CASE 
-                            WHEN NOT $1::boolean THEN consecutive_zero_jobs 
-                            WHEN $4::integer = 0 THEN consecutive_zero_jobs + 1 
-                            ELSE 0 
+                        last_success_at = CASE
+                            WHEN $1::boolean THEN CURRENT_TIMESTAMP
+                            ELSE last_success_at
                         END,
-                        is_active = CASE 
-                            WHEN NOT $1::boolean AND (consecutive_errors + 1) >= 3 THEN FALSE 
-                            ELSE is_active 
+                        last_scrape_duration_ms = $2::integer,
+                        consecutive_errors = CASE
+                            WHEN $1::boolean THEN 0
+                            ELSE consecutive_errors + 1
+                        END,
+                        last_error_message = $3::text,
+                        last_job_count = CASE
+                            WHEN $1::boolean THEN $4::integer
+                            ELSE last_job_count
+                        END,
+                        consecutive_zero_jobs = CASE
+                            WHEN NOT $1::boolean THEN consecutive_zero_jobs
+                            WHEN $4::integer = 0 THEN consecutive_zero_jobs + 1
+                            ELSE 0
+                        END,
+                        is_active = CASE
+                            WHEN NOT $1::boolean AND (consecutive_errors + 1) >= 3 THEN FALSE
+                            ELSE is_active
                         END
                     WHERE id = $5::integer;
                 """
 
         async with self.pool.acquire() as conn:
             await conn.execute(query, is_success, duration_ms, err, jobs_count, company_id)
+
 
 class DescriptionCachePostgres:
     def __init__(self, logger: Logger, pool: Pool, compress: bool = True) -> None:
@@ -164,7 +185,6 @@ class DescriptionCachePostgres:
             self._compressor = zstandard.ZstdCompressor(level=3)
             self._decompressor = zstandard.ZstdDecompressor()
 
-
     async def close(self) -> None:
         """
         Pool is closed from outer scope
@@ -173,8 +193,8 @@ class DescriptionCachePostgres:
 
     async def get(self, job: Job) -> str | None:
         query = """
-                SELECT payload 
-                FROM description_cache 
+                SELECT payload
+                FROM description_cache
                 WHERE key_type = $1 AND key_value = $2
                 """
 
@@ -184,7 +204,9 @@ class DescriptionCachePostgres:
 
             row = await self.pool.fetchrow(query, key_type, key_value)
             if row:
-                self.logger.info(f"Cache HIT for job_id {job.global_id} by key {key_value} of type {key_type}")
+                self.logger.info(
+                    f"Cache HIT for job_id {job.global_id} by key {key_value} of type {key_type}"
+                )
                 return self._decode(row["payload"])
 
         return None

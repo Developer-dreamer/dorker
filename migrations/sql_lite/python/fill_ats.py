@@ -37,21 +37,26 @@ def insert_ats_file(csv_path: Path, db_path: Path, tier: int) -> None:
         cursor = conn.cursor()
 
         # Direct Upsert
-        cursor.executemany("""
+        cursor.executemany(
+            """
             INSERT INTO ats (ats_name, company_slug, company_name, url, tier)
             VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(ats_name, company_slug) DO UPDATE SET
                 company_name = excluded.company_name,
                 url = excluded.url,
                 tier = excluded.tier;
-        """, records)
+        """,
+            records,
+        )
 
         conn.commit()
 
         # Immediate verification query on the same connection
         cursor.execute("SELECT count(*) FROM ats WHERE ats_name = ?", (ats_name,))
         stored_count = cursor.fetchone()[0]
-        print(f"[+] {csv_path.name:<25} | Parsed: {len(records):>5} | In DB for '{ats_name}': {stored_count:>5}")
+        print(
+            f"[+] {csv_path.name:<25} | Parsed: {len(records):>5} | In DB for '{ats_name}': {stored_count:>5}"
+        )
 
 
 def main() -> None:
@@ -83,7 +88,9 @@ def main() -> None:
     print("FINAL DATABASE TOTALS:")
     with sqlite3.connect(str(DB_PATH.resolve())) as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT ats_name, count(*) FROM ats GROUP BY ats_name ORDER BY count(*) DESC;")
+        cursor.execute(
+            "SELECT ats_name, count(*) FROM ats GROUP BY ats_name ORDER BY count(*) DESC;"
+        )
         rows = cursor.fetchall()
         for ats_name, count in rows:
             print(f"  - {ats_name:<20}: {count:>6} rows")

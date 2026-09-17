@@ -128,28 +128,22 @@ class UKGProScraper(BaseScraper):
                     reported_total = total
                 elif total != reported_total:
                     raise ScraperError(
-                        "UKG total changed during pagination "
-                        f"({reported_total} to {total})"
+                        f"UKG total changed during pagination ({reported_total} to {total})"
                     )
                 for job in page_jobs:
                     if not job.ats_id or job.ats_id in seen_ids:
-                        raise ScraperError(
-                            f"UKG returned duplicate job id {job.ats_id!r}"
-                        )
+                        raise ScraperError(f"UKG returned duplicate job id {job.ats_id!r}")
                     seen_ids.add(job.ats_id)
                     jobs.append(job)
                 skip += len(page_jobs)
                 if skip >= total:
                     break
                 if not page_jobs:
-                    raise ScraperError(
-                        f"UKG ({self.tenant}) pagination ended before total"
-                    )
+                    raise ScraperError(f"UKG ({self.tenant}) pagination ended before total")
 
             if reported_total is None or len(jobs) != reported_total:
                 raise ScraperError(
-                    "UKG catalogue ended before the reported total "
-                    f"({len(jobs)}/{reported_total})"
+                    f"UKG catalogue ended before the reported total ({len(jobs)}/{reported_total})"
                 )
             if not self.include_descriptions or not jobs:
                 return jobs
@@ -162,8 +156,7 @@ class UKGProScraper(BaseScraper):
         completed = [job for job in enriched if job is not None]
         if jobs and not completed:
             raise ScraperError(
-                f"UKG ({self.tenant}) lost every listed job "
-                "during detail validation"
+                f"UKG ({self.tenant}) lost every listed job during detail validation"
             )
         return completed
 
@@ -202,9 +195,7 @@ class UKGProScraper(BaseScraper):
             if detail.get("OpportunityIsClosed") is True:
                 return None
             if detail.get("Id") != job.ats_id:
-                raise ScraperError(
-                    f"UKG detail id did not match listing id {job.ats_id}"
-                )
+                raise ScraperError(f"UKG detail id did not match listing id {job.ats_id}")
             _apply_detail(job, detail)
         except ScraperError as exc:
             logger.warning(
@@ -215,8 +206,7 @@ class UKGProScraper(BaseScraper):
             return job
         if not job.description:
             logger.warning(
-                "Keeping UKG job %s although its detail page omitted "
-                "a description",
+                "Keeping UKG job %s although its detail page omitted a description",
                 job.ats_id,
             )
         return job
@@ -224,9 +214,7 @@ class UKGProScraper(BaseScraper):
     def _parse_internal_base(self, html_text: str) -> str:
         match = _LOAD_URL_RE.search(html_text)
         if match is None:
-            raise ScraperError(
-                f"UKG ({self.tenant}) omitted its public search endpoint"
-            )
+            raise ScraperError(f"UKG ({self.tenant}) omitted its public search endpoint")
         load_url = urljoin(f"https://{self.host}/", html.unescape(match.group(1)))
         parsed = urlparse(load_url)
         segments = [segment for segment in parsed.path.split("/") if segment]
@@ -239,12 +227,8 @@ class UKGProScraper(BaseScraper):
             or _UUID_RE.fullmatch(segments[2]) is None
             or segments[3:] != ["JobBoardView", "LoadSearchResults"]
         ):
-            raise ScraperError(
-                f"UKG ({self.tenant}) returned an unsafe search endpoint"
-            )
-        return (
-            f"https://{self.host}/{segments[0]}/JobBoard/{segments[2]}"
-        )
+            raise ScraperError(f"UKG ({self.tenant}) returned an unsafe search endpoint")
+        return f"https://{self.host}/{segments[0]}/JobBoard/{segments[2]}"
 
     def _parse_listing(
         self,
@@ -263,19 +247,14 @@ class UKGProScraper(BaseScraper):
             or isinstance(total, bool)
             or total < 0
         ):
-            raise ScraperError(
-                f"UKG ({self.tenant}) returned an invalid result envelope"
-            )
+            raise ScraperError(f"UKG ({self.tenant}) returned an invalid result envelope")
         expected = min(PAGE_SIZE, max(total - skip, 0))
         if len(items) != expected:
             raise ScraperError(
                 "UKG listing count did not match the reported total "
                 f"({len(items)} rows at offset {skip}, expected {expected})"
             )
-        jobs = [
-            self._job_from_listing(item, internal_base=internal_base)
-            for item in items
-        ]
+        jobs = [self._job_from_listing(item, internal_base=internal_base) for item in items]
         return jobs, total
 
     def _job_from_listing(
@@ -295,19 +274,14 @@ class UKGProScraper(BaseScraper):
         location_type = item.get("JobLocationType")
         is_remote = (
             True
-            if location_type == 2
-            or (location is not None and "remote" in location.casefold())
+            if location_type == 2 or (location is not None and "remote" in location.casefold())
             else None
         )
         full_time = item.get("FullTime")
         employment_type = (
-            "FULL_TIME"
-            if full_time is True
-            else "PART_TIME" if full_time is False else None
+            "FULL_TIME" if full_time is True else "PART_TIME" if full_time is False else None
         )
-        detail_url = (
-            f"{internal_base}/OpportunityDetail?opportunityId={job_id}"
-        )
+        detail_url = f"{internal_base}/OpportunityDetail?opportunityId={job_id}"
         requisition = item.get("RequisitionNumber")
         department = item.get("JobCategoryName")
         return Job(
@@ -323,14 +297,10 @@ class UKGProScraper(BaseScraper):
             is_remote=is_remote,
             employment_type=employment_type,
             commitment=(
-                "Full Time"
-                if full_time is True
-                else "Part Time" if full_time is False else None
+                "Full Time" if full_time is True else "Part Time" if full_time is False else None
             ),
             department=(
-                department.strip()
-                if isinstance(department, str) and department.strip()
-                else None
+                department.strip() if isinstance(department, str) and department.strip() else None
             ),
             requisition_id=(
                 requisition.strip()
@@ -445,9 +415,7 @@ def _locations(
             if isinstance(item, str) and item.strip():
                 parts.append(item.strip())
         location = ", ".join(_dedupe_strings(parts))
-        if location and location.casefold() not in {
-            existing.casefold() for existing in rendered
-        }:
+        if location and location.casefold() not in {existing.casefold() for existing in rendered}:
             rendered.append(location)
 
         country = address.get("Country")
@@ -487,10 +455,7 @@ def _apply_compensation(job: Job, detail: dict[str, Any]) -> None:
         if isinstance(pay_range, dict):
             minimum = _to_float(pay_range.get("PayRangeMinimum"))
             maximum = _to_float(pay_range.get("PayRangeMaximum"))
-    currency = (
-        detail.get("CompensationCurrencyCode")
-        or detail.get("PayRangeCurrencyCode")
-    )
+    currency = detail.get("CompensationCurrencyCode") or detail.get("PayRangeCurrencyCode")
     if minimum is not None:
         job.salary_min = minimum
     if maximum is not None:
@@ -540,8 +505,7 @@ def _html_to_text(value: str) -> str:
         from bs4 import BeautifulSoup
     except ImportError as exc:
         raise ScraperError(
-            "UKG scraper requires beautifulsoup4; "
-            "install `ats-scrapers[scrapers]`"
+            "UKG scraper requires beautifulsoup4; install `ats-scrapers[scrapers]`"
         ) from exc
     text = BeautifulSoup(value, "html.parser").get_text("\n", strip=True)
     return re.sub(r"[ \t\r\f\v]+", " ", html.unescape(text)).strip()

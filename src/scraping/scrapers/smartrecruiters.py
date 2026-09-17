@@ -34,9 +34,7 @@ if TYPE_CHECKING:
     from src.scraping.fetch import Fetcher
 
 API_TEMPLATE = "https://api.smartrecruiters.com/v1/companies/{slug}/postings"
-DETAIL_TEMPLATE = (
-    "https://api.smartrecruiters.com/v1/companies/{slug}/postings/{id}"
-)
+DETAIL_TEMPLATE = "https://api.smartrecruiters.com/v1/companies/{slug}/postings/{id}"
 PAGE_LIMIT = 100
 DETAIL_CONCURRENCY = 8
 
@@ -95,7 +93,8 @@ class SmartRecruitersScraper(BaseScraper):
         async with self.make_fetcher() as fetch:
             while True:
                 payload = await fetch.get_json(
-                    url, params={"limit": PAGE_LIMIT, "offset": offset},
+                    url,
+                    params={"limit": PAGE_LIMIT, "offset": offset},
                 )
                 content = payload.get("content", [])
                 all_jobs.extend(self._parse_job(item) for item in content)
@@ -105,9 +104,7 @@ class SmartRecruitersScraper(BaseScraper):
 
             if self.include_descriptions and all_jobs:
                 sem = asyncio.Semaphore(DETAIL_CONCURRENCY)
-                await asyncio.gather(*(
-                    self._enrich_detail(fetch, sem, j) for j in all_jobs
-                ))
+                await asyncio.gather(*(self._enrich_detail(fetch, sem, j) for j in all_jobs))
         return all_jobs
 
     async def _enrich_detail(
@@ -150,7 +147,8 @@ class SmartRecruitersScraper(BaseScraper):
 
         department = (
             item.get("department", {}).get("label")
-            if isinstance(item.get("department"), dict) else None
+            if isinstance(item.get("department"), dict)
+            else None
         )
 
         # Function (e.g. ``Customer Service``, ``Engineering``) is the
@@ -158,7 +156,8 @@ class SmartRecruitersScraper(BaseScraper):
         # it when ``department`` is empty (~65% of rows had no dept).
         function = (
             item.get("function", {}).get("label")
-            if isinstance(item.get("function"), dict) else None
+            if isinstance(item.get("function"), dict)
+            else None
         )
         team = function if isinstance(function, str) else None
         if not department and team:
@@ -173,14 +172,23 @@ class SmartRecruitersScraper(BaseScraper):
         emp_label = type_obj.get("label") if isinstance(type_obj, dict) else None
         employment_type = _map_employment_type(emp_id) or _map_employment_type(emp_label)
         commitment = (
-            emp_label.strip() if isinstance(emp_label, str) and emp_label.strip()
+            emp_label.strip()
+            if isinstance(emp_label, str) and emp_label.strip()
             else (emp_id.strip() if isinstance(emp_id, str) and emp_id.strip() else None)
         )
 
         raw: dict[str, Any] = {}
-        for k in ("industry", "function", "department", "experienceLevel",
-                  "creator", "company", "refNumber", "customField",
-                  "language"):
+        for k in (
+            "industry",
+            "function",
+            "department",
+            "experienceLevel",
+            "creator",
+            "company",
+            "refNumber",
+            "customField",
+            "language",
+        ):
             v = item.get(k)
             if v:
                 raw[k] = v

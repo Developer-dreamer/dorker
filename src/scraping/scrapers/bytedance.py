@@ -85,16 +85,12 @@ class BytedanceScraper(BaseScraper):
                 body = await self._post_page(fetch, payload)
                 code = body.get("code")
                 if code:
-                    raise ScraperError(
-                        f"ByteDance API error code {code}: {body.get('message')}"
-                    )
+                    raise ScraperError(f"ByteDance API error code {code}: {body.get('message')}")
                 payload_data = body.get("data")
                 if not isinstance(payload_data, dict):
                     raise ScraperError("ByteDance response omitted data object")
                 if not isinstance(payload_data.get("job_post_list"), list):
-                    raise ScraperError(
-                        "ByteDance response omitted job_post_list"
-                    )
+                    raise ScraperError("ByteDance response omitted job_post_list")
                 total = payload_data.get("count")
                 if not isinstance(total, int) or total < 0:
                     raise ScraperError("ByteDance response had invalid count")
@@ -107,14 +103,10 @@ class BytedanceScraper(BaseScraper):
                     )
                 jobs = payload_data["job_post_list"]
                 if not all(isinstance(job, dict) for job in jobs):
-                    raise ScraperError(
-                        "ByteDance job_post_list contained a non-object row"
-                    )
+                    raise ScraperError("ByteDance job_post_list contained a non-object row")
                 if not jobs:
                     if not all_jobs:
-                        raise ScraperError(
-                            "ByteDance full-catalogue scrape returned no jobs"
-                        )
+                        raise ScraperError("ByteDance full-catalogue scrape returned no jobs")
                     if offset < total:
                         raise ScraperError(
                             "ByteDance returned an empty page before count "
@@ -123,15 +115,9 @@ class BytedanceScraper(BaseScraper):
                     break
                 parsed = [self._parse_job(job) for job in jobs]
                 if any(job is None for job in parsed):
-                    raise ScraperError(
-                        "ByteDance could not parse every returned job row"
-                    )
+                    raise ScraperError("ByteDance could not parse every returned job row")
                 for job in parsed:
-                    if (
-                        job is None
-                        or not job.ats_id
-                        or job.ats_id in seen_ids
-                    ):
+                    if job is None or not job.ats_id or job.ats_id in seen_ids:
                         continue
                     seen_ids.add(job.ats_id)
                     all_jobs.append(job)
@@ -160,9 +146,7 @@ class BytedanceScraper(BaseScraper):
     ) -> dict[str, Any]:
         body = await fetch.post_json(API_URL, json=payload)
         if not isinstance(body, dict):
-            raise ScraperError(
-                "ByteDance returned a non-object JSON response"
-            )
+            raise ScraperError("ByteDance returned a non-object JSON response")
         return body
 
     def _parse_job(self, item: dict[str, Any]) -> Job | None:
@@ -200,9 +184,16 @@ class BytedanceScraper(BaseScraper):
         )
 
         raw: dict[str, Any] = {}
-        for k in ("job_category", "job_subject", "recruit_type",
-                  "experience", "department_info", "skill_list",
-                  "tag_list", "process_type"):
+        for k in (
+            "job_category",
+            "job_subject",
+            "recruit_type",
+            "experience",
+            "department_info",
+            "skill_list",
+            "tag_list",
+            "process_type",
+        ):
             v = item.get(k)
             if v:
                 raw[k] = v
@@ -223,11 +214,7 @@ class BytedanceScraper(BaseScraper):
             salary_min=salary_min,
             salary_max=salary_max,
             salary_currency=post_info.get("currency"),
-            salary_period=(
-                "YEAR"
-                if salary_min is not None or salary_max is not None
-                else None
-            ),
+            salary_period=("YEAR" if salary_min is not None or salary_max is not None else None),
             posted_at=_parse_ts(item.get("publish_time") or item.get("post_time")),
             fetched_at=datetime.now(tz=UTC),
             raw=raw or None,

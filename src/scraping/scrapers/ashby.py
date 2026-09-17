@@ -58,9 +58,8 @@ class AshbyScraper(BaseScraper):
 
     def _parse_job(self, item: dict[str, Any]) -> Job:
         comp = item.get("compensation") or {}
-        summary = (
-            comp.get("compensationTierSummary")
-            or comp.get("scrapeableCompensationSalarySummary")
+        summary = comp.get("compensationTierSummary") or comp.get(
+            "scrapeableCompensationSalarySummary"
         )
         salary_min, salary_max, currency, period = _parse_comp(comp)
 
@@ -86,11 +85,7 @@ class AshbyScraper(BaseScraper):
         # post-scrape markdownify step in scripts/normalize_descriptions.py
         # then converts the HTML into clean markdown. Plain stays as a
         # last-ditch fallback.
-        description = (
-            item.get("descriptionHtml")
-            or item.get("descriptionPlain")
-            or None
-        )
+        description = item.get("descriptionHtml") or item.get("descriptionPlain") or None
 
         secondary_locations = item.get("secondaryLocations") or []
 
@@ -101,7 +96,8 @@ class AshbyScraper(BaseScraper):
             raw["team"] = item["team"]
         if secondary_locations:
             raw["secondary_locations"] = [
-                loc.get("location") for loc in secondary_locations
+                loc.get("location")
+                for loc in secondary_locations
                 if isinstance(loc, dict) and loc.get("location")
             ]
         if item.get("address"):

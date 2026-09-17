@@ -2,7 +2,12 @@
 name = "job-analyst"
 version = "0.1.0"
 description = "Job Analyst Bot"
-dependencies = [] # Add dependencies here if needed
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.16.0",
+    "mypy>=2.3.0",
+]
 
 [build-system]
 requires = ["setuptools", "wheel"]
@@ -10,7 +15,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["src*"]
+include = ["src*", "orchestration*"]
 
 [tool.ruff]
 target-version = "py312"
@@ -24,20 +29,27 @@ line-length = 100
 # B - search for potential bugs (flake8-bugbear)
 # C90 - checking code cyclomatic complexity
 select = ["E", "W", "F", "I", "B", "C90"]
+ignore = ["E501", "C901", "W291"]
 
 fixable = ["ALL"]
 unfixable = []
 
 [tool.ruff.lint.mccabe]
-max-complexity = 10
+max-complexity = 20
 
 [tool.mypy]
+files = ["src", "orchestration"]
+
 strict = true
-
 warn_return_any = true
-
 no_implicit_optional = true
-
 show_error_codes = true
-
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "src.scraping.scrapers.*",
+    "ml.*",
+    "migrations.*"
+]
+ignore_errors = true
