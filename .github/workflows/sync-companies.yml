@@ -38,7 +38,7 @@ jobs:
           # 1. Locate upstream source CSV directory
           # Handles either a subfolder named 'ats-scrapers' or root-level CSV collections
           possible_sources = [
-              os.path.join(UPSTREAM_DIR, "ats-scrapers"),
+              os.path.join(UPSTREAM_DIR, "ats-companies"),
               UPSTREAM_DIR,
           ]
           source_dir = None
