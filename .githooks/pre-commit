@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -e
+
+echo "Running Ruff autofix & format..."
+ruff check --fix .
+ruff format .
+
+# Re-stage any files modified by Ruff
+git update-index --again
+
+echo "Running Mypy..."
+mypy --no-incremental .
