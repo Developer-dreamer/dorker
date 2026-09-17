@@ -4,7 +4,7 @@ Each scraper is a thin, dependency-light fetch+parse layer that returns
 `Job` instances. Discovery, enrichment, deduplication, and publishing are
 kept outside the public scraper API so each scraper stays usable on its own.
 
->>> from ats_scrapers.scrapers import GreenhouseScraper
+>>> from src.scraping.scrapers import GreenhouseScraper
 >>> jobs = GreenhouseScraper("anthropic").fetch()
 """
 
@@ -83,6 +83,8 @@ from src.scraping.scrapers.workday import WorkdayScraper
 from src.scraping.scrapers.ycombinator import YCombinatorScraper
 
 __all__ = [
+    "DjinniScraper",
+    "DOUScraper",
     "ADPWorkforceNowScraper",
     "AmazonScraper",
     "AppleScraper",
@@ -156,6 +158,4 @@ __all__ = [
     "YCombinatorScraper",
     "get_scraper",
     "iCIMSScraper",
-    "DOUScraper",
-    "DjinniScraper",
 ]

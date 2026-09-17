@@ -75,7 +75,7 @@ class JoinComScraper(BaseScraper):
                 params = {
                     "locale": "en-us",
                     "page": page,
-                    "pageSize": 6,
+                    "pageSize": 100,
                     "withAggregations": "true",
                     "sort": "+title",
                 }
