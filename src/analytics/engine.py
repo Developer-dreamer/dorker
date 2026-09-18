@@ -291,8 +291,12 @@ class Engine:
                         set to true.
                         """
                 llm += "Evidence from description: " + gen(name="ev_flexibility", stop="\n") + "\n"
-                llm += "Is experience flexible? " + select([True, False], name="flexibility") + "\n"
-                domain_entity.is_experience_flexible = bool(["flexibility"])
+                llm += (
+                    "Is experience flexible? "
+                    + select(["true", "false"], name="flexibility")
+                    + "\n"
+                )
+                domain_entity.is_experience_flexible = llm["flexibility"] == "true"
                 step += 1
 
                 llm += f"""Step {step} - Identify job family. It is defined by next constraints:
