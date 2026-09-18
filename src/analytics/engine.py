@@ -118,7 +118,11 @@ class Engine:
         location_entity = LocationEntities()
         with log_guidance_step(self.logger, str(job.id), "Location", llm) as tracker:
             with guidance.user():
-                llm += f"""Analyze this job description:{description}"""
+                llm += f"""Analyze this job description:{description}.
+                        Identify and save all entities that could be useful when
+                        resolving workplace location: employment country, region, legal requirements
+                        for an applicant.
+                        """
 
             with guidance.assistant():
                 step = 1
@@ -230,7 +234,9 @@ class Engine:
 
         with log_guidance_step(self.logger, str(job.id), "Domain", llm) as tracker:
             with guidance.user():
-                llm += f"""Analyze this job description:{description}"""
+                llm += f"""Analyze this job description:{description}.
+                        Identify and save all entities that could be required
+                        """
 
             with guidance.assistant():
                 step = 1
@@ -450,3 +456,215 @@ class Engine:
             ]
 
         return jobs
+
+
+# def fact_sheet_to_match(sheet: JobFactSheet, raw_job_title: str) -> MatchedJob:
+#     """
+#     Deterministically evaluates an extracted JobFactSheet against candidate
+#     hard gates, technical capabilities, and strategic scoring rules.
+#     """
+#     pros: list[str] = []
+#     cons: list[str] = []
+#     warnings: list[str] = []
+#
+#     # -------------------------------------------------------------------------
+#     # Step 1: Hard Gates (Fatal Constraints -> Immediate REJECTED)
+#     # -------------------------------------------------------------------------
+#
+#     # 1.1 Geographic & Legal Authorization Gate
+#     if sheet.geographic_scope == "DOMESTIC" and sheet.target_jurisdiction != "UA":
+#         return MatchedJob(
+#             suitability_tier=SuitabilityTier.REJECTED,
+#             rejection_reason="Strict domestic residency, W-2 only, or citizenship/clearance required.",
+#             confidence_score=0.95,
+#             analytics=Analytics(warnings=["Geographic restriction / domestic legal barrier."]),
+#         )
+#
+#     # 1.2 Workplace Presence Gate
+#     if sheet.workplace_type == "ON_SITE":
+#         return MatchedJob(
+#             suitability_tier=SuitabilityTier.REJECTED,
+#             rejection_reason="Mandatory 100% on-site office presence required.",
+#             confidence_score=0.95,
+#             analytics=Analytics(warnings=["Role does not support remote work."]),
+#         )
+#
+#     if sheet.workplace_type == "HYBRID":
+#         city = (sheet.office_location_city or "").strip().lower()
+#         if "kyiv" not in city and "kiev" not in city:
+#             return MatchedJob(
+#                 suitability_tier=SuitabilityTier.REJECTED,
+#                 rejection_reason=f"Hybrid attendance required outside Kyiv ({sheet.office_location_city or 'Unknown location'}).",
+#                 confidence_score=0.90,
+#                 analytics=Analytics(
+#                     warnings=[f"Hybrid office location: {sheet.office_location_city}"]
+#                 ),
+#             )
+#
+#     # 1.3 Mandatory Travel Gate
+#     if sheet.has_mandatory_travel:
+#         return MatchedJob(
+#             suitability_tier=SuitabilityTier.REJECTED,
+#             rejection_reason="Mandatory travel or physical hardware pickup required.",
+#             confidence_score=0.90,
+#             analytics=Analytics(warnings=["Frequent travel / physical onboarding requirement."]),
+#         )
+#
+#     # 1.4 Out-of-Scope Architecture / Legacy Maintenance Gate
+#     if sheet.is_legacy_maintenance:
+#         return MatchedJob(
+#             suitability_tier=SuitabilityTier.REJECTED,
+#             rejection_reason="Role primarily focused on legacy monolith maintenance (PHP / older Java).",
+#             confidence_score=0.95,
+#             analytics=Analytics(cons=["Legacy stack maintenance."]),
+#         )
+#
+#     if sheet.is_pure_network_or_systems:
+#         return MatchedJob(
+#             suitability_tier=SuitabilityTier.REJECTED,
+#             rejection_reason="Pure network engineering / hardware routing focus (BGP, OSPF).",
+#             confidence_score=0.95,
+#             analytics=Analytics(cons=["Hardware/routing engineering focus."]),
+#         )
+#
+#     # -------------------------------------------------------------------------
+#     # Step 2: Technical Capability Score Evaluation (Base: 1.0)
+#     # -------------------------------------------------------------------------
+#     tech_score = 1.0
+#
+#     # 2.1 Seniority & Experience Penalties
+#     yoe = sheet.min_years_experience
+#     title_lower = raw_job_title.lower()
+#     is_senior_title = any(
+#         kw in title_lower for kw in ["senior", "snr", "lead", "principal", "staff"]
+#     )
+#
+#     if yoe is not None:
+#         if yoe >= 5:
+#             if sheet.is_experience_flexible:
+#                 tech_score -= 0.20
+#                 cons.append(f"Senior level requested ({yoe}+ YoE), but marked flexible.")
+#             else:
+#                 tech_score -= 0.35
+#                 cons.append(f"Senior experience gap ({yoe}+ YoE required vs <1 yr commercial).")
+#         elif yoe >= 2:
+#             tech_score -= 0.10 if sheet.is_experience_flexible else 0.20
+#             cons.append(f"Middle experience requirement ({yoe}+ YoE vs <1 yr commercial).")
+#     else:
+#         if is_senior_title:
+#             if sheet.is_experience_flexible:
+#                 tech_score -= 0.20
+#                 cons.append("Title indicates Senior level, but text implies flexibility.")
+#             else:
+#                 tech_score -= 0.35
+#                 cons.append("Implicit Senior gap: Title is Senior, no numerical YoE stated.")
+#         else:
+#             if sheet.is_experience_flexible:
+#                 pros.append("Flexible experience requirements stated in posting.")
+#
+#     # 2.2 Primary Backend Language Alignment
+#     req_langs = [lang.strip().lower() for lang in sheet.primary_backend_languages if lang.strip()]
+#     matched_langs = [lang for lang in req_langs if any(c in lang for c in [])]
+#
+#     if req_langs:
+#         if not matched_langs:
+#             tech_score -= 0.40
+#             cons.append(
+#                 f"Primary language mismatch: requires {', '.join(sheet.primary_backend_languages)}."
+#             )
+#         else:
+#             pros.append(f"Direct match on primary language(s): {', '.join(matched_langs)}.")
+#             unmatched_langs = [lang for lang in req_langs if lang not in matched_langs]
+#             if unmatched_langs:
+#                 tech_score -= min(0.20, 0.10 * len(unmatched_langs))
+#                 cons.append(f"Secondary language gap: {', '.join(unmatched_langs)}.")
+#     else:
+#         tech_score -= 0.10
+#         warnings.append("No explicit primary backend language identified in posting.")
+#
+#     # 2.3 Secondary Tools & Infrastructure Alignment
+#     req_tools = [t.strip().lower() for t in sheet.secondary_tools if t.strip()]
+#     matched_tools = [t for t in req_tools if any(c in t for c in [])]
+#     unmatched_tools = [t for t in req_tools if not any(c in t for c in [])]
+#
+#     if matched_tools:
+#         pros.append(f"Tooling overlap: {', '.join(matched_tools[:5])}.")
+#     if unmatched_tools:
+#         tool_deduction = min(0.20, 0.05 * len(unmatched_tools))
+#         tech_score -= tool_deduction
+#         cons.append(f"Tooling/Cloud gaps: {', '.join(unmatched_tools[:4])}.")
+#
+#     if not req_langs and not req_tools:
+#         return MatchedJob(
+#             suitability_tier=SuitabilityTier.REJECTED,
+#             rejection_reason="Out-of-scope domain: No backend languages or infrastructure tools detected.",
+#             confidence_score=0.95,
+#             analytics=Analytics(
+#                 warnings=["Non-technical/Sales/Management role detected (False Positive)."]
+#             ),
+#         )
+#
+#     # -------------------------------------------------------------------------
+#     # Step 3: Strategic Value Score Evaluation (Base: 1.0)
+#     # -------------------------------------------------------------------------
+#     strategic_score = 1.0
+#
+#     if sheet.workplace_type == "REMOTE":
+#         pros.append("100% remote work arrangement.")
+#     elif sheet.workplace_type == "HYBRID":
+#         pros.append("Hybrid role with office located in Kyiv.")
+#
+#     if sheet.has_uncompensated_oncall:
+#         strategic_score -= 0.15
+#         warnings.append("On-call rotation required without explicit compensation parameters.")
+#
+#     for cue in sheet.detected_operational_cues:
+#         warnings.append(f"Operational risk cue: '{cue}'.")
+#
+#     # -------------------------------------------------------------------------
+#     # Step 4: Normalization & Tier Classification
+#     # -------------------------------------------------------------------------
+#     tech_score = max(0.0, min(1.0, round(tech_score, 2)))
+#     strategic_score = max(0.0, min(1.0, round(strategic_score, 2)))
+#
+#     confidence = 0.95
+#     if sheet.geographic_scope == "UNKNOWN":
+#         confidence -= 0.10
+#     if sheet.workplace_type == "UNKNOWN":
+#         confidence -= 0.10
+#     if sheet.min_years_experience is None:
+#         confidence -= 0.05
+#     confidence = max(0.50, round(confidence, 2))
+#
+#     if tech_score >= 0.60 and strategic_score >= 0.60:
+#         tier = SuitabilityTier.SUITABLE
+#         strategic_reason = "High alignment with core technical stack and work arrangement."
+#         rejection_reason = ""
+#     elif tech_score < 0.60 and strategic_score >= 0.60:
+#         tier = SuitabilityTier.STRETCH
+#         strategic_reason = (
+#             "High strategic value role with addressable technical or seniority stretch."
+#         )
+#         rejection_reason = ""
+#     elif tech_score >= 0.50 and strategic_score < 0.60:
+#         tier = SuitabilityTier.RUNWAY
+#         strategic_reason = (
+#             "Viable technical baseline, but lower architectural or operational alignment."
+#         )
+#         rejection_reason = ""
+#     else:
+#         tier = SuitabilityTier.REJECTED
+#         strategic_reason = ""
+#         rejection_reason = (
+#             "Combined technical capability and strategic score fell below viable thresholds."
+#         )
+#
+#     return MatchedJob(
+#         technical_capability_score=tech_score,
+#         strategic_value_score=strategic_score,
+#         confidence_score=confidence,
+#         suitability_tier=tier,
+#         strategic_reason=strategic_reason,
+#         rejection_reason=rejection_reason,
+#         analytics=Analytics(pros=pros, cons=cons, warnings=warnings),
+#     )
