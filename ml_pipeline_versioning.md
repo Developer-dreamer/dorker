@@ -17,3 +17,8 @@ Python fixed empty extracted langs and tools scoring
 ## v0.1.3
 
 Extended JobFactSheet with JobFamily value
+
+## v0.2.0
+
+Migrated pipeline to Guidance framework. Splitted JobFactSheet model to 3 intermediate stages:
+LocationEntities, DomainEntities, RedflagsEntities.

@@ -8,7 +8,7 @@ import asyncpg
 from rich.live import Live
 
 from src.scraping.configuration_manager import DynamicConfigManager
-from src.scraping.database.base import ATS, CompanyRepository
+from src.scraping.database.base import CompanyRepository
 from src.scraping.database.postgres import (
     CompanyRepositoryPostgres,
     DescriptionCachePostgres,
@@ -16,6 +16,7 @@ from src.scraping.database.postgres import (
 )
 from src.scraping.pipeline_engine.engine import RunEngine
 from src.scraping.ui.cli import ATSState, Dashboard
+from src.shared.models.company import ATS
 
 ROOT = Path(__file__).resolve().parent.parent
 

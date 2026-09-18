@@ -11,8 +11,9 @@ from typing import Any, Dict, Iterator, List
 from asyncpg import Pool
 
 from src.scraping.configuration_manager import DynamicConfigManager
-from src.scraping.database.base import ATS, CompanyRepository, DescriptionCache, JobRepository
-from src.scraping.models import JobDB
+from src.scraping.database.base import CompanyRepository, DescriptionCache, JobRepository
+from src.shared.models.company import ATS
+from src.shared.models.job import Job as JobDomain
 from src.shared.types.priority_semaphore import PrioritySemaphore
 
 from .scraper_runner import ScraperRunner
@@ -37,7 +38,7 @@ class RunEngine:
         self.pool: Pool = pool
 
         self.priority_sem = PrioritySemaphore(max_concurrent_ats)
-        self.db_writer_queue: asyncio.Queue[JobDB | None] = asyncio.Queue(maxsize=1000)
+        self.db_writer_queue: asyncio.Queue[JobDomain | None] = asyncio.Queue(maxsize=1000)
         self.ui_queue: asyncio.Queue[Dict[str, Any] | None] | None = ui_queue
         self.description_cache: DescriptionCache = description_cache
 
@@ -121,7 +122,7 @@ class RunEngine:
                 fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
     async def _db_writer_worker(self, batch_size: int = 500) -> None:
-        buffer: list[JobDB] = []
+        buffer: list[JobDomain] = []
 
         async def _flush() -> None:
             if not buffer:

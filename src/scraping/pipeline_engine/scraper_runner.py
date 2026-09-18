@@ -9,10 +9,12 @@ from pydantic import ValidationError
 
 from src.scraping.base import BaseScraper
 from src.scraping.configuration_manager import DynamicConfigManager
-from src.scraping.database.base import ATS, ATSCompany, CompanyRepository, DescriptionCache
+from src.scraping.database.base import CompanyRepository, DescriptionCache
 from src.scraping.exceptions import CompanyNotFoundError
-from src.scraping.models import Job, JobDB
+from src.scraping.models import Job
 from src.scraping.ui.cli import Counts, DescCounts
+from src.shared.models.company import ATS, ATSCompany
+from src.shared.models.job import Job as JobDomain
 from src.shared.types.priority_semaphore import PrioritySemaphore
 
 STREAM_DESCRIPTION_CONCURRENCY = 8
@@ -27,7 +29,7 @@ class ScraperRunner:
         priority_semaphore: PrioritySemaphore,
         description_cache: DescriptionCache,
         company_repo: CompanyRepository,
-        db_queue: asyncio.Queue[JobDB | None],
+        db_queue: asyncio.Queue[JobDomain | None],
         concurrency: int,
         timeout: float,
         max_tenants: int | None = None,
@@ -417,7 +419,7 @@ class ScraperRunner:
                                 if self.description_delay:
                                     await asyncio.sleep(self.description_delay)
 
-                db_job = JobDB.from_domain(company_id, job)
+                db_job = job.to_domain(company_id)
                 await self.db_queue.put(db_job)
                 self.counts.jobs_queued += 1
                 tenant_queued += 1
@@ -471,7 +473,7 @@ class ScraperRunner:
             return slug, None, [], f"{type(exc).__name__}: {str(exc)[:120]}"
 
     async def _write_streamed_job(self, company_id: int, job: Job) -> None:
-        db_job = JobDB.from_domain(company_id, job)
+        db_job = job.to_domain(company_id)
         await self.db_queue.put(db_job)
 
         self.counts.jobs_scraped += 1

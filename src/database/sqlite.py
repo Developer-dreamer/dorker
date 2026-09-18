@@ -7,7 +7,7 @@ import aiosqlite
 import uuid6
 
 from src.scraping.models import Job
-from src.shared.models.company import Company
+from src.shared.models.company import ATSCompany
 
 
 async def run_migrations(db_path: str | Path, migrations_dir: str | Path) -> None:
@@ -68,7 +68,7 @@ async def get_db_connection(db_path: Path) -> aiosqlite.Connection:
 
 async def get_companies_from_ats_randomly(
     db_path: str | Path, ats_name: str, limit: int = 10
-) -> List[Company]:
+) -> List[ATSCompany]:
 
     query = """SELECT
                     ats_name as ats_name,
@@ -89,7 +89,7 @@ async def get_companies_from_ats_randomly(
         async with db.execute(query, (ats_name, limit)) as cursor:
             rows = await cursor.fetchall()
             # Map directly using dictionary unpacking into the Pydantic model
-            return [Company(**dict(row)) for row in rows]
+            return [ATSCompany(**dict(row)) for row in rows]
 
 
 """

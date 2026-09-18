@@ -5,9 +5,11 @@ from typing import Any, List, Sequence
 import asyncpg
 from asyncpg import Pool
 
-from src.scraping.models import Job, JobDB
+from src.scraping.models import Job
+from src.shared.models.company import ATS, ATSCompany
+from src.shared.models.job import Job as JobDomain
 
-from .base import ATS, ATSCompany, description_keys
+from .base import description_keys
 
 
 def _sanitize_record(record: Sequence[Any]) -> tuple[Any, ...]:
@@ -19,7 +21,7 @@ class JobRepositoryPostgres:
         self.logger = logger
         self.pool = pool
 
-    async def save_job_batch(self, jobs: List[JobDB]) -> None:
+    async def save_job_batch(self, jobs: List[JobDomain]) -> None:
         query = """
                     INSERT INTO jobs (
                         id, ats_type, ats_id, url, apply_url, title, company_id, location,
@@ -64,7 +66,7 @@ class JobRepositoryPostgres:
                     f"[DB Writer] Unexpected error during flush: {unhandled}", exc_info=True
                 )
 
-    def _job_to_db_params(self, job: JobDB) -> tuple[Any, ...]:
+    def _job_to_db_params(self, job: JobDomain) -> tuple[Any, ...]:
         return (
             job.id,
             job.ats_type.value,

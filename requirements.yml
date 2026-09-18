@@ -29,3 +29,5 @@ dependencies:
       - joblib==1.5.3
       - rich==15.0.0
       - asyncpg==0.31.0
+      - guidance==0.3.1
+      - llama-cpp-python==0.3.35

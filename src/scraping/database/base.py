@@ -1,34 +1,12 @@
 from typing import List, Protocol
 
-from pydantic import BaseModel
-
-from src.scraping.models import Job, JobDB
+from src.scraping.models import Job
+from src.shared.models.company import ATS
+from src.shared.models.job import Job as JobDomain
 
 
 class JobRepository(Protocol):
-    async def save_job_batch(self, jobs: List[JobDB]) -> None: ...
-
-
-class ATSCompany(BaseModel):
-    id: int
-    name: str
-    slug: str
-    url: str | None
-
-
-class ATS(BaseModel):
-    name: str
-    tier: int
-
-    companies: List[ATSCompany] = []
-
-    def __hash__(self) -> int:
-        return hash(self.name)
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, ATS):
-            return False
-        return self.name == other.name
+    async def save_job_batch(self, jobs: List[JobDomain]) -> None: ...
 
 
 class CompanyRepository(Protocol):
