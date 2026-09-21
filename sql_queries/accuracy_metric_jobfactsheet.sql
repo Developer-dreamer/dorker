@@ -11,7 +11,6 @@ WITH comparisons AS (
         (g.has_uncompensated_oncall IS NOT DISTINCT FROM m.has_uncompensated_oncall)::int AS has_uncompensated_oncall,
         (g.geographic_scope IS NOT DISTINCT FROM m.geographic_scope)::int AS geographic_scope,
         (g.region IS NOT DISTINCT FROM m.region)::int AS region,
-        (g.timezone_overlap_requested IS NOT DISTINCT FROM m.timezone_overlap_requested)::int AS timezone_overlap_requested,
         (g.target_jurisdiction IS NOT DISTINCT FROM m.target_jurisdiction)::int AS target_jurisdiction,
         (CASE
              WHEN (g.primary_backend_languages IS NULL OR cardinality(g.primary_backend_languages) = 0)
@@ -38,7 +37,7 @@ WITH comparisons AS (
     FROM jobs_fact_sheets g
              INNER JOIN jobs_fact_sheets m
                         ON g.job_id = m.job_id
-                            AND m.version = 'v0.2.0'
+                            AND m.version = 'v0.2.1'
     WHERE g.model = 'golden_set_manual'
 )
 SELECT
@@ -58,7 +57,6 @@ FROM comparisons
         ('has_uncompensated_oncall', has_uncompensated_oncall),
         ('geographic_scope', geographic_scope),
         ('region', region),
-        ('timezone_overlap_requested', timezone_overlap_requested),
         ('target_jurisdiction', target_jurisdiction),
         ('primary_backend_languages', primary_backend_languages),
         ('secondary_tools', secondary_tools)

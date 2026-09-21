@@ -97,7 +97,7 @@ class CompanyRepositoryPostgres:
     async def get_tenants(self) -> List[ATS]:
         query = """
                 SELECT id, ats, tier, name, slug, url  FROM companies
-                    WHERE is_active = TRUE
+                    WHERE is_active = TRUE;
                 """
 
         async with self.pool.acquire() as conn:
@@ -137,7 +137,7 @@ class CompanyRepositoryPostgres:
         self,
         is_success: bool,
         duration_ms: int,
-        err: Exception | None,
+        err: str | None,
         jobs_count: int,
         company_id: int,
     ) -> None:
@@ -240,9 +240,7 @@ class DescriptionCachePostgres:
         if not rows:
             return 0
 
-        conflict_clause = (
-            "DO UPDATE SET description = EXCLUDED.description" if replace else "DO NOTHING"
-        )
+        conflict_clause = "DO UPDATE SET payload = EXCLUDED.payload" if replace else "DO NOTHING"
 
         query = f"""
             INSERT INTO description_cache (key_type, key_value, payload)

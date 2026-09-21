@@ -69,6 +69,10 @@ class MalformedJSONError(ScraperError, ValueError):
     """
 
 
+class RetryExhaustedError(ScraperError):
+    """A retryable HTTP or network failure exhausted its attempt budget."""
+
+
 # Total attempts per request (first try included). Module-level so the
 # suite-wide conftest fixture can dial them down in one place; a
 # Fetcher constructed with explicit values ignores these.

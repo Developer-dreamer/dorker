@@ -18,8 +18,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 API_ROOT = "https://jobs.dou.ua/vacancies/"
-MAX_CONCURRENCY = 2
-DETAIL_CONCURRENCY = 2
+MAX_CONCURRENCY = 1
+DETAIL_CONCURRENCY = 1
 
 _UKR_MONTHS = {
     "січня": 1,

@@ -265,12 +265,12 @@
   },
   "wellfound": { "enabled": false, "singleton": true, "paused": false },
   "dou": {
-    "enabled": false,
+    "enabled": true,
     "singleton": true,
     "paused": false
   },
   "djinni": {
-    "enabled": false,
+    "enabled": true,
     "singleton": true,
     "paused": false
   }

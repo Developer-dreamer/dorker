@@ -15,7 +15,7 @@ class CompanyRepository(Protocol):
         self,
         is_success: bool,
         duration_ms: int,
-        err: Exception | None,
+        err: str | None,
         jobs_count: int,
         company_id: int,
     ) -> None: ...

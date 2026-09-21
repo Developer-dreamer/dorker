@@ -266,8 +266,7 @@ class ScraperRunner:
                 f"{min(i + batch_size, len(self.ats.companies))} "
                 f"of {len(self.ats.companies)}..."
             )
-            await asyncio.gather(*(self._scrape_tenant(compn) for compn in batch))
-
+            await asyncio.gather(*(self._scrape_tenant_safe(compn) for compn in batch))
             batch_elapsed = time.time() - batch_t0
             total_elapsed = time.time() - self.start
             self.logger.info(
@@ -321,6 +320,14 @@ class ScraperRunner:
             return True
 
         return False
+
+    async def _scrape_tenant_safe(self, company: ATSCompany) -> None:
+        try:
+            await self._scrape_tenant(company)
+        except Exception as e:
+            self.logger.error(
+                f"[{self.ats.name}] [ERROR] Scraping failed: {type(e).__name__}: {str(e)[:300]}"
+            )
 
     async def _scrape_tenant(self, company: ATSCompany) -> None:
         active_tenant_delay = float(self.cfg.get(self.ats.name).get("tenant_delay_seconds", 0))
@@ -388,8 +395,9 @@ class ScraperRunner:
         elif err:
             err_exc = RuntimeError(err)
 
+        err_msg = str(err_exc) if err_exc is not None else None
         await self.company_repo.update_company_stats(
-            is_success, duration_ms, err_exc, len(jobs), company_id
+            is_success, duration_ms, err_msg, len(jobs), company_id
         )
 
         tenant_desc_stats = DescCounts()

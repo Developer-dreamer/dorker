@@ -22,3 +22,11 @@ Extended JobFactSheet with JobFamily value
 
 Migrated pipeline to Guidance framework. Splitted JobFactSheet model to 3 intermediate stages:
 LocationEntities, DomainEntities, RedflagsEntities.
+
+## v0.2.1
+
+Switched to thinking model
+
+## v0.2.2
+
+Extended job family enum

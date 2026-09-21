@@ -1,4 +1,5 @@
-from typing import Any, Literal, Optional
+from enum import Enum
+from typing import Any, Dict, Literal, Optional
 from uuid import UUID
 
 import uuid6
@@ -26,7 +27,7 @@ class JobForAnalytics(BaseModel):
     title: str
     location: str | None
 
-    description: str | None
+    description: str
 
     salary_min: float | None
     salary_max: float | None
@@ -65,12 +66,14 @@ class LocationEntities(BaseModel):
             "REGIONAL if bound to operational timezones (EMEA, LATAM, APAC)."
         ),
     )
-    region: Optional[Literal["EMEA", "LATAM", "APAC", "AMER", "APJ", "CEE", "MENA", "SEA"]] = Field(
-        default=None,
-        description=(
-            "Regional abbreviation of operational timezone requirement: EMEA, APAC, LATAM, etc. "
-            "Must be null if not an operational timezone corridor."
-        ),
+    region: Literal["EMEA", "LATAM", "APAC", "AMER", "APJ", "CEE", "MENA", "SEA", "UNKNOWN"] = (
+        Field(
+            default="UNKNOWN",
+            description=(
+                "Regional abbreviation of operational timezone requirement: EMEA, APAC, LATAM, etc. "
+                "Must be null if not an operational timezone corridor."
+            ),
+        )
     )
     target_jurisdiction: Optional[str] = Field(
         default=None,
@@ -79,6 +82,11 @@ class LocationEntities(BaseModel):
             "Country ISO code if DOMESTIC and clear country specified: US, UA, GB. Region code if "
             "legal region specified (e.g., EU). Set to null if not restricted to a single country/EU."
         ),
+    )
+
+    should_apply: Literal["Apply", "Ignore"] = Field(
+        default="Apply",
+        description="Flag local SLM produces, to decide whether proceed with job or not",
     )
 
 
@@ -108,15 +116,18 @@ class DomainEntities(BaseModel):
         ),
     )
     job_family: Literal[
-        "BACKEND",
+        "PURE_BACKEND",
         "FRONTEND",
         "FULLSTACK",
         "QA_SDET",
         "DEVOPS_PLATFORM",
-        "DATA_AI",
         "MOBILE",
         "NON_TECHNICAL",
         "OTHER",
+        "AI_ENGINEERING",
+        "DATA_SCIENCE",
+        "DATA_ENGINEERING",
+        "DATA_ANALYTICS",
     ] = Field(
         default="OTHER",
         description=(
@@ -125,8 +136,13 @@ class DomainEntities(BaseModel):
         ),
     )
 
+    should_apply: Literal["Apply", "Ignore"] = Field(
+        default="Apply",
+        description="Flag local SLM produces, to decide whether proceed with job or not",
+    )
 
-class RedFlagsEntities:
+
+class RedFlagsEntities(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     is_legacy_maintenance: bool = Field(
@@ -207,10 +223,10 @@ class JobFactSheet(BaseModel):
         default=False,
         description="True if on-call rotation is required without explicit compensation parameters.",
     )
-    detected_operational_cues: list[str] = Field(
-        default_factory=list,
-        description="Exact linguistic cues indicating management debt (e.g., 'fast-paced environment', 'firefighting').",
-    )
+    # detected_operational_cues: list[str] = Field(
+    #     default_factory=list,
+    #     description="Exact linguistic cues indicating management debt (e.g., 'fast-paced environment', 'firefighting').",
+    # )
 
     # =========================================================================
     # PHASE 3: Location & Jurisdiction Details (Extractive tokens)
@@ -257,21 +273,28 @@ class JobFactSheet(BaseModel):
         ),
     )
     job_family: Literal[
-        "BACKEND",
+        "PURE_BACKEND",
         "FRONTEND",
         "FULLSTACK",
         "QA_SDET",
         "DEVOPS_PLATFORM",
-        "DATA_AI",
         "MOBILE",
         "NON_TECHNICAL",
         "OTHER",
+        "AI_ENGINEERING",
+        "DATA_SCIENCE",
+        "DATA_ENGINEERING",
+        "DATA_ANALYTICS",
     ] = Field(
         ...,
         description=(
             "Final classification of role alignment. Must be consistent with the "
             "extracted primary_backend_languages, secondary_tools, and responsibilities above."
         ),
+    )
+
+    debug: Dict[str, str] = Field(
+        default_factory=dict, description="Field used to track internal thinking of the model."
     )
 
     # =========================================================================
@@ -306,7 +329,7 @@ class JobFactSheet(BaseModel):
             workplace_type=location.workplace_type,
             office_location_city=location.office_location_city,
             geographic_scope=location.geographic_scope,
-            region=location.region,
+            region=location.region if location.region != "UNKNOWN" else None,
             target_jurisdiction=location.target_jurisdiction,
             primary_backend_languages=domain.primary_backend_languages,
             secondary_tools=domain.secondary_tools,
@@ -318,3 +341,30 @@ class JobFactSheet(BaseModel):
             has_mandatory_travel=red_flags.has_mandatory_travel,
             has_uncompensated_oncall=red_flags.has_uncompensated_oncall,
         )
+
+
+class SuitabilityTier(str, Enum):
+    SUITABLE = "SUITABLE"
+    STRETCH = "STRETCH"
+    RUNWAY = "RUNWAY"
+    REJECTED = "REJECTED"
+
+
+# ==========================================
+# Main Root Model
+# ==========================================
+
+
+class MatchedJob(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: UUID = Field(default_factory=uuid6.uuid7)
+    job_id: str
+    job_fact_sheet: UUID
+
+    technical_capability_score: float = 0.0
+    strategic_value_score: float = 0.0
+
+    suitability_tier: SuitabilityTier = SuitabilityTier.SUITABLE
+    strategic_reason: str = ""
+    rejection_reason: str = ""

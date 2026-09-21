@@ -464,7 +464,6 @@ class Job(BaseModel):
             summary=self.salary_summary,
         )
 
-    @classmethod
     def to_domain(self, company_id: int) -> JobDomain:
         return JobDomain(
             id=self.global_id,
