@@ -1,7 +1,6 @@
 import asyncio
 import gc
 import time
-import uuid
 from logging import Logger
 from typing import Any, Dict
 
@@ -10,6 +9,7 @@ import torch
 from sentence_transformers import SentenceTransformer
 
 from .database import JobFactSheetRepository, JobRepository, MatchRepository
+from .jev import Jev
 from .models import (
     DomainEntities,
     JobFactSheet,
@@ -31,8 +31,9 @@ class MatchingEngine:
         job_repo: JobRepository,
         fact_sheet_repo: JobFactSheetRepository,
         match_repo: MatchRepository,
-        slm: SLM,
-        clf: Any,
+        clf: Any | None = None,
+        slm: SLM | None = None,
+        jev: Jev | None = None,
     ):
         self.logger = logger
         self.runtime_version = runtime_version
@@ -41,10 +42,11 @@ class MatchingEngine:
         self.match_repo = match_repo
 
         self.device = "mps" if torch.backends.mps.is_available() else "cpu"
-        self._init_embedder(device=self.device)
         self.clf = clf
 
         self.slm = slm
+
+        self.jev = jev
 
     def _init_embedder(self, device: str) -> None:
         """Initializes or resets the embedder on the designated device."""
@@ -55,7 +57,9 @@ class MatchingEngine:
             local_files_only=True,
         )
 
-    async def run(self) -> None:
+    async def run_slm(self) -> None:
+        assert self.slm is not None
+
         entries = await self.job_repo.get_matched_jobs()
         entry_count = len(entries)
         self.logger.info(f"Retrieved {entry_count} candidate jobs from repository.")
@@ -76,7 +80,7 @@ class MatchingEngine:
                     f"--- [{idx}/{len(filtered_entries)}] Processing job {job.id} ({job.title}) ---"
                 )
 
-                matched_job = MatchedJob(job_id=job.id, job_fact_sheet=uuid.UUID(int=0))
+                matched_job = MatchedJob(job_id=job.id)
 
                 # Initialize default empty entities for partial state persistence
                 location = LocationEntities()
@@ -114,7 +118,6 @@ class MatchingEngine:
                         job.id, location, domain, red_flags
                     )
                     fact_sheet.debug = global_slm_debug
-                    matched_job.job_fact_sheet = fact_sheet.id
 
                     await self.fact_sheet_repo.save_fact_sheet(fact_sheet)
                     await self.match_repo.save_match(matched_job)
@@ -134,7 +137,34 @@ class MatchingEngine:
             )
             entry_count += len(entries)
 
+    async def run_jev(self) -> None:
+        if self.jev is None:
+            return
+
+        entries = await self.job_repo.get_matched_jobs()
+        self.logger.info(f"Retrieved {len(entries)} candidate jobs from repository.")
+
+        for idx, job in enumerate(entries, start=1):
+            job_start = time.perf_counter()
+            self.logger.info(
+                f"--- [{idx}/{len(entries)}] Processing job {job.id} ({job.title}) ---"
+            )
+
+            try:
+                res = await self.jev.classify(job)
+                await self.match_repo.save_match(res)
+            except Exception as e:
+                self.logger.error(f"Error classifying job {job.id}: {str(e)}")
+                return
+
+            total_time = time.perf_counter() - job_start
+            self.logger.info(
+                f"[{job.id}] Successfully saved | Total time: {total_time:.2f}s. | Suitability tier: {res.suitability_tier}."
+            )
+
     def _filter_descriptions(self, jobs: list[JobForAnalytics]) -> list[JobForAnalytics]:
+        assert self.clf is not None
+
         valid_jobs: list[JobForAnalytics] = []
         for job in jobs:
             if not job.description or not job.description.strip():

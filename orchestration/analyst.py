@@ -9,6 +9,7 @@ import asyncpg
 import joblib
 import torch
 from asyncpg import Pool
+from typesafe_sdk import AsyncTypeSafeClient
 
 from src.analytics.database import (
     JobFactSheetRepositoryPostgres,
@@ -16,6 +17,7 @@ from src.analytics.database import (
     MatchRepositoryPostgres,
 )
 from src.analytics.engine import MatchingEngine
+from src.analytics.jev import Jev
 from src.analytics.models import RuntimeVersion
 from src.analytics.slm import SLMQwenThinking
 
@@ -41,7 +43,7 @@ logger = logging.getLogger("analyst")
 PG_DSN = "postgresql://postgres:password@localhost:5432/dorker_db"
 
 # Thinking model
-MODEL = "deepseek-r1-distill-qwen-7b"
+MODEL = "jev-1.13.0"
 PIPELINE_VERSION = "0.2.2"
 
 device = "mps" if torch.backends.mps.is_available() else "cpu"
@@ -50,7 +52,7 @@ device = "mps" if torch.backends.mps.is_available() else "cpu"
 async def define_iteration(pool: Pool) -> int:
     query = """
             SELECT COALESCE(MAX(iteration), 0)
-            FROM jobs_fact_sheets
+            FROM matches
             WHERE version = $1 AND model = $2 \
             """
     async with pool.acquire() as conn:
@@ -58,7 +60,7 @@ async def define_iteration(pool: Pool) -> int:
         return int(iteration)
 
 
-async def run() -> None:
+async def run_old() -> None:
     async with asyncpg.create_pool(dsn=PG_DSN) as pool:
         iteration = await define_iteration(pool) + 1
 
@@ -78,7 +80,29 @@ async def run() -> None:
             logger, runtime_version, job_repo, fact_sheet_repo, match_repo, slm, clf
         )
 
-        await engine.run()
+        await engine.run_slm()
+
+
+async def run() -> None:
+    async with asyncpg.create_pool(dsn=PG_DSN) as pool:
+        async with AsyncTypeSafeClient() as client:
+            iteration = await define_iteration(pool) + 1
+
+            runtime_version = RuntimeVersion(
+                model=MODEL, version=PIPELINE_VERSION, iteration=iteration
+            )
+            job_repo = JobRepositoryPostgres(pool, runtime_version)
+            fact_sheet_repo = JobFactSheetRepositoryPostgres(pool, runtime_version)
+            match_repo = MatchRepositoryPostgres(pool, runtime_version)
+            with open(ROOT / "orchestration" / "profile.md") as f:
+                profile = f.read()
+            jev = Jev(client, state=profile)
+
+            engine = MatchingEngine(
+                logger, runtime_version, job_repo, fact_sheet_repo, match_repo, jev=jev
+            )
+
+            await engine.run_jev()
 
 
 if __name__ == "__main__":

@@ -125,7 +125,22 @@ class CompanyRepositoryPostgres:
         query = """
                     SELECT id, ats, name, slug, url
                     FROM companies
-                    WHERE ats = $1 AND is_active = TRUE
+                    WHERE ats = $1 
+                      AND is_active = TRUE
+                      AND (
+                          last_attempt_at IS NULL 
+                          OR 
+                          CURRENT_TIMESTAMP >= last_attempt_at + CASE 
+                              -- 1. Retry failed attempts slightly sooner before they hit the 3-error kill switch
+                              WHEN consecutive_errors > 0 THEN INTERVAL '12 hours'
+                              -- 2. Cold companies: 4+ consecutive empty scrapes -> Check every 14 days
+                              WHEN consecutive_zero_jobs >= 4 THEN INTERVAL '14 days'
+                              -- 3. Cooling companies: 2-3 consecutive empty scrapes -> Check every 3 days
+                              WHEN consecutive_zero_jobs >= 2 THEN INTERVAL '3 days'
+                              -- 4. Active/Hot companies: 0-1 empty scrapes -> Check daily
+                              ELSE INTERVAL '1 day'
+                          END
+                      );
                 """
 
         async with self.pool.acquire() as conn:

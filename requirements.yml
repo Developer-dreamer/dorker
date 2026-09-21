@@ -31,3 +31,4 @@ dependencies:
       - asyncpg==0.31.0
       - guidance==0.3.1
       - llama-cpp-python==0.3.35
+      - typesafe-sdk==0.7.1

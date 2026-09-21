@@ -16,6 +16,47 @@ class RuntimeVersion:
     iteration: int
 
 
+class JobFamily(str, Enum):
+    PURE_BACKEND = "PURE_BACKEND"
+    FRONTEND = "FRONTEND"
+    FULLSTACK = "FULLSTACK"
+    QA_SDET = "QA_SDET"
+    DEVOPS_PLATFORM = "DEVOPS_PLATFORM"
+    MOBILE = "MOBILE"
+    NON_TECHNICAL = "NON_TECHNICAL"
+    OTHER = "OTHER"
+    AI_ENGINEERING = "AI_ENGINEERING"
+    DATA_SCIENCE = "DATA_SCIENCE"
+    DATA_ENGINEERING = "DATA_ENGINEERING"
+    DATA_ANALYTICS = "DATA_ANALYTICS"
+
+
+class GeographicScope(str, Enum):
+    UNKNOWN = "UNKNOWN"
+    DOMESTIC = "DOMESTIC"
+    REGIONAL = "REGIONAL"
+    GLOBAL = "GLOBAL"
+
+
+class WorkplaceType(str, Enum):
+    REMOTE = "REMOTE"
+    HYBRID = "HYBRID"
+    ON_SITE = "ON_SITE"
+    UNKNOWN = "UNKNOWN"
+
+
+class Region(str, Enum):
+    EMEA = "EMEA"
+    LATAM = "LATAM"
+    APAC = "APAC"
+    AMER = "AMER"
+    APJ = "APJ"
+    CEE = "CEE"
+    MENA = "MENA"
+    SEA = "SEA"
+    UNKNOWN = "UNKNOWN"
+
+
 # === Domain models ===
 
 
@@ -44,21 +85,16 @@ class JobForAnalytics(BaseModel):
 class LocationEntities(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    workplace_type: Literal["REMOTE", "HYBRID", "ON_SITE", "UNKNOWN"] = Field(
-        default="UNKNOWN",
+    workplace_type: WorkplaceType = Field(
+        default=WorkplaceType.UNKNOWN,
         description="Operational workplace model: REMOTE, HYBRID, or ON_SITE.",
     )
     office_location_city: Optional[str] = Field(
         default=None,
         description="Target office location/city if workplace_type is HYBRID or ON_SITE.",
     )
-    geographic_scope: Literal[
-        "UNKNOWN",
-        "DOMESTIC",
-        "REGIONAL",
-        "GLOBAL",
-    ] = Field(
-        default="UNKNOWN",
+    geographic_scope: GeographicScope = Field(
+        default=GeographicScope.UNKNOWN,
         description=(
             "Geographic classification conditioned on target_jurisdiction and region. "
             "DOMESTIC if restricted to specific countries (US only, EU only), tax forms, or clearance. "
@@ -66,15 +102,14 @@ class LocationEntities(BaseModel):
             "REGIONAL if bound to operational timezones (EMEA, LATAM, APAC)."
         ),
     )
-    region: Literal["EMEA", "LATAM", "APAC", "AMER", "APJ", "CEE", "MENA", "SEA", "UNKNOWN"] = (
-        Field(
-            default="UNKNOWN",
-            description=(
-                "Regional abbreviation of operational timezone requirement: EMEA, APAC, LATAM, etc. "
-                "Must be null if not an operational timezone corridor."
-            ),
-        )
+    region: Region = Field(
+        default=Region.UNKNOWN,
+        description=(
+            "Regional abbreviation of operational timezone requirement: EMEA, APAC, LATAM, etc. "
+            "Must be null if not an operational timezone corridor."
+        ),
     )
+
     target_jurisdiction: Optional[str] = Field(
         default=None,
         description=(
@@ -115,21 +150,8 @@ class DomainEntities(BaseModel):
             "or implies flexible qualifications despite title."
         ),
     )
-    job_family: Literal[
-        "PURE_BACKEND",
-        "FRONTEND",
-        "FULLSTACK",
-        "QA_SDET",
-        "DEVOPS_PLATFORM",
-        "MOBILE",
-        "NON_TECHNICAL",
-        "OTHER",
-        "AI_ENGINEERING",
-        "DATA_SCIENCE",
-        "DATA_ENGINEERING",
-        "DATA_ANALYTICS",
-    ] = Field(
-        default="OTHER",
+    job_family: JobFamily = Field(
+        default=JobFamily.OTHER,
         description=(
             "Final classification of role alignment. Must be consistent with the "
             "extracted primary_backend_languages, secondary_tools, and responsibilities above."
@@ -231,7 +253,7 @@ class JobFactSheet(BaseModel):
     # =========================================================================
     # PHASE 3: Location & Jurisdiction Details (Extractive tokens)
     # =========================================================================
-    workplace_type: Literal["REMOTE", "HYBRID", "ON_SITE", "UNKNOWN"] = Field(
+    workplace_type: WorkplaceType = Field(
         ...,
         description="Operational workplace model: REMOTE, HYBRID, or ON_SITE.",
     )
@@ -247,8 +269,8 @@ class JobFactSheet(BaseModel):
             "legal region specified (e.g., EU). Set to null if not restricted to a single country/EU."
         ),
     )
-    region: Optional[Literal["EMEA", "LATAM", "APAC", "AMER", "APJ", "CEE", "MENA", "SEA"]] = Field(
-        default=None,
+    region: Region = Field(
+        default=Region.UNKNOWN,
         description=(
             "Regional abbreviation of operational timezone requirement: EMEA, APAC, LATAM, etc. "
             "Must be null if not an operational timezone corridor."
@@ -258,12 +280,7 @@ class JobFactSheet(BaseModel):
     # =========================================================================
     # PHASE 4: High-Level Classification Enums (Synthesis)
     # =========================================================================
-    geographic_scope: Literal[
-        "UNKNOWN",
-        "DOMESTIC",
-        "REGIONAL",
-        "GLOBAL",
-    ] = Field(
+    geographic_scope: GeographicScope = Field(
         ...,
         description=(
             "Geographic classification conditioned on target_jurisdiction and region. "
@@ -272,20 +289,7 @@ class JobFactSheet(BaseModel):
             "REGIONAL if bound to operational timezones (EMEA, LATAM, APAC)."
         ),
     )
-    job_family: Literal[
-        "PURE_BACKEND",
-        "FRONTEND",
-        "FULLSTACK",
-        "QA_SDET",
-        "DEVOPS_PLATFORM",
-        "MOBILE",
-        "NON_TECHNICAL",
-        "OTHER",
-        "AI_ENGINEERING",
-        "DATA_SCIENCE",
-        "DATA_ENGINEERING",
-        "DATA_ANALYTICS",
-    ] = Field(
+    job_family: JobFamily = Field(
         ...,
         description=(
             "Final classification of role alignment. Must be consistent with the "
@@ -329,7 +333,7 @@ class JobFactSheet(BaseModel):
             workplace_type=location.workplace_type,
             office_location_city=location.office_location_city,
             geographic_scope=location.geographic_scope,
-            region=location.region if location.region != "UNKNOWN" else None,
+            region=location.region,
             target_jurisdiction=location.target_jurisdiction,
             primary_backend_languages=domain.primary_backend_languages,
             secondary_tools=domain.secondary_tools,
@@ -350,21 +354,37 @@ class SuitabilityTier(str, Enum):
     REJECTED = "REJECTED"
 
 
-# ==========================================
-# Main Root Model
-# ==========================================
-
-
 class MatchedJob(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     id: UUID = Field(default_factory=uuid6.uuid7)
-    job_id: str
-    job_fact_sheet: UUID
+    job_id: str = Field(description="Job associated with this match.")
 
-    technical_capability_score: float = 0.0
-    strategic_value_score: float = 0.0
+    technical_capability_score: float = Field(
+        default=0.0,
+        description="Value representing how good candidate's stack aligns with role's required.",
+    )
+    strategic_value_score: float = Field(
+        default=0.0,
+        description="Value representing how good job description aligns with candidate's search preferences.",
+    )
+    suitability_tier: SuitabilityTier = Field(
+        default=SuitabilityTier.SUITABLE,
+        description="""Computed directly from technical_capability_score and strategic_value_score and constraints α and β respectively.
+                    - SUITABLE: technical_capability_score >= α AND strategic_value_score >= β
+                    - STRETCH: technical_capability_score < α AND strategic_value_score >= β
+                    - RUNWAY: technical_capability_score >= α AND strategic_value_score < β
+                    - REJECTED: technical_capability_score < α AND strategic_value_score < β OR if failed other constraints like location.
+                    """,
+    )
 
-    suitability_tier: SuitabilityTier = SuitabilityTier.SUITABLE
-    strategic_reason: str = ""
-    rejection_reason: str = ""
+    strategic_reason: str = Field(
+        default="", description="Reason why a candidate should apply. Omitted when REJECTED."
+    )
+    rejection_reason: str = Field(
+        default="", description="Reason why a job was rejected. Omitted when NOT REJECTED."
+    )
+
+    debug: str | None = Field(
+        default=None, description="JSON representing raw model output or internal chain of thought."
+    )
