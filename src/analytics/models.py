@@ -1,9 +1,9 @@
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, Literal, Optional
 from uuid import UUID
 
 import uuid6
-from attr import dataclass
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # === Tracking entities ===

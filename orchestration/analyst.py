@@ -40,9 +40,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("analyst")
 
-PG_DSN = os.environ.get("PG_DSN")
-
-# Thinking model
+PG_DSN = os.environ.get("PG_DSN", "postgresql://postgres:password@localhost:5432/dorker_db")
 MODEL = "jev-1.13.0"
 PIPELINE_VERSION = "0.2.2"
 
@@ -61,9 +59,6 @@ async def define_iteration(pool: Pool) -> int:
 
 
 async def run_old() -> None:
-    if PG_DSN is None:
-        raise ValueError("PG_DSN not set")
-
     async with asyncpg.create_pool(dsn=PG_DSN) as pool:
         iteration = await define_iteration(pool) + 1
 
@@ -80,16 +75,13 @@ async def run_old() -> None:
         fact_sheet_repo = JobFactSheetRepositoryPostgres(pool, runtime_version)
         match_repo = MatchRepositoryPostgres(pool, runtime_version)
         engine = MatchingEngine(
-            logger, runtime_version, job_repo, fact_sheet_repo, match_repo, clf, slm
+            logger, runtime_version, job_repo, fact_sheet_repo, match_repo, slm, clf
         )
 
         await engine.run_slm()
 
 
 async def run() -> None:
-    if PG_DSN is None:
-        raise ValueError("PG_DSN not set")
-
     async with asyncpg.create_pool(dsn=PG_DSN) as pool:
         async with AsyncTypeSafeClient() as client:
             iteration = await define_iteration(pool) + 1
