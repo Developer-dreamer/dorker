@@ -5,9 +5,11 @@ from typing import Any, List, Sequence
 import asyncpg
 from asyncpg import Pool
 
-from src.scraping.models import Job, JobDB
+from src.scraping.models import Job
+from src.shared.models.company import ATS, ATSCompany
+from src.shared.models.job import Job as JobDomain
 
-from .base import ATS, ATSCompany, description_keys
+from .base import description_keys
 
 
 def _sanitize_record(record: Sequence[Any]) -> tuple[Any, ...]:
@@ -19,7 +21,7 @@ class JobRepositoryPostgres:
         self.logger = logger
         self.pool = pool
 
-    async def save_job_batch(self, jobs: List[JobDB]) -> None:
+    async def save_job_batch(self, jobs: List[JobDomain]) -> None:
         query = """
                     INSERT INTO jobs (
                         id, ats_type, ats_id, url, apply_url, title, company_id, location,
@@ -64,7 +66,7 @@ class JobRepositoryPostgres:
                     f"[DB Writer] Unexpected error during flush: {unhandled}", exc_info=True
                 )
 
-    def _job_to_db_params(self, job: JobDB) -> tuple[Any, ...]:
+    def _job_to_db_params(self, job: JobDomain) -> tuple[Any, ...]:
         return (
             job.id,
             job.ats_type.value,
@@ -95,7 +97,7 @@ class CompanyRepositoryPostgres:
     async def get_tenants(self) -> List[ATS]:
         query = """
                 SELECT id, ats, tier, name, slug, url  FROM companies
-                    WHERE is_active = TRUE
+                    WHERE is_active = TRUE;
                 """
 
         async with self.pool.acquire() as conn:
@@ -123,7 +125,22 @@ class CompanyRepositoryPostgres:
         query = """
                     SELECT id, ats, name, slug, url
                     FROM companies
-                    WHERE ats = $1 AND is_active = TRUE
+                    WHERE ats = $1 
+                      AND is_active = TRUE
+                      AND (
+                          last_attempt_at IS NULL 
+                          OR 
+                          CURRENT_TIMESTAMP >= last_attempt_at + CASE 
+                              -- 1. Retry failed attempts slightly sooner before they hit the 3-error kill switch
+                              WHEN consecutive_errors > 0 THEN INTERVAL '12 hours'
+                              -- 2. Cold companies: 4+ consecutive empty scrapes -> Check every 14 days
+                              WHEN consecutive_zero_jobs >= 4 THEN INTERVAL '14 days'
+                              -- 3. Cooling companies: 2-3 consecutive empty scrapes -> Check every 3 days
+                              WHEN consecutive_zero_jobs >= 2 THEN INTERVAL '3 days'
+                              -- 4. Active/Hot companies: 0-1 empty scrapes -> Check daily
+                              ELSE INTERVAL '1 day'
+                          END
+                      );
                 """
 
         async with self.pool.acquire() as conn:
@@ -135,7 +152,7 @@ class CompanyRepositoryPostgres:
         self,
         is_success: bool,
         duration_ms: int,
-        err: Exception | None,
+        err: str | None,
         jobs_count: int,
         company_id: int,
     ) -> None:
@@ -238,9 +255,7 @@ class DescriptionCachePostgres:
         if not rows:
             return 0
 
-        conflict_clause = (
-            "DO UPDATE SET description = EXCLUDED.description" if replace else "DO NOTHING"
-        )
+        conflict_clause = "DO UPDATE SET payload = EXCLUDED.payload" if replace else "DO NOTHING"
 
         query = f"""
             INSERT INTO description_cache (key_type, key_value, payload)

@@ -1,3 +1,7 @@
+"""
+This file provides UI interface for manual jobs labeling
+"""
+
 from typing import Any, Dict, List
 
 import psycopg2

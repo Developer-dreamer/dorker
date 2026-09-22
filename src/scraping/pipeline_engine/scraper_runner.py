@@ -9,10 +9,12 @@ from pydantic import ValidationError
 
 from src.scraping.base import BaseScraper
 from src.scraping.configuration_manager import DynamicConfigManager
-from src.scraping.database.base import ATS, ATSCompany, CompanyRepository, DescriptionCache
+from src.scraping.database.base import CompanyRepository, DescriptionCache
 from src.scraping.exceptions import CompanyNotFoundError
-from src.scraping.models import Job, JobDB
+from src.scraping.models import Job
 from src.scraping.ui.cli import Counts, DescCounts
+from src.shared.models.company import ATS, ATSCompany
+from src.shared.models.job import Job as JobDomain
 from src.shared.types.priority_semaphore import PrioritySemaphore
 
 STREAM_DESCRIPTION_CONCURRENCY = 8
@@ -27,7 +29,7 @@ class ScraperRunner:
         priority_semaphore: PrioritySemaphore,
         description_cache: DescriptionCache,
         company_repo: CompanyRepository,
-        db_queue: asyncio.Queue[JobDB | None],
+        db_queue: asyncio.Queue[JobDomain | None],
         concurrency: int,
         timeout: float,
         max_tenants: int | None = None,
@@ -264,8 +266,7 @@ class ScraperRunner:
                 f"{min(i + batch_size, len(self.ats.companies))} "
                 f"of {len(self.ats.companies)}..."
             )
-            await asyncio.gather(*(self._scrape_tenant(compn) for compn in batch))
-
+            await asyncio.gather(*(self._scrape_tenant_safe(compn) for compn in batch))
             batch_elapsed = time.time() - batch_t0
             total_elapsed = time.time() - self.start
             self.logger.info(
@@ -319,6 +320,14 @@ class ScraperRunner:
             return True
 
         return False
+
+    async def _scrape_tenant_safe(self, company: ATSCompany) -> None:
+        try:
+            await self._scrape_tenant(company)
+        except Exception as e:
+            self.logger.error(
+                f"[{self.ats.name}] [ERROR] Scraping failed: {type(e).__name__}: {str(e)[:300]}"
+            )
 
     async def _scrape_tenant(self, company: ATSCompany) -> None:
         active_tenant_delay = float(self.cfg.get(self.ats.name).get("tenant_delay_seconds", 0))
@@ -386,8 +395,9 @@ class ScraperRunner:
         elif err:
             err_exc = RuntimeError(err)
 
+        err_msg = str(err_exc) if err_exc is not None else None
         await self.company_repo.update_company_stats(
-            is_success, duration_ms, err_exc, len(jobs), company_id
+            is_success, duration_ms, err_msg, len(jobs), company_id
         )
 
         tenant_desc_stats = DescCounts()
@@ -417,7 +427,7 @@ class ScraperRunner:
                                 if self.description_delay:
                                     await asyncio.sleep(self.description_delay)
 
-                db_job = JobDB.from_domain(company_id, job)
+                db_job = job.to_domain(company_id)
                 await self.db_queue.put(db_job)
                 self.counts.jobs_queued += 1
                 tenant_queued += 1
@@ -471,7 +481,7 @@ class ScraperRunner:
             return slug, None, [], f"{type(exc).__name__}: {str(exc)[:120]}"
 
     async def _write_streamed_job(self, company_id: int, job: Job) -> None:
-        db_job = JobDB.from_domain(company_id, job)
+        db_job = job.to_domain(company_id)
         await self.db_queue.put(db_job)
 
         self.counts.jobs_scraped += 1

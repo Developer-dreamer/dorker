@@ -5,7 +5,7 @@ from typing import List, Optional, Tuple
 import aiosqlite
 from pydantic import BaseModel
 
-from .models import OpenAIBatchRecord, Purpose
+from analytics.openai.models import OpenAIBatchRecord, Purpose
 
 
 class BatchItem(BaseModel):

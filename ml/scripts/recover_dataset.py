@@ -1,3 +1,7 @@
+"""
+This script was used to recover stripped LLM responses in OpenAI batches.
+"""
+
 import json
 import re
 from typing import Any, Dict, List, Tuple

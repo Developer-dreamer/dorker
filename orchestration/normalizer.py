@@ -1,15 +1,4 @@
 #!/usr/bin/env python3
-"""Normalize the description column in a PostgreSQL database in place,
-processing in parallel batches to bound memory and minimize write locks.
-
-Workflow:
-  - Connect to PostgreSQL via asyncpg connection pool
-  - Fetch batches of (id, description) where is_normalized is FALSE
-  - Dispatch chunks to a multiprocessing pool for normalization
-  - Write updated rows back in batched transactions
-  - Mark unchanged rows as is_normalized = TRUE
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -56,9 +45,7 @@ def autolink(text: str) -> str:
             continue
         if before.endswith("!"):
             continue
-        original = out[start:end]
-        replacement = f"<{original}>"
-        out = out[:start] + replacement + out[end:]
+        out = out[:start] + f"<{out[start:end]}>" + out[end:]
     return out
 
 
@@ -73,7 +60,7 @@ WS_RUN_RE = re.compile(r"\s+")
 
 
 def normalize_one(s: str | None) -> str:
-    if s is None:
+    if not s:
         return ""
     s = s.strip()
     if not s:
@@ -92,195 +79,201 @@ def normalize_one(s: str | None) -> str:
             out = re.sub(r"<[^>]+>", "", s)
             out = html.unescape(out)
         out = BLANK_RUN_RE.sub("\n\n", out).strip()
-        return autolink(out) or ""
+        return autolink(out)
     if HTML_ANY_TAG_RE.search(s):
         out = re.sub(r"<[^>]+>", "", s)
         out = html.unescape(out)
         out = WS_RUN_RE.sub(" ", out).strip()
-        return autolink(out) or ""
+        return autolink(out)
     if HTML_ENTITY_RE.search(s):
         out = html.unescape(s).strip()
-        return autolink(out) or ""
-    return autolink(s) or ""
+        return autolink(out)
+    return autolink(s)
 
 
-def _normalize_batch(
+def _worker_process_batch(
     rows: list[tuple[Any, str | None]],
-) -> list[tuple[Any, str | None, str | None]]:
-    """Worker task: transforms [(id, raw_desc), ...] into [(id, raw_desc, normalized_desc), ...]."""
-    return [(row_id, raw_desc, normalize_one(raw_desc)) for row_id, raw_desc in rows]
+) -> tuple[list[tuple[Any, str]], list[Any]]:
+    """Worker task: transforms batch and diffs in-worker to save IPC bandwidth."""
+    updates: list[tuple[Any, str]] = []
+    unchanged_ids: list[Any] = []
 
+    for row_id, raw_desc in rows:
+        normalized = normalize_one(raw_desc)
+        old_val = raw_desc or ""
+        if normalized == old_val:
+            unchanged_ids.append(row_id)
+        else:
+            updates.append((row_id, normalized))
 
-def _positive_int(value: str) -> int:
-    try:
-        ivalue = int(value)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(f"expected integer, got {value!r}") from exc
-    if ivalue < 1:
-        raise argparse.ArgumentTypeError(f"must be >= 1 (got {ivalue})")
-    return ivalue
+    return updates, unchanged_ids
 
 
 PG_DSN = "postgresql://postgres:password@localhost:5432/dorker_db"
 
 
 async def main() -> int:
-    p = argparse.ArgumentParser(description="Normalize job descriptions in PostgreSQL in-place.")
-    p.add_argument("--table", default="jobs", help="Target table name (default: jobs)")
-    p.add_argument("--id-col", default="id", help="Primary key column name (default: id)")
-    p.add_argument(
-        "--column",
-        default="description",
-        help="Target column to normalize (default: description)",
+    parser = argparse.ArgumentParser(
+        description="Normalize job descriptions in PostgreSQL in-place."
     )
-    p.add_argument(
+    parser.add_argument("--table", default="jobs")
+    parser.add_argument("--id-col", default="id")
+    parser.add_argument("--column", default="description")
+    parser.add_argument(
         "-j",
         "--workers",
-        type=_positive_int,
+        type=int,
         default=max(1, multiprocessing.cpu_count() - 1),
-        help="Number of worker processes",
     )
-    p.add_argument(
-        "--chunk",
-        type=_positive_int,
-        default=2000,
-        help="Batch size for DB reads/writes",
-    )
-    args = p.parse_args()
+    parser.add_argument("--chunk", type=int, default=1000)
+    args = parser.parse_args()
 
-    pool = await asyncpg.create_pool(PG_DSN, min_size=2, max_size=5)
+    pool = await asyncpg.create_pool(PG_DSN, min_size=4, max_size=10)
 
     try:
+        # Determine ID data type for cast
         async with pool.acquire() as conn:
-            columns_records = await conn.fetch(
+            id_type_row = await conn.fetchrow(
                 """
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_name = $1 AND table_schema = 'public'
+                SELECT data_type, udt_name 
+                FROM information_schema.columns 
+                WHERE table_name = $1 AND column_name = $2
                 """,
                 args.table,
+                args.id_col,
             )
-            columns = {row["column_name"] for row in columns_records}
+            if not id_type_row:
+                print(f"Column {args.id_col} not found.", file=sys.stderr)
+                return 1
 
-            if not columns:
-                print(f"Error: Table '{args.table}' not found.", file=sys.stderr)
-                return 2
-            if args.id_col not in columns:
-                print(f"Error: ID column '{args.id_col}' not found.", file=sys.stderr)
-                return 2
-            if args.column not in columns:
-                print(f"Error: Column '{args.column}' not found.", file=sys.stderr)
-                return 2
-            if "is_normalized" not in columns:
-                print("Error: Column 'is_normalized' not found.", file=sys.stderr)
-                return 2
+            id_type = id_type_row["udt_name"]
+            # Cast common types correctly for asyncpg arrays
+            if id_type in ("int4", "int8", "uuid", "text", "varchar"):
+                id_cast = f"::{id_type}[]"
+            else:
+                id_cast = ""
 
-        select_query = f"""
-            SELECT "{args.id_col}", "{args.column}"
-            FROM "{args.table}"
-            WHERE "{args.column}" IS NOT NULL AND is_normalized = FALSE
+        # Set-based updates using UNNEST
+        bulk_update_sql = f"""
+            UPDATE "{args.table}" AS t
+            SET "{args.column}" = u.new_desc,
+                is_normalized = TRUE
+            FROM (
+                SELECT unnest($1{id_cast}) AS id,
+                       unnest($2::text[]) AS new_desc
+            ) AS u
+            WHERE t."{args.id_col}" = u.id
         """
-        update_query = f"""
-            UPDATE "{args.table}"
-            SET "{args.column}" = $1, is_normalized = TRUE
-            WHERE "{args.id_col}" = $2
-        """
-        mark_normalized_only_query = f"""
-            UPDATE "{args.table}"
+
+        bulk_mark_sql = f"""
+            UPDATE "{args.table}" AS t
             SET is_normalized = TRUE
-            WHERE "{args.id_col}" = $1
+            FROM (
+                SELECT unnest($1{id_cast}) AS id
+            ) AS u
+            WHERE t."{args.id_col}" = u.id
         """
 
-        print(
-            f"Normalizing PostgreSQL table '{args.table}' "
-            f"[-j {args.workers}, chunk={args.chunk}, column={args.column}]",
-            flush=True,
+        raw_queue: asyncio.Queue[list[tuple[Any, str | None]] | None] = asyncio.Queue(maxsize=4)
+        write_queue: asyncio.Queue[tuple[list[tuple[Any, str]], list[Any]] | None] = asyncio.Queue(
+            maxsize=4
         )
 
         t0 = time.time()
-        counts = {
-            "unchanged": 0,
-            "shrunk": 0,
-            "nulled": 0,
-            "grew": 0,
-            "newly_set": 0,
-        }
-        total = 0
+        total_processed = 0
 
-        loop = asyncio.get_running_loop()
+        async def reader() -> None:
+            async with pool.acquire() as conn:
+                # Keyset or isolated chunk cursor to prevent snapshot locks
+                cursor_sql = f"""
+                    SELECT "{args.id_col}", "{args.column}"
+                    FROM "{args.table}"
+                    WHERE is_normalized = FALSE AND "{args.column}" IS NOT NULL
+                """
+                async with conn.transaction():
+                    cursor = await conn.cursor(cursor_sql)
+                    while True:
+                        rows = await cursor.fetch(args.chunk)
+                        if not rows:
+                            break
+                        batch = [(r[args.id_col], r[args.column]) for r in rows]
+                        await raw_queue.put(batch)
+            await raw_queue.put(None)
+
+        async def transformer(executor: ProcessPoolExecutor) -> None:
+            loop = asyncio.get_running_loop()
+            while True:
+                batch = await raw_queue.get()
+                if batch is None:
+                    await write_queue.put(None)
+                    raw_queue.task_done()
+                    break
+
+                # Sub-divide chunk across process pool
+                sub_size = max(1, len(batch) // args.workers + 1)
+                sub_batches = [batch[i : i + sub_size] for i in range(0, len(batch), sub_size)]
+
+                tasks = [
+                    loop.run_in_executor(executor, _worker_process_batch, sb) for sb in sub_batches
+                ]
+                results = await asyncio.gather(*tasks)
+
+                combined_updates: list[tuple[Any, str]] = []
+                combined_unchanged: list[Any] = []
+                for updates, unchanged in results:
+                    combined_updates.extend(updates)
+                    combined_unchanged.extend(unchanged)
+
+                await write_queue.put((combined_updates, combined_unchanged))
+                raw_queue.task_done()
+
+        async def writer() -> None:
+            nonlocal total_processed
+            async with pool.acquire() as conn:
+                while True:
+                    payload = await write_queue.get()
+                    if payload is None:
+                        write_queue.task_done()
+                        break
+
+                    updates, unchanged_ids = payload
+
+                    if updates:
+                        ids = [u[0] for u in updates]
+                        texts = [u[1] for u in updates]
+                        await conn.execute(bulk_update_sql, ids, texts)
+
+                    if unchanged_ids:
+                        await conn.execute(bulk_mark_sql, unchanged_ids)
+
+                    total_processed += len(updates) + len(unchanged_ids)
+                    write_queue.task_done()
+
+                    elapsed = time.time() - t0
+                    print(
+                        f"Processed: {total_processed:,} | Rate: {total_processed / max(elapsed, 0.001):,.0f} rows/s",
+                        end="\r",
+                        flush=True,
+                    )
 
         with ProcessPoolExecutor(max_workers=args.workers) as executor:
-            async with pool.acquire() as read_conn, pool.acquire() as write_conn:
-                async with read_conn.transaction():
-                    cursor = await read_conn.cursor(select_query)
+            await asyncio.gather(
+                reader(),
+                transformer(executor),
+                writer(),
+            )
 
-                    while True:
-                        records = await cursor.fetch(args.chunk)
-                        if not records:
-                            break
-
-                        chunk = [(r[args.id_col], r[args.column]) for r in records]
-
-                        sub_size = max(1, len(chunk) // args.workers + 1)
-                        sub_batches = [
-                            chunk[i : i + sub_size] for i in range(0, len(chunk), sub_size)
-                        ]
-
-                        tasks = [
-                            loop.run_in_executor(executor, _normalize_batch, batch)
-                            for batch in sub_batches
-                        ]
-                        results = await asyncio.gather(*tasks)
-
-                        content_updates: list[tuple[str, Any]] = []
-                        unchanged_ids: list[tuple[Any]] = []
-
-                        for sub in results:
-                            for row_id, old_desc, new_desc in sub:
-                                total += 1
-                                old_str = old_desc or ""
-                                new_str = new_desc or ""
-
-                                if new_str == old_str:
-                                    counts["unchanged"] += 1
-                                    unchanged_ids.append((row_id,))
-                                    continue
-
-                                if not new_str:
-                                    counts["nulled"] += 1
-                                elif not old_str:
-                                    counts["newly_set"] += 1
-                                elif len(new_str) < len(old_str):
-                                    counts["shrunk"] += 1
-                                else:
-                                    counts["grew"] += 1
-
-                                content_updates.append((new_str, row_id))
-
-                        if content_updates:
-                            await write_conn.executemany(update_query, content_updates)
-                        if unchanged_ids:
-                            await write_conn.executemany(mark_normalized_only_query, unchanged_ids)
-
-                        if total % (args.chunk * 5) == 0:
-                            elapsed = time.time() - t0
-                            rate = total / max(elapsed, 0.001)
-                            print(
-                                f"  {total:,} rows processed · {rate:,.0f}/s · "
-                                f"updated={total - counts['unchanged']:,} "
-                                f"unchanged={counts['unchanged']:,}",
-                                flush=True,
-                            )
-
-                await write_conn.execute(
-                    f'UPDATE "{args.table}" SET is_normalized = TRUE WHERE is_normalized = FALSE;'
-                )
+        # Mark NULL rows that were bypassed by cursor
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f'UPDATE "{args.table}" SET is_normalized = TRUE WHERE is_normalized = FALSE;'
+            )
 
     finally:
         await pool.close()
 
     elapsed = time.time() - t0
-    print(f"DONE total={total:,} in {elapsed:.1f}s · {counts}", flush=True)
+    print(f"\nDone. Processed {total_processed:,} rows in {elapsed:.1f}s.")
     return 0
 
 

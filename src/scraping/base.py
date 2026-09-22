@@ -31,9 +31,10 @@ import concurrent.futures
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
+from src.shared.models.job import ATSType
+
 from .exceptions import ScraperError
 from .fetch import Engine, Fetcher
-from .models import ATSType
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
