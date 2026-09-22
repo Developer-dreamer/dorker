@@ -40,9 +40,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("analyst")
 
-PG_DSN = "postgresql://postgres:password@localhost:5432/dorker_db"
-
-# Thinking model
+PG_DSN = os.environ.get("PG_DSN", "postgresql://postgres:password@localhost:5432/dorker_db")
 MODEL = "jev-1.13.0"
 PIPELINE_VERSION = "0.2.2"
 
