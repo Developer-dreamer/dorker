@@ -164,6 +164,7 @@ class MatchingEngine:
 
     def _filter_descriptions(self, jobs: list[JobForAnalytics]) -> list[JobForAnalytics]:
         assert self.clf is not None
+        assert self.embedder is not None
 
         valid_jobs: list[JobForAnalytics] = []
         for job in jobs:
@@ -273,7 +274,7 @@ class MatchingEngine:
                         convert_to_numpy=True,
                     )
                     # Restore embedder to MPS for subsequent calls
-                    self._init_embedder(device="mps")
+                    self._init_embedder(device=self.device)
                     return fallback_embeddings
 
                 # 3. Dynamic backoff: reduce batch size and wait for OS memory defragmentation

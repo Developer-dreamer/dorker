@@ -1,6 +1,6 @@
 from typing import List
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ATSCompany(BaseModel):
@@ -14,7 +14,7 @@ class ATS(BaseModel):
     name: str
     tier: int
 
-    companies: List[ATSCompany] = []
+    companies: List[ATSCompany] = Field(default_factory=list)
 
     def __hash__(self) -> int:
         return hash(self.name)
