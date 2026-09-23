@@ -31,7 +31,7 @@ jobs:
       - name: Update tracking branch
         id: sync_tracking
         run: |
-          if git show-ref --quiet refs/heads/upstream-sync; then
+          if git show-ref --quiet refs/remotes/origin/upstream-sync; then
             git checkout upstream-sync
           else
             git checkout --orphan upstream-sync
