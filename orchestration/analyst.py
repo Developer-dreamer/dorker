@@ -10,8 +10,8 @@ import torch
 from asyncpg import Pool
 from typesafe_sdk import AsyncTypeSafeClient
 
-from analytics.classification import ClassifyJobTierJev
-from database.postgres.job_fact_sheet import JobFactSheetRepositoryPostgres
+from src.analytics.classification import ClassifyJobTierJev
+from src.database.postgres.job_fact_sheet import JobFactSheetRepositoryPostgres
 from src.analytics.engine import MatchingEngine
 from src.database.postgres import JobRepositoryPostgres, MatchRepository
 from src.shared.models.version import RuntimeVersion
