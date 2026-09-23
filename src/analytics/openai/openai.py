@@ -11,8 +11,8 @@ from openai.lib._pydantic import to_strict_json_schema
 from openai.types import Batch
 from pydantic import BaseModel
 
-from analytics.openai.models import OpenAIBatchRecord, Purpose
-from database.sqlite.batch_repo import BatchRepository
+from src.analytics.openai.models import OpenAIBatchRecord, Purpose
+from src.database.sqlite.batch_repo import BatchRepository
 from src.database.sqlite import save_technical_match, save_unmatch
 from src.shared.models import Job, MatchedJob
 
