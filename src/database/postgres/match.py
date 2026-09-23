@@ -1,6 +1,6 @@
 from asyncpg import Pool
 
-from src.analytics.models import MatchedJob, RuntimeVersion
+from src.shared.models import MatchedJob, RuntimeVersion
 from src.database.protocols import MatchRepository as MatchRepositoryProtocol
 
 
