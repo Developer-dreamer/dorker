@@ -11,10 +11,10 @@ from openai.lib._pydantic import to_strict_json_schema
 from openai.types import Batch
 from pydantic import BaseModel
 
-from analytics.openai.batch_repo import BatchRepository
-from analytics.openai.models import MatchedJob, OpenAIBatchRecord, Purpose
+from analytics.openai.models import OpenAIBatchRecord, Purpose
+from database.sqlite.batch_repo import BatchRepository
 from src.database.sqlite import save_technical_match, save_unmatch
-from src.scraping.models import Job
+from src.shared.models import Job, MatchedJob
 
 MAX_BYTES_PER_BATCH = 2e8  # 200 MB per request
 MAX_REQUESTS_PER_BATCH = 50_000  # 50 000 separate questions to AI model
@@ -298,7 +298,7 @@ class OpenAIClient:
             json_str, line_bytes = self._build_batch_line(
                 model=model,
                 master_prompt=master_prompt,
-                job_id=job.global_id,
+                job_id=job.id,
                 job_payload=format_jobs(job),
                 schema=schema,
             )
@@ -313,7 +313,7 @@ class OpenAIClient:
                 return file_path, processed_jobs
 
             current_lines.append(json_str)
-            processed_jobs.append(job.global_id)
+            processed_jobs.append(job.id)
 
             current_bytes += line_bytes
             current_count += 1

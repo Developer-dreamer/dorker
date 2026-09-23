@@ -10,3 +10,8 @@ git update-index --again
 
 echo "Running Mypy..."
 mypy --no-incremental .
+
+if [ -n "$CONDA_DEFAULT_ENV" ]; then
+    conda env export --no-builds > environment.yml
+    git add environment.yml
+fi

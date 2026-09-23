@@ -1,40 +1,12 @@
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from openai.types import Batch
 from pydantic import BaseModel, ConfigDict, Field
 
-
-class SuitabilityTier(str, Enum):
-    SUITABLE = "SUITABLE"
-    STRETCH = "STRETCH"
-    RUNWAY = "RUNWAY"
-    REJECTED = "REJECTED"
-
-
-class Analytics(BaseModel):
-    pros: List[str] = []
-    cons: List[str] = []
-    warnings: List[str] = []
-
-
 # ==========================================
 # Main Root Model
 # ==========================================
-
-
-class MatchedJob(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    technical_capability_score: float = 0.0
-    strategic_value_score: float = 0.0
-    confidence_score: float = 0.0
-    suitability_tier: SuitabilityTier = SuitabilityTier.REJECTED
-    strategic_reason: str = ""
-    rejection_reason: str = ""
-
-    analytics: Analytics = Analytics()
-    internal_analysis_cot: Optional[str] = None
 
 
 class Purpose(str, Enum):

@@ -1,4 +1,5 @@
-CREATE UNLOGGED TABLE description_cache
+CREATE
+UNLOGGED TABLE description_cache
 (
     key_type   TEXT        NOT NULL,
     key_value  TEXT        NOT NULL,

@@ -1,77 +1,67 @@
 from logging import Logger
 from pathlib import Path
-from typing import Dict, Literal, Protocol, Tuple, cast, get_args
+from typing import Dict, Literal, cast, get_args
 
 import guidance
 from guidance import gen, select
 from guidance.models import LlamaCpp
 
-from .models import (
+from analytics.utils import log_guidance_step
+from src.shared.models import (
     DomainEntities,
     JobForAnalytics,
     LocationEntities,
     RedFlagsEntities,
 )
-from .utils import log_guidance_step
+
+from .protocols import SLM
 
 # Matches: one item without commas/newlines, followed by comma + next item
 # Stops immediately when hitting a newline
 open_csv_regex = r"[^,\n]+(, [^,\n]+)*"
 
 
-class SLM(Protocol):
-    def load_model(self) -> None: ...
-    def generate[I, O](self, inp: I, out: type[O]) -> Tuple[O, Dict[str, str]]: ...
-
-
-class SLMQwenThinking:
+class SLMQwenThinking(SLM):
     def __init__(
         self,
         logger: Logger,
         model_path: Path | None = None,
-        llm: LlamaCpp | None = None,
+        ctx_size: int = 8192,
         thinking_token_limit: int = 150,
     ):
         self.logger = logger
 
         self.model_path = model_path
-        self.llm = llm
+        self.ctx_size = ctx_size
         self.thinking_token_limit = thinking_token_limit
 
-    def load_model(self) -> None:
-        if self.llm is not None:
-            self.logger.info(f"[{id(self)}] Already loaded. Skipping...")
-            return
+        self._load_model()
 
+    def _load_model(self) -> None:
         self.logger.info(f"[{id(self)}] Loading model...")
         self.llm = LlamaCpp(
             model=self.model_path,
             n_gpu_layers=-1,
-            n_ctx=8192,
+            n_ctx=self.ctx_size,
         )
         self.logger.info(f"[{id(self)}] Model loaded.")
 
-    def generate[I, O](self, inp: I, out: type[O]) -> Tuple[O, Dict[str, str]]:
-        if self.llm is None:
-            self.load_model()
-
-        assert isinstance(inp, JobForAnalytics), f"Expected JobForAnalytics, got {type(inp)}"
-
-        match out:
+    def generate[O](self, inp: JobForAnalytics, schema: type[O]) -> O:
+        match schema:
             case t if t is LocationEntities:
-                return cast(Tuple[O, Dict[str, str]], self._retrieve_location(inp))
+                return cast(O, self._retrieve_location(inp))
             case t if t is DomainEntities:
-                return cast(Tuple[O, Dict[str, str]], self._retrieve_domain_entities(inp))
+                return cast(O, self._retrieve_domain_entities(inp))
             case t if t is RedFlagsEntities:
-                return cast(Tuple[O, Dict[str, str]], self._retrieve_hidden_redflags(inp))
+                return cast(O, self._retrieve_hidden_redflags(inp))
             case _:
-                raise TypeError(f"Unsupported output type requested: {out}")
+                raise TypeError("Unsupported output type requested.")
 
-    def _retrieve_location(self, job: JobForAnalytics) -> Tuple[LocationEntities, Dict[str, str]]:
+    def _retrieve_location(self, job: JobForAnalytics) -> LocationEntities:
         assert self.llm is not None
         if not job.description_blocks:
             self.logger.warning("Unable to process job. No description blocks.")
-            return LocationEntities(), {}
+            return LocationEntities()
 
         llm = self.llm
         debug: Dict[str, str] = dict()
@@ -233,7 +223,9 @@ class SLMQwenThinking:
 
             tracker["llm"] = llm
 
-        return location_entity, debug
+        location_entity.debug = debug
+
+        return location_entity
 
     @staticmethod
     def _evaluate_location_relevance(location: LocationEntities) -> Literal["Apply", "Ignore"]:
@@ -258,13 +250,11 @@ class SLMQwenThinking:
 
         return "Apply"
 
-    def _retrieve_domain_entities(
-        self, job: JobForAnalytics
-    ) -> Tuple[DomainEntities, Dict[str, str]]:
+    def _retrieve_domain_entities(self, job: JobForAnalytics) -> DomainEntities:
         assert self.llm is not None
         if not job.description_blocks:
             self.logger.warning("Unable to process job. No description blocks.")
-            return DomainEntities(), {}
+            return DomainEntities()
 
         llm = self.llm
         debug: Dict[str, str] = {}
@@ -471,15 +461,15 @@ class SLMQwenThinking:
 
             tracker["llm"] = llm
 
-        return domain_entity, debug
+        domain_entity.debug = debug
 
-    def _retrieve_hidden_redflags(
-        self, job: JobForAnalytics
-    ) -> Tuple[RedFlagsEntities, Dict[str, str]]:
+        return domain_entity
+
+    def _retrieve_hidden_redflags(self, job: JobForAnalytics) -> RedFlagsEntities:
         assert self.llm is not None
         if not job.description_blocks:
             self.logger.warning("Unable to process job. No description blocks.")
-            return RedFlagsEntities(), {}
+            return RedFlagsEntities()
 
         llm = self.llm
         debug: Dict[str, str] = {}
@@ -580,4 +570,6 @@ class SLMQwenThinking:
 
             tracker["llm"] = llm
 
-        return red_flags, debug
+        red_flags.debug = debug
+
+        return red_flags

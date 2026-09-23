@@ -5,7 +5,7 @@ logs/
 cache/
 backups*
 *.jsonl
-models
+/models/
 
 # Ignore all files inside prompt/ and any nested directories
 artifacts/data/prompts/**
