@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   sync:
@@ -77,15 +78,18 @@ jobs:
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Merge into main branch
+      - name: Create Pull Request
         if: steps.sync_tracking.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git checkout main
-
-          if git merge --allow-unrelated-histories -X theirs upstream-sync -m "chore: sync scrapers and tests from upstream with automatic conflict resolution"; then
-            git push origin main
+          PR_EXISTS=$(gh pr list --base main --head upstream-sync --json url --jq '.[0].url')
+          if [ -z "$PR_EXISTS" ]; then
+            gh pr create \
+              --base main \
+              --head upstream-sync \
+              --title "chore: sync scrapers and tests from upstream" \
+              --body "Automated PR to sync scrapers and tests from upstream repository."
           else
-            echo "Merge failed due to structural/tree conflicts that cannot be auto-resolved."
-            git merge --abort
-            exit 1
+            echo "Pull request already exists: $PR_EXISTS"
           fi
