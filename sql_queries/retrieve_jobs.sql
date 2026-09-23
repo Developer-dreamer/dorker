@@ -43,8 +43,7 @@ WHERE
   AND COALESCE(j.posted_at, j.fetched_at) >= NOW() - INTERVAL '1 week'
   AND j.is_normalized = TRUE
   AND j.deleted_at IS NULL
-  AND (j.description IS NOT NULL AND TRIM(j.description) != '')
+  AND (TRIM(j.description) != '')
 ORDER BY
     ts_rank_cd(j.searchable, websearch_to_tsquery('simple', 'lang_golang OR python OR lang_csharp OR framework_dotnet OR lang_cpp OR backend OR "software engineer" OR "software developer"')) DESC,
-    COALESCE(j.posted_at, j.fetched_at) DESC
-LIMIT 10;
+    COALESCE(j.posted_at, j.fetched_at) DESC;

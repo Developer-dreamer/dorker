@@ -2,10 +2,12 @@ import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 from typesafe_sdk import AsyncTypeSafeClient, Noul, NoulCriteria, Score, SystemOneResponse
 
-from .models import JobForAnalytics, MatchedJob, SuitabilityTier
+from src.shared.models import JobForAnalytics, MatchedJob, SuitabilityTier
+
+from .protocols import Classifier
 
 
-class Jev:
+class ClassifyJobTierJev(Classifier):
     def __init__(self, client: AsyncTypeSafeClient, state: str) -> None:
         self.client = client
         self.state = state
@@ -101,7 +103,7 @@ class Jev:
 
         if tech_score >= 0.75 and strat_score >= 0.75:
             tier = SuitabilityTier.SUITABLE
-        elif tech_score < 0.75 and strat_score >= 0.75:
+        elif 0.25 < tech_score < 0.75 and strat_score >= 0.75:
             tier = SuitabilityTier.STRETCH
         elif tech_score >= 0.50 and strat_score >= 0.50:
             tier = SuitabilityTier.RUNWAY

@@ -4,8 +4,8 @@ The results were used further to train regressor to identify description blocks 
 """
 
 import asyncio
-import datetime
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Literal, Tuple, Type
 
@@ -157,7 +157,7 @@ async def run_batch_upload() -> None:
         jobs = [(row[0], row[1]) for row in rows]
 
     path, ids = create_batch_file(
-        batch_id=datetime.now(datetime.timezone.utc).isoformat(),
+        batch_id=datetime.now(timezone.utc).isoformat(),
         model="gpt-5.6-luna",
         jobs=jobs,
         output_dir=Path("/Users/serafym/Developer/dorker.space/intelligence_core/ml"),

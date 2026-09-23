@@ -6,20 +6,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import asyncpg
-import joblib
 import torch
 from asyncpg import Pool
 from typesafe_sdk import AsyncTypeSafeClient
 
-from src.analytics.database import (
-    JobFactSheetRepositoryPostgres,
-    JobRepositoryPostgres,
-    MatchRepositoryPostgres,
-)
+from src.analytics.classification import ClassifyJobTierJev
+from src.database.postgres.job_fact_sheet import JobFactSheetRepositoryPostgres
 from src.analytics.engine import MatchingEngine
-from src.analytics.jev import Jev
-from src.analytics.models import RuntimeVersion
-from src.analytics.slm import SLMQwenThinking
+from src.database.postgres import JobRepositoryPostgres, MatchRepository
+from src.shared.models.version import RuntimeVersion
 
 os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.8"
 os.environ["PYTORCH_MPS_LOW_WATERMARK_RATIO"] = "0.3"
@@ -58,30 +53,11 @@ async def define_iteration(pool: Pool) -> int:
         return int(iteration)
 
 
-async def run_old() -> None:
-    async with asyncpg.create_pool(dsn=PG_DSN) as pool:
-        iteration = await define_iteration(pool) + 1
-
-        clf = joblib.load(ROOT / "artifacts" / "model" / "block_classifier_nomic.pkl")
-
-        slm = SLMQwenThinking(
-            logger,
-            model_path=ROOT / "models" / "qwen2.5-7b-instruct-q4_k_m.gguf",
-            thinking_token_limit=150,
-        )
-
-        runtime_version = RuntimeVersion(model=MODEL, version=PIPELINE_VERSION, iteration=iteration)
-        job_repo = JobRepositoryPostgres(pool, runtime_version)
-        fact_sheet_repo = JobFactSheetRepositoryPostgres(pool, runtime_version)
-        match_repo = MatchRepositoryPostgres(pool, runtime_version)
-        engine = MatchingEngine(
-            logger, runtime_version, job_repo, fact_sheet_repo, match_repo, slm, clf
-        )
-
-        await engine.run_slm()
-
-
 async def run() -> None:
+    cv_path = ROOT / "artifacts" / "data" / "prompts" / "cv.md"
+    with open(cv_path, "r") as f:
+        cv = f.read()
+
     async with asyncpg.create_pool(dsn=PG_DSN) as pool:
         async with AsyncTypeSafeClient() as client:
             iteration = await define_iteration(pool) + 1
@@ -91,16 +67,14 @@ async def run() -> None:
             )
             job_repo = JobRepositoryPostgres(pool, runtime_version)
             fact_sheet_repo = JobFactSheetRepositoryPostgres(pool, runtime_version)
-            match_repo = MatchRepositoryPostgres(pool, runtime_version)
-            with open(ROOT / "orchestration" / "profile.md") as f:
-                profile = f.read()
-            jev = Jev(client, state=profile)
+            match_repo = MatchRepository(pool, runtime_version)
+            jev = ClassifyJobTierJev(client, state=cv)
 
             engine = MatchingEngine(
                 logger, runtime_version, job_repo, fact_sheet_repo, match_repo, jev=jev
             )
 
-            await engine.run_jev()
+            await engine.run()
 
 
 if __name__ == "__main__":

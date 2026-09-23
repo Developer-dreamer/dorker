@@ -12,7 +12,7 @@ CREATE TYPE workplace_type_enum AS ENUM (
     'UNKNOWN'
 );
 CREATE TYPE job_family AS ENUM (
-    'BACKEND',
+    'PURE_BACKEND',
     'FRONTEND',
     'FULLSTACK',
     'QA_SDET',
@@ -20,8 +20,13 @@ CREATE TYPE job_family AS ENUM (
     'DATA_AI',
     'MOBILE',
     'NON_TECHNICAL',
-    'OTHER'
+    'OTHER',
+    'AI_ENGINEERING',
+    'DATA_SCIENCE',
+    'DATA_ENGINEERING',
+    'DATA_ANALYTICS'
 );
+
 CREATE TYPE region_enum AS ENUM (
     'EMEA',
     'LATAM',
@@ -33,31 +38,23 @@ CREATE TYPE region_enum AS ENUM (
     'SEA'
     );
 
+-- 2. Jobs Fact Sheets Table
+CREATE TABLE jobs_fact_sheets
+(
+    id                  UUID PRIMARY KEY               DEFAULT gen_random_uuid(),
+    job_id              TEXT                  NOT NULL,
+    model               TEXT,
+    version             TEXT                  NOT NULL DEFAULT 'v0.0.0',
+    iteration           SMALLINT,
+    job_family          job_family            NOT NULL DEFAULT 'OTHER',
 
-CREATE TYPE timezone_overlap AS ENUM (
-    'EMEA',
-    'US_EAST',
-    'US_WEST',
-    'APAC'
-);
-
- -- 2. Jobs Fact Sheets Table
-CREATE TABLE jobs_fact_sheets (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    job_id TEXT NOT NULL,
-    model TEXT NOT NULL DEFAULT 'llama3.1',
-    version TEXT NOT NULL DEFAULT 'v0.0.0',
-
-    job_family job_family NOT NULL,
-     
     -- 1. Location & Legal Constraints
-    geographic_scope geographic_scope_enum NOT NULL,
-    workplace_type workplace_type_enum NOT NULL,
-    target_jurisdiction CHAR(2)
-        CHECK (target_jurisdiction ~ '^[A-Z]{2}$' OR target_jurisdiction IS NULL),
+    geographic_scope    geographic_scope_enum NOT NULL DEFAULT 'UNKNOWN',
+    workplace_type      workplace_type_enum   NOT NULL DEFAULT 'UNKNOWN',
+    target_jurisdiction CHAR(2) CHECK (target_jurisdiction ~ '^[A-Z]{2}$' OR target_jurisdiction IS NULL
+) ,
     region region_enum,
     office_location_city TEXT,
-    timezone_overlap_requested TEXT,
     -- 2. Seniority & Experience
     min_years_experience INTEGER CHECK (min_years_experience >= 0),
     is_experience_flexible BOOLEAN NOT NULL DEFAULT FALSE,
@@ -69,7 +66,8 @@ CREATE TABLE jobs_fact_sheets (
     -- 4. Operational Red Flags
     has_mandatory_travel BOOLEAN NOT NULL DEFAULT FALSE,
     has_uncompensated_oncall BOOLEAN NOT NULL DEFAULT FALSE,
-    detected_operational_cues TEXT [] NOT NULL DEFAULT '{}',
+
+    debug JSONB,
     -- Metadata / Audit Timestamps
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -77,7 +75,6 @@ CREATE TABLE jobs_fact_sheets (
 );
 -- 3. Helpful Indexes
 CREATE INDEX idx_jobs_fact_sheets_job_id ON jobs_fact_sheets (job_id);
-CREATE INDEX idx_jobs_fact_sheets_geographic_scope ON jobs_fact_sheets (geographic_scope);
 CREATE INDEX idx_jobs_fact_sheets_workplace_type ON jobs_fact_sheets (workplace_type);
 -- GIN indexes for array containment queries (e.g., WHERE primary_backend_languages @> ARRAY['Python'])
 CREATE INDEX idx_jobs_fact_sheets_languages ON jobs_fact_sheets USING GIN (primary_backend_languages);

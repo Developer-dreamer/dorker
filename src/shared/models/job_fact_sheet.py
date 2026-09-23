@@ -1,19 +1,9 @@
-from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, Literal, Optional
-from uuid import UUID
 
 import uuid6
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-
-# === Tracking entities ===
-
-
-@dataclass(frozen=True)
-class RuntimeVersion:
-    model: str
-    version: str
-    iteration: int
+from uuid6 import UUID
 
 
 class JobFamily(str, Enum):
@@ -55,31 +45,6 @@ class Region(str, Enum):
     MENA = "MENA"
     SEA = "SEA"
     UNKNOWN = "UNKNOWN"
-
-
-# === Domain models ===
-
-
-class JobForAnalytics(BaseModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    id: str
-
-    title: str
-    location: str | None
-
-    description: str
-
-    salary_min: float | None
-    salary_max: float | None
-    salary_currency: str | None
-
-    description_blocks: Optional[list[tuple[list[Any] | Any, float, Any]]] = Field(
-        default=None, description="List of blocks with label classified, probability and exact text"
-    )
-
-
-# === LLM intermediate models ===
 
 
 class LocationEntities(BaseModel):
@@ -124,6 +89,11 @@ class LocationEntities(BaseModel):
         description="Flag local SLM produces, to decide whether proceed with job or not",
     )
 
+    debug: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="JSON representing raw model output or internal chain of thought.",
+    )
+
 
 class DomainEntities(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -163,6 +133,11 @@ class DomainEntities(BaseModel):
         description="Flag local SLM produces, to decide whether proceed with job or not",
     )
 
+    debug: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="JSON representing raw model output or internal chain of thought.",
+    )
+
 
 class RedFlagsEntities(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -185,6 +160,11 @@ class RedFlagsEntities(BaseModel):
     has_uncompensated_oncall: bool = Field(
         default=False,
         description="True if on-call rotation is required without explicit compensation parameters.",
+    )
+
+    debug: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="JSON representing raw model output or internal chain of thought.",
     )
 
 
@@ -245,10 +225,6 @@ class JobFactSheet(BaseModel):
         default=False,
         description="True if on-call rotation is required without explicit compensation parameters.",
     )
-    # detected_operational_cues: list[str] = Field(
-    #     default_factory=list,
-    #     description="Exact linguistic cues indicating management debt (e.g., 'fast-paced environment', 'firefighting').",
-    # )
 
     # =========================================================================
     # PHASE 3: Location & Jurisdiction Details (Extractive tokens)
@@ -345,46 +321,3 @@ class JobFactSheet(BaseModel):
             has_mandatory_travel=red_flags.has_mandatory_travel,
             has_uncompensated_oncall=red_flags.has_uncompensated_oncall,
         )
-
-
-class SuitabilityTier(str, Enum):
-    SUITABLE = "SUITABLE"
-    STRETCH = "STRETCH"
-    RUNWAY = "RUNWAY"
-    REJECTED = "REJECTED"
-
-
-class MatchedJob(BaseModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    id: UUID = Field(default_factory=uuid6.uuid7)
-    job_id: str = Field(description="Job associated with this match.")
-
-    technical_capability_score: float = Field(
-        default=0.0,
-        description="Value representing how good candidate's stack aligns with role's required.",
-    )
-    strategic_value_score: float = Field(
-        default=0.0,
-        description="Value representing how good job description aligns with candidate's search preferences.",
-    )
-    suitability_tier: SuitabilityTier = Field(
-        default=SuitabilityTier.SUITABLE,
-        description="""Computed directly from technical_capability_score and strategic_value_score and constraints α and β respectively.
-                    - SUITABLE: technical_capability_score >= α AND strategic_value_score >= β
-                    - STRETCH: technical_capability_score < α AND strategic_value_score >= β
-                    - RUNWAY: technical_capability_score >= α AND strategic_value_score < β
-                    - REJECTED: technical_capability_score < α AND strategic_value_score < β OR if failed other constraints like location.
-                    """,
-    )
-
-    strategic_reason: str = Field(
-        default="", description="Reason why a candidate should apply. Omitted when REJECTED."
-    )
-    rejection_reason: str = Field(
-        default="", description="Reason why a job was rejected. Omitted when NOT REJECTED."
-    )
-
-    debug: str | None = Field(
-        default=None, description="JSON representing raw model output or internal chain of thought."
-    )

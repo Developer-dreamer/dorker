@@ -1,10 +1,11 @@
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Literal, Any
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 EmploymentType = Literal["FULL_TIME", "PART_TIME", "CONTRACT", "INTERN", "TEMPORARY"]
+
 
 class ATSType(StrEnum):
     """Known job-source identifiers.
@@ -92,6 +93,26 @@ class ATSType(StrEnum):
     TALEO = "taleo"
     TEAMTAILOR = "teamtailor"
     CUSTOM = "custom"
+
+
+class JobForAnalytics(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    id: str
+
+    title: str
+    location: str | None
+
+    description: str
+
+    salary_min: float | None
+    salary_max: float | None
+    salary_currency: str | None
+
+    description_blocks: Optional[list[tuple[list[Any] | Any, float, Any]]] = Field(
+        default=None, description="List of blocks with label classified, probability and exact text"
+    )
+
 
 class Job(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
