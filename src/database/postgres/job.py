@@ -19,9 +19,9 @@ class JobRepositoryPostgres(JobRepository):
                        j.salary_max,
                        j.salary_currency
                 FROM jobs j
-                WHERE EXISTS (
+                WHERE NOT EXISTS (
                       SELECT 1 FROM matches m
-                      WHERE m.job_id = j.id AND ltrim(m.version, 'v')::semver >= '0.2.2'::semver AND m.model IN ('jev-1.13.0')
+                      WHERE m.job_id = j.id AND ltrim(m.version, 'v')::semver >= '0.2.2'::semver
                   )
                   -- 2. MUST CONTAIN ONE OF THESE (Positive Match)
                   AND j.searchable @@ websearch_to_tsquery('simple',

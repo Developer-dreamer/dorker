@@ -1,4 +1,5 @@
 from enum import Enum
+from uuid import UUID
 
 import uuid6
 from pydantic import BaseModel, ConfigDict, Field
@@ -14,7 +15,7 @@ class SuitabilityTier(str, Enum):
 class MatchedJob(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    id: uuid6.UUID = Field(default_factory=uuid6.uuid7)
+    id: UUID = Field(default_factory=uuid6.uuid7)
     job_id: str = Field(description="Job associated with this match.")
 
     technical_capability_score: float = Field(

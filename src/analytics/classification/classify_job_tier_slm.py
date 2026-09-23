@@ -6,7 +6,7 @@ import guidance
 from guidance import gen, select
 from guidance.models import LlamaCpp
 
-from analytics.utils import log_guidance_step
+from src.analytics.utils import log_guidance_step
 from src.shared.models import (
     DomainEntities,
     JobForAnalytics,

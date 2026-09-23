@@ -1,9 +1,9 @@
 from enum import Enum
 from typing import Any, Dict, Literal, Optional
+from uuid import UUID
 
 import uuid6
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from uuid6 import UUID
 
 
 class JobFamily(str, Enum):
