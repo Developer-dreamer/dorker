@@ -31,29 +31,28 @@ jobs:
       - name: Update tracking branch
         id: sync_tracking
         run: |
-          if git show-ref --quiet refs/remotes/origin/upstream-sync; then
+          # Use ls-remote to check the remote repository directly
+          if git ls-remote --exit-code --heads origin upstream-sync >/dev/null 2>&1; then
             git checkout upstream-sync
           else
             git checkout --orphan upstream-sync
             git rm -rf .
           fi
-
+          
           # 1. Sync scrapers
           mkdir -p src/scraping/scrapers
           rsync -av --delete --exclude '__pycache__' /tmp/upstream-ats/src/ats_scrapers/scrapers/ src/scraping/scrapers/
-
+          
           # 2. Sync tests (including fixtures, excluding caches)
           mkdir -p tests
           rsync -av --delete --exclude '__pycache__' --exclude '.pytest_cache' /tmp/upstream-ats/tests/ tests/
-
+          
           # 3. Rewrite imports across both source and test files
           python3 - << 'EOF'
           import os
           import re
-
           target_dirs = ["src/scraping/scrapers", "tests"]
           pattern = re.compile(r'\b(from|import)\s+ats_scrapers\b')
-
           for target_dir in target_dirs:
               if not os.path.exists(target_dir):
                   continue
@@ -63,16 +62,13 @@ jobs:
                           filepath = os.path.join(root, file)
                           with open(filepath, "r", encoding="utf-8") as f:
                               content = f.read()
-
                           new_content = pattern.sub(r'\1 src.scraping', content)
-
                           if new_content != content:
                               with open(filepath, "w", encoding="utf-8") as f:
                                   f.write(new_content)
           EOF
-
+          
           git add src/scraping/scrapers tests
-
           if git diff --staged --quiet; then
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
           else
