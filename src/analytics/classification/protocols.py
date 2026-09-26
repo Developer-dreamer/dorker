@@ -1,10 +1,10 @@
 from typing import Protocol
 
-from src.shared.models import JobForAnalytics, MatchedJob
+from src.shared.models import JobForAnalytics
 
 
-class Classifier(Protocol):
-    async def classify(self, job: JobForAnalytics) -> MatchedJob: ...
+class Classifier[T](Protocol):
+    async def classify(self, job: JobForAnalytics) -> T: ...
 
 
 class SLM(Protocol):

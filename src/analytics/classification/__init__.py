@@ -1,9 +1,12 @@
-from src.analytics.classification import classify_job_tier_jev, classify_job_tier_slm
 from src.analytics.classification.classify_job_tier_jev import (
     ClassifyJobTierJev,
 )
 from src.analytics.classification.classify_job_tier_slm import (
     SLMQwenThinking,
+    open_csv_regex,
+)
+from src.analytics.classification.classify_profile_to_job import (
+    ClassifyProfileToJob,
 )
 from src.analytics.classification.protocols import (
     SLM,
@@ -13,8 +16,8 @@ from src.analytics.classification.protocols import (
 __all__ = [
     "Classifier",
     "ClassifyJobTierJev",
+    "ClassifyProfileToJob",
     "SLM",
     "SLMQwenThinking",
-    "classify_job_tier_jev",
-    "classify_job_tier_slm",
+    "open_csv_regex",
 ]

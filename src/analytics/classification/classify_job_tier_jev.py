@@ -7,7 +7,7 @@ from src.shared.models import JobForAnalytics, MatchedJob, SuitabilityTier
 from .protocols import Classifier
 
 
-class ClassifyJobTierJev(Classifier):
+class ClassifyJobTierJev(Classifier[MatchedJob]):
     def __init__(self, client: AsyncTypeSafeClient, state: str) -> None:
         self.client = client
         self.state = state

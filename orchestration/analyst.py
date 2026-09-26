@@ -10,11 +10,16 @@ import torch
 from asyncpg import Pool
 from typesafe_sdk import AsyncTypeSafeClient
 
-from src.analytics.classification import ClassifyJobTierJev
-from src.database.postgres.job_fact_sheet import JobFactSheetRepositoryPostgres
+from src.analytics.classification import ClassifyJobTierJev, ClassifyProfileToJob
 from src.analytics.engine import MatchingEngine
-from src.database.postgres import JobRepositoryPostgres, MatchRepository
-from src.shared.models.version import RuntimeVersion
+from src.analytics.generation import OpenAIClient
+from src.database.postgres import (
+    ApplicationPacketRepositoryPostgres,
+    JobFactSheetRepositoryPostgres,
+    JobRepositoryPostgres,
+    MatchRepositoryPostgres,
+)
+from src.shared.models import RuntimeVersion
 
 os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.8"
 os.environ["PYTORCH_MPS_LOW_WATERMARK_RATIO"] = "0.3"
@@ -67,11 +72,25 @@ async def run() -> None:
             )
             job_repo = JobRepositoryPostgres(pool, runtime_version)
             fact_sheet_repo = JobFactSheetRepositoryPostgres(pool, runtime_version)
-            match_repo = MatchRepository(pool, runtime_version)
-            jev = ClassifyJobTierJev(client, state=cv)
-
+            match_repo = MatchRepositoryPostgres(pool, runtime_version)
+            job_clf = ClassifyJobTierJev(client, state=cv)
+            application_repo = ApplicationPacketRepositoryPostgres(pool, runtime_version)
+            profile_clf = ClassifyProfileToJob(
+                client, profile_path=ROOT / "artifacts" / "data" / "prompts" / "profile.xml"
+            )
+            generator = OpenAIClient(
+                prompt_path=ROOT / "artifacts" / "data" / "prompts" / "coverletter.md"
+            )
             engine = MatchingEngine(
-                logger, runtime_version, job_repo, fact_sheet_repo, match_repo, jev=jev
+                logger,
+                runtime_version,
+                job_repo,
+                fact_sheet_repo,
+                match_repo,
+                application_repo,
+                job_clf=job_clf,
+                profile_clf=profile_clf,
+                application_generator=generator,
             )
 
             await engine.run()

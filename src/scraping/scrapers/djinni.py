@@ -78,7 +78,9 @@ class DjinniScraper(BaseScraper):
 
         title = (item.findtext("title") or "").strip() or "Untitled"
         description_raw = item.findtext("description")
-        description = self._strip_description(description_raw) if self.include_descriptions else None
+        description = (
+            self._strip_description(description_raw) if self.include_descriptions else None
+        )
 
         category = (item.findtext("category") or "").strip()
 

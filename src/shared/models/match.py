@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import Optional
 from uuid import UUID
 
 import uuid6
@@ -13,7 +14,7 @@ class SuitabilityTier(str, Enum):
 
 
 class MatchedJob(BaseModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True)
 
     id: UUID = Field(default_factory=uuid6.uuid7)
     job_id: str = Field(description="Job associated with this match.")
@@ -36,13 +37,13 @@ class MatchedJob(BaseModel):
                     """,
     )
 
-    strategic_reason: str = Field(
-        default="", description="Reason why a candidate should apply. Omitted when REJECTED."
+    strategic_reason: Optional[str] = Field(
+        default=None, description="Reason why a candidate should apply. Omitted when REJECTED."
     )
-    rejection_reason: str = Field(
-        default="", description="Reason why a job was rejected. Omitted when NOT REJECTED."
+    rejection_reason: Optional[str] = Field(
+        default=None, description="Reason why a job was rejected. Omitted when NOT REJECTED."
     )
 
-    debug: str | None = Field(
+    debug: Optional[str] = Field(
         default=None, description="JSON representing raw model output or internal chain of thought."
     )

@@ -43,7 +43,6 @@ async def ui_worker(
         try:
             msg = await ui_queue.get()
             if msg is None:
-                ui_queue.task_done()
                 break
 
             msg_type = msg.get("type")
@@ -131,6 +130,7 @@ async def main_loop() -> None:
 
             await ui_queue.put(None)
             await ui_task
+            await ui_queue.join()
 
 
 if __name__ == "__main__":

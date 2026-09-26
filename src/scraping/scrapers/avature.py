@@ -452,7 +452,9 @@ class AvatureScraper(BaseScraper):
         fields, description = _parse_detail(response.text)
         _apply_detail_to_job(job, fields, description)
 
-    async def _fetch_via_browserbase(self, base: str, company: str) -> list[Job]:
+    async def _fetch_via_browserbase(
+        self, base: str, company: str, async_playwright=None, playwright=None
+    ) -> list[Job]:
         """Browserbase fallback: run the same listing+detail flow via real Chrome.
 
         Cost is non-trivial (a session is ~$0.10/min), so we keep the

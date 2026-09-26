@@ -1,7 +1,7 @@
 [project]
-name = "job-analyst"
-version = "0.1.0"
-description = "Job Analyst Bot"
+name = "dorker"
+version = "0.2.2"
+description = "Engine to scrape and match jobs to a candidate"
 
 [project.optional-dependencies]
 dev = [
@@ -12,6 +12,10 @@ dev = [
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-dir]
+dorker = "src"
+src = "src"
 
 [tool.setuptools.packages.find]
 where = ["."]

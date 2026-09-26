@@ -4,6 +4,9 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
+from .application_packet import ApplicationPacket
+from .match import MatchedJob
+
 EmploymentType = Literal["FULL_TIME", "PART_TIME", "CONTRACT", "INTERN", "TEMPORARY"]
 
 
@@ -96,7 +99,7 @@ class ATSType(StrEnum):
 
 
 class JobForAnalytics(BaseModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True)
 
     id: str
 
@@ -111,6 +114,14 @@ class JobForAnalytics(BaseModel):
 
     description_blocks: Optional[list[tuple[list[Any] | Any, float, Any]]] = Field(
         default=None, description="List of blocks with label classified, probability and exact text"
+    )
+
+    match: Optional[MatchedJob] = Field(
+        default=None, description="Used when sending over to an OpenAI API."
+    )
+
+    application: Optional[ApplicationPacket] = Field(
+        default=None, description="Selected materials for application."
     )
 
 
