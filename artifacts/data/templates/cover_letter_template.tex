@@ -1,0 +1,99 @@
+% !TeX program = xelatex
+\documentclass[11pt,letterpaper]{article}
+
+\usepackage{geometry}
+\usepackage[hidelinks]{hyperref}
+\usepackage{fontspec}
+\usepackage[english]{babel}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{multicol}
+\usepackage{pifont}
+\usepackage{fontawesome5}
+\usepackage{fancyhdr}
+\usepackage[usenames,dvipsnames]{xcolor}
+\usepackage{etoolbox,refcount}
+\usepackage{calc}
+\usepackage{setspace}
+\usepackage{xparse}
+\usepackage{relsize}
+\usepackage{graphicx}
+
+% Requires system or TeX installation of TeX Gyre Heros
+\setmainfont{TeX Gyre Heros}
+
+\setlength{\tabcolsep}{0in}
+\pagenumbering{gobble}
+\pagestyle{empty}
+\raggedbottom
+\raggedright
+
+\geometry{
+    paper=letterpaper,
+    top=0.5in,
+    bottom=0.5in,
+    left=0.5in,
+    right=0.5in,
+    headheight=0.75cm,
+    footskip=1cm,
+    headsep=0.5cm
+}
+
+\titleformat{\section}%
+    {\vspace{-4pt}\scshape\raggedright\large\bfseries}%
+    {}%
+    {0em}%
+    {}%
+    [\color{black}\titlerule\vspace{-5pt}]
+
+\newcommand*{\CustomBullet}{%
+    \hspace{0.1em}%
+    \raisebox{-0.1em}{\scalebox{1.5}{$\cdot$}}%
+    \hspace{0.5em}%
+}
+
+\NewDocumentCommand{\Header}{m m m m m m o}{
+    \fancyhf{}
+    \begin{center}
+        {\Huge\textbf{\textsc{\textcolor{NavyBlue}{\VAR{name}}}}}\\[4pt]
+        \textcolor{black}{
+            \VAR{city} \CustomBullet \VAR{phone} \CustomBullet \href{mailto:\VAR{email}}{\VAR{email}} \\
+            \href{https://linkedin.com/in/\VAR{linkedin}}{linkedin.com/in/\VAR{linkedin}} \CustomBullet \href{https://github.com/\VAR{github}}{github.com/\VAR{github}}
+            \BLOCK{if website} \CustomBullet \href{\VAR{website}}{\VAR{website}}\BLOCK{endif}
+        }\\[3pt]
+    \end{center}
+    \vspace{-15pt}
+}
+
+\begin{document}
+
+\Header{\VAR{name}}{\VAR{city}}{\VAR{phone}}{\VAR{email}}{\VAR{linkedin}}{\VAR{github}}[\VAR{website}]
+
+\section{}
+
+\vspace{0.5in}
+\begin{tabular}{@{} l}
+    \VAR{recipient_title} \\
+    \VAR{company_name} \\
+    \VAR{company_location} \\
+\end{tabular}
+
+\bigskip
+\bigskip
+
+Dear \VAR{salutation_name},
+
+\bigskip
+
+\BLOCK{for paragraph in letter_paragraphs}
+\VAR{paragraph}
+
+\bigskip
+\BLOCK{endfor}
+
+Sincerely,
+
+\bigskip
+\VAR{name}
+
+\end{document}

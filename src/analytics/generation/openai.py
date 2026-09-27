@@ -16,6 +16,7 @@ from openai.types.responses.response_format_text_json_schema_config_param import
 from openai.types.shared_params import Reasoning
 from pydantic import BaseModel
 
+from src.analytics.protocols import ApplicationGenerator
 from src.database.protocols import BatchRepository
 from src.shared.models import (
     ApplicationGeneratedResponse,
@@ -23,8 +24,6 @@ from src.shared.models import (
     JobForAnalytics,
     OpenAIBatchRecord,
 )
-
-from .protocols import ApplicationGenerator
 
 MAX_BYTES_PER_BATCH = 2e8  # 200 MB per request
 MAX_REQUESTS_PER_BATCH = 50_000  # 50 000 separate questions to AI model

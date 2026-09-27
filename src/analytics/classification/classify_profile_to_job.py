@@ -6,9 +6,8 @@ from bs4 import BeautifulSoup, Tag
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 from typesafe_sdk import AsyncTypeSafeClient, Choice, Noul, NoulCriteria, SystemOneResponse
 
+from src.analytics.protocols import Classifier
 from src.shared.models import ApplicationPacket, JobForAnalytics, Material
-
-from .protocols import Classifier
 
 
 class ClassifyProfileToJob(Classifier[ApplicationPacket]):

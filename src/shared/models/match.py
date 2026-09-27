@@ -37,9 +37,7 @@ class MatchedJob(BaseModel):
                     """,
     )
 
-    strategic_reason: Optional[str] = Field(
-        default=None, description="Reason why a candidate should apply. Omitted when REJECTED."
-    )
+    job_summary: Optional[str] = Field(default=None, description="Short overview of the position.")
     rejection_reason: Optional[str] = Field(
         default=None, description="Reason why a job was rejected. Omitted when NOT REJECTED."
     )

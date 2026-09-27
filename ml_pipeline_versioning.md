@@ -30,3 +30,7 @@ Switched to thinking model
 ## v0.2.2
 
 Extended job family enum
+
+## v0.3.0
+
+Configured cover letter generation

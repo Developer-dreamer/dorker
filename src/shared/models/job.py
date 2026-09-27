@@ -105,6 +105,8 @@ class JobForAnalytics(BaseModel):
 
     title: str
     location: str | None
+    company: str | None = None
+    url: str | None = None
 
     description: str
 

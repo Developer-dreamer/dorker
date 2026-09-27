@@ -6,6 +6,7 @@ import guidance
 from guidance import gen, select
 from guidance.models import LlamaCpp
 
+from src.analytics.protocols import SLM
 from src.analytics.utils import log_guidance_step
 from src.shared.models import (
     DomainEntities,
@@ -13,8 +14,6 @@ from src.shared.models import (
     LocationEntities,
     RedFlagsEntities,
 )
-
-from .protocols import SLM
 
 # Matches: one item without commas/newlines, followed by comma + next item
 # Stops immediately when hitting a newline

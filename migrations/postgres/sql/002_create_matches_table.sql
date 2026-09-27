@@ -4,7 +4,6 @@ CREATE TABLE matches
     id                         UUID PRIMARY KEY,
     job_id                     TEXT             NOT NULL,
 
-    is_technical               BOOLEAN          NOT NULL DEFAULT FALSE,
     suitability_tier           TEXT CHECK (
         suitability_tier IN ('SUITABLE', 'STRETCH', 'RUNWAY', 'REJECTED')
         ),
@@ -17,7 +16,7 @@ CREATE TABLE matches
     technical_capability_score DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     strategic_value_score      DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     confidence_score           DOUBLE PRECISION NOT NULL DEFAULT 0.0,
-    strategic_reason           TEXT,
+    job_summary                TEXT,
     rejection_reason           TEXT,
 
     -- Analytics payload

@@ -1,14 +1,16 @@
 import asyncio
 import time
+from datetime import timedelta
 from enum import Enum
 from logging import Logger
-from typing import Dict
+from typing import Dict, List
+from uuid import UUID
 
 from src.database import (
     ApplicationPacketRepository,
     JobFactSheetRepository,
     JobRepository,
-    MatchRepositoryPostgres,
+    MatchRepository,
 )
 from src.shared.models import (
     ApplicationGeneratedResponse,
@@ -22,9 +24,10 @@ from src.shared.models import (
     SuitabilityTier,
 )
 
+from ..shared import JobForAnalytics
 from .classification import SLM, Classifier
-from .generation import ApplicationGenerator
 from .ml.filter_description import DescriptionFilter
+from .protocols import ApplicationGenerator
 
 
 class MatchingType(str, Enum):
@@ -39,7 +42,7 @@ class MatchingEngine:
         runtime_version: RuntimeVersion,
         job_repo: JobRepository,
         fact_sheet_repo: JobFactSheetRepository,
-        match_repo: MatchRepositoryPostgres,
+        match_repo: MatchRepository,
         application_repo: ApplicationPacketRepository,
         job_clf: Classifier[MatchedJob],
         profile_clf: Classifier[ApplicationPacket],
@@ -60,9 +63,41 @@ class MatchingEngine:
         self.profile_clf = profile_clf
         self.desc_filter = desc_filter
 
-    async def run(self, run_type: MatchingType = MatchingType.REMOTE) -> None:
-        await self._classify_profile_jev()
-        await self._generate_applications()
+    async def run(self) -> None:
+        await self._generate_summary()
+
+    async def classify_background(self) -> None:
+        await self._classify_jobs_jev()
+
+    async def get_matching_count(self) -> dict[str, int]:
+        return await self.match_repo.get_matches_stats()
+
+    async def get_matched_job(
+        self, tiers: List[SuitabilityTier], offset: int = 0
+    ) -> JobForAnalytics | None:
+        return await self.match_repo.get_matched_job(tiers, offset)
+
+    async def get_job_by_match_id(self, match_id: UUID) -> JobForAnalytics | None:
+        return await self.match_repo.get_job_by_match_id(match_id)
+
+    async def update_pipeline_status(self, match_id: UUID, status: str) -> None:
+        return await self.match_repo.update_pipeline_status(match_id, status)
+
+    async def generate_application_for_match(
+        self, job: JobForAnalytics
+    ) -> ApplicationGeneratedResponse:
+        assert self.application_generator is not None
+
+        # 1. Classify profile for job
+        packet = await self.profile_clf.classify(job)
+        await self.application_repo.save_packet(packet)
+        job.application = packet
+
+        # 2. Generate Application (Cover Letter / Follow Up)
+        resp = await self.application_generator.generate_sync(job)
+        await self.application_repo.update_packet(job.application.id, resp)
+
+        return resp
 
     async def _classify_jobs_slm(self) -> None:
         if self.slm is None or self.desc_filter is None:
@@ -142,7 +177,7 @@ class MatchingEngine:
             entry_count += len(entries)
 
     async def _classify_jobs_jev(self) -> None:
-        entries = await self.job_repo.get_matched_jobs()
+        entries = await self.job_repo.get_matched_jobs(time_interval=timedelta(weeks=5), limit=1000)
         self.logger.info(f"Retrieved {len(entries)} candidate jobs from repository.")
 
         for idx, job in enumerate(entries, start=1):
@@ -153,6 +188,10 @@ class MatchingEngine:
 
             try:
                 res = await self.job_clf.classify(job)
+                if self.slm is not None and res.suitability_tier != SuitabilityTier.REJECTED:
+                    summary = await asyncio.to_thread(self.slm.generate, job, str)
+                    res.job_summary = summary
+
                 await self.match_repo.save_match(res)
             except Exception as e:
                 self.logger.error(f"Error classifying job {job.id}: {str(e)}")
@@ -179,7 +218,7 @@ class MatchingEngine:
     async def _generate_applications(self) -> None:
         assert self.application_generator is not None
 
-        jobs = await self.application_repo.get_pending_packets()
+        jobs = await self.application_repo.get_pending_packets(limit=100)
         self.logger.info(f"Retrieved {len(jobs)} jobs for cover letter generation.")
 
         for idx, job in enumerate(jobs, start=1):
@@ -189,3 +228,16 @@ class MatchingEngine:
             resp = await self.application_generator.generate_sync(job)
 
             await self.application_repo.update_packet(job.application.id, resp)
+
+    async def _generate_summary(self) -> None:
+        assert self.slm is not None
+
+        matches = await self.match_repo.get_matches(SuitabilityTier.RUNWAY, limit=10000)
+        self.logger.info(f"Retrieved {len(matches)} matches.")
+
+        for idx, match in enumerate(matches, start=1):
+            assert match.match is not None
+            self.logger.info(f"--- [{idx}/{len(matches)}] Processing match {match.id} ---")
+
+            summary = self.slm.generate(match, str)
+            await self.match_repo.update_summary(match.match.id, summary)

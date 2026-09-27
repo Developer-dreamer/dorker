@@ -8,7 +8,7 @@ from src.analytics.classification.classify_job_tier_slm import (
 from src.analytics.classification.classify_profile_to_job import (
     ClassifyProfileToJob,
 )
-from src.analytics.classification.protocols import (
+from src.analytics.protocols import (
     SLM,
     Classifier,
 )

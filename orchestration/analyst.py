@@ -12,7 +12,7 @@ from typesafe_sdk import AsyncTypeSafeClient
 
 from src.analytics.classification import ClassifyJobTierJev, ClassifyProfileToJob
 from src.analytics.engine import MatchingEngine
-from src.analytics.generation import OpenAIClient
+from src.analytics.generation import OpenAIClient, SummarySLM
 from src.database.postgres import (
     ApplicationPacketRepositoryPostgres,
     JobFactSheetRepositoryPostgres,
@@ -42,7 +42,7 @@ logger = logging.getLogger("analyst")
 
 PG_DSN = os.environ.get("PG_DSN", "postgresql://postgres:password@localhost:5432/dorker_db")
 MODEL = "jev-1.13.0"
-PIPELINE_VERSION = "0.2.2"
+PIPELINE_VERSION = "0.3.0"
 
 device = "mps" if torch.backends.mps.is_available() else "cpu"
 
@@ -81,6 +81,10 @@ async def run() -> None:
             generator = OpenAIClient(
                 prompt_path=ROOT / "artifacts" / "data" / "prompts" / "coverletter.md"
             )
+            slm = SummarySLM(
+                logger, model_path=ROOT / "models" / "deepseek-r1-distill-qwen-7b-q4_k_m.gguf"
+            )
+
             engine = MatchingEngine(
                 logger,
                 runtime_version,
@@ -91,9 +95,16 @@ async def run() -> None:
                 job_clf=job_clf,
                 profile_clf=profile_clf,
                 application_generator=generator,
+                slm=slm,
             )
+            await engine.classify_background()
 
-            await engine.run()
+            # telegram_api_key = os.getenv("TELEGRAM_API_KEY")
+            # if not telegram_api_key:
+            #     raise ValueError("TELEGRAM_API_KEY environment variable is not set")
+            # bot = TelegramBot(logger, telegram_api_key, engine=engine)
+            # await bot.run()
+            # await bot.stop()
 
 
 if __name__ == "__main__":

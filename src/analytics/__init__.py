@@ -10,11 +10,13 @@ from src.analytics.engine import (
     MatchingType,
 )
 from src.analytics.generation import (
-    ApplicationGenerator,
     OpenAIClient,
 )
 from src.analytics.ml import (
     DescriptionFilter,
+)
+from src.analytics.protocols import (
+    ApplicationGenerator,
 )
 from src.analytics.scoring import (
     ALIAS_MAP,

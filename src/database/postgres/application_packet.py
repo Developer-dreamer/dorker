@@ -20,7 +20,7 @@ class ApplicationPacketRepositoryPostgres(ApplicationPacketRepository):
         self.pool = pool
 
     async def save_packet(self, packet: ApplicationPacket) -> None:
-        columns = ("job_id", "match_id", "materials", "debug", "version", "iteration")
+        columns = ("job_id", "match_id", "materials", "summary", "debug", "version", "iteration")
 
         query = f"""
                     INSERT INTO applications ({", ".join(columns)})
@@ -29,6 +29,8 @@ class ApplicationPacketRepositoryPostgres(ApplicationPacketRepository):
 
         dumped = packet.model_dump(exclude_none=True)
 
+        if packet.summary is None:
+            dumped["summary"] = None
         # Serialize list to JSON string for Postgres JSON/JSONB/TEXT column
         if "materials" in dumped:
             dumped["materials"] = json.dumps(dumped["materials"])

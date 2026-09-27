@@ -2,9 +2,8 @@ import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 from typesafe_sdk import AsyncTypeSafeClient, Noul, NoulCriteria, Score, SystemOneResponse
 
+from src.analytics.protocols import Classifier
 from src.shared.models import JobForAnalytics, MatchedJob, SuitabilityTier
-
-from .protocols import Classifier
 
 
 class ClassifyJobTierJev(Classifier[MatchedJob]):
