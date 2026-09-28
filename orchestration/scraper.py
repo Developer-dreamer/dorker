@@ -25,6 +25,7 @@ SLEEP_INTERVAL_HOURS = 6
 PG_DSN = "postgresql://postgres:password@localhost:5432/dorker_db"
 
 LOG_PATH = ROOT / "logs" / f"scraper_{datetime.now(timezone.utc).isoformat()}.log"
+LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 # Configure file-only logging
 logging.basicConfig(
@@ -61,6 +62,7 @@ async def ui_worker(
                     state.found = msg.get("found", 0)
                     state.queued = msg.get("queued", 0)
                     state.dupes = msg.get("dupes", 0)
+                    state.deleted = msg.get("deleted", 0)
             elif msg_type == "finish":
                 if ats in dashboard.working:
                     del dashboard.working[ats]

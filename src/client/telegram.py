@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import json
 import os
 import uuid
 from logging import Logger
@@ -29,6 +30,8 @@ class TelegramBot:
         self._dp = Dispatcher()
         self._register_handlers()
         self.matching_engine = engine
+
+        self.questions: dict[str, list[str]] = dict()
 
     def _register_handlers(self) -> None:
         self._dp.message.register(self.cmd_start, CommandStart())
@@ -74,6 +77,17 @@ class TelegramBot:
             else "unknown"
         )
         summary = job.match.job_summary if job.match and job.match.job_summary else ""
+        formatted_summary = summary
+        if summary.strip().startswith("{"):
+            with contextlib.suppress(Exception):
+                parsed = json.loads(summary)
+                if isinstance(parsed, dict) and "summary" in parsed:
+                    formatted_summary = (
+                        f"📝 {parsed.get('summary', '')}\n\n"
+                        f"👍 Pros:\n{parsed.get('pros', '')}\n\n"
+                        f"⚠️ Cons:\n{parsed.get('cons', '')}"
+                    )
+
         match_id = job.match.id if job.match else ""
 
         text = (
@@ -82,9 +96,8 @@ class TelegramBot:
             f"Location: {job.location}\n"
             f"Salary: {salary}\n"
             f"URL: {job.url}\n\n"
-            f"Tier: {tier_val}\n"
-            f"Summary:\n"
-            f"{summary}"
+            f"Tier: {tier_val}\n\n"
+            f"{formatted_summary}"
         )
 
         markup = InlineKeyboardMarkup(
@@ -122,7 +135,8 @@ class TelegramBot:
                         text="Cover Letter", callback_data=f"/gen:letter:{match_id}"
                     ),
                     InlineKeyboardButton(text="Both", callback_data=f"/gen:both:{match_id}"),
-                ]
+                ],
+                [InlineKeyboardButton(text="Ignore", callback_data=f"/ignore:{match_id}")],
             ]
         )
 
@@ -137,9 +151,16 @@ class TelegramBot:
             return
         match_id = callback.data.split(":")[1]
 
-        await self.matching_engine.update_pipeline_status(uuid.UUID(match_id), "DECLINED")
+        await self.matching_engine.update_pipeline_status(uuid.UUID(match_id), "IGNORED")
         await self._clear_reply_markup(callback.message)
         await self._show_next_job()
+
+    async def _safe_send_message(self, chat_id: int, text: str, **kwargs: Any) -> None:
+        if not text:
+            return
+        chunk_size = 4000
+        for i in range(0, len(text), chunk_size):
+            await self._bot.send_message(chat_id=chat_id, text=text[i : i + chunk_size], **kwargs)
 
     async def handle_generate(self, callback: CallbackQuery) -> None:
         await callback.answer("Generating application materials...", show_alert=False)
@@ -190,29 +211,49 @@ class TelegramBot:
                 msg_text = (
                     resp.follow_up_message if gen_type == "both" else "Here is your cover letter."
                 )
-                await self._bot.send_document(chat_id=CHAT_ID, document=pdf_file, caption=msg_text)
+                if len(msg_text) > 1024:
+                    await self._bot.send_document(chat_id=CHAT_ID, document=pdf_file)
+                    await self._safe_send_message(chat_id=CHAT_ID, text=msg_text)
+                else:
+                    await self._bot.send_document(
+                        chat_id=CHAT_ID, document=pdf_file, caption=msg_text
+                    )
             except FileNotFoundError as e:
                 self.logger.warning(f"LaTeX engine not installed: {e}")
-                cover_letter_text = (
-                    f"⚠️ *PDF compilation skipped* ('xelatex' not installed on system).\n\n"
-                    f"*Cover Letter:*\n{resp.cover_letter}"
-                )
-                if gen_type == "both":
-                    cover_letter_text = (
-                        f"*Follow Up Message:*\n{resp.follow_up_message}\n\n" + cover_letter_text
-                    )
                 await self._bot.send_message(
                     chat_id=CHAT_ID,
-                    text=cover_letter_text,
+                    text="⚠️ *PDF compilation skipped* ('xelatex' not installed on system).",
                 )
+                if resp.cover_letter:
+                    await self._safe_send_message(
+                        chat_id=CHAT_ID,
+                        text=f"📄 *Cover Letter:*\n\n{resp.cover_letter}",
+                    )
+                if resp.follow_up_message and gen_type == "both":
+                    await self._safe_send_message(
+                        chat_id=CHAT_ID,
+                        text=f"💬 *Follow Up Message:*\n\n{resp.follow_up_message}",
+                    )
             except Exception as e:
                 self.logger.exception(f"Failed to generate cover letter PDF: {e}")
+                err_str = str(e).strip()
+                first_err_line = err_str.splitlines()[-1] if err_str else "Unknown error"
                 await self._bot.send_message(
                     chat_id=CHAT_ID,
-                    text=f"⚠️ Failed to compile PDF ({e}).\n\nCover Letter:\n{resp.cover_letter}\n\nFollow Up:\n{resp.follow_up_message}",
+                    text=f"⚠️ Failed to compile PDF ({first_err_line[:120]}). Falling back to text:",
                 )
+                if resp.cover_letter:
+                    await self._safe_send_message(
+                        chat_id=CHAT_ID,
+                        text=f"📄 *Cover Letter:*\n\n{resp.cover_letter}",
+                    )
+                if resp.follow_up_message and gen_type == "both":
+                    await self._safe_send_message(
+                        chat_id=CHAT_ID,
+                        text=f"💬 *Follow Up Message:*\n\n{resp.follow_up_message}",
+                    )
         else:
-            await self._bot.send_message(chat_id=CHAT_ID, text=resp.follow_up_message)
+            await self._safe_send_message(chat_id=CHAT_ID, text=resp.follow_up_message)
 
         markup = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -278,7 +319,7 @@ class TelegramBot:
                         ]
                     ),
                 )
-                await asyncio.sleep(600)
+                await asyncio.sleep(60000)
         except asyncio.CancelledError:
             self.logger.info("Match monitor background task cancelled.")
             raise

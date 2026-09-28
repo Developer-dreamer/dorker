@@ -9,14 +9,14 @@ from src.scraping.models import Job
 from src.shared.models.company import ATS, ATSCompany
 from src.shared.models.job import Job as JobDomain
 
-from .base import description_keys
+from .base import JobRepository, description_keys
 
 
 def _sanitize_record(record: Sequence[Any]) -> tuple[Any, ...]:
     return tuple(val.replace("\x00", "") if isinstance(val, str) else val for val in record)
 
 
-class JobRepositoryPostgres:
+class JobRepositoryPostgres(JobRepository):
     def __init__(self, logger: Logger, pool: Pool) -> None:
         self.logger = logger
         self.pool = pool
@@ -32,7 +32,14 @@ class JobRepositoryPostgres:
                         $9, $10, $11, $12, $13, $14, $15, $16,
                         $17, $18
                     )
-                    ON CONFLICT (id) DO NOTHING;
+                    ON CONFLICT (id) DO UPDATE SET
+                        deleted_at = NULL,
+                        description = CASE
+                            WHEN jobs.description = '' AND EXCLUDED.description != '' THEN EXCLUDED.description
+                            ELSE jobs.description
+                        END,
+                        fetched_at = EXCLUDED.fetched_at
+                    WHERE jobs.deleted_at IS NOT NULL;
                 """
         buffer = [_sanitize_record(self._job_to_db_params(job)) for job in jobs]
 
@@ -54,7 +61,7 @@ class JobRepositoryPostgres:
                     except asyncpg.ForeignKeyViolationError as fk_err:
                         self.logger.error(
                             f"[DB Writer] Dropping job record due to invalid foreign key: "
-                            f"{fk_err.detail} | Job URL: {row[3]}"
+                            f"{fk_err} | Job URL: {row[3]}"
                         )
                     except asyncpg.PostgresError as row_err:
                         self.logger.error(
@@ -87,6 +94,74 @@ class JobRepositoryPostgres:
             job.posted_at,
             job.fetched_at or datetime.now(timezone.utc),
         )
+
+    async def mark_deleted_jobs_for_company(
+        self, company_id: int, active_job_ids: list[str]
+    ) -> int:
+        """Marks jobs as deleted for a specific company if not present in active_job_ids."""
+        if not active_job_ids:
+            query = """
+                UPDATE jobs
+                SET deleted_at = CURRENT_TIMESTAMP
+                WHERE company_id = $1
+                  AND deleted_at IS NULL;
+            """
+            async with self.pool.acquire() as conn:
+                status = await conn.execute(query, company_id)
+                return int(status.split()[-1]) if status else 0
+
+        if len(active_job_ids) > 50000:
+            async with self.pool.acquire() as conn:
+                async with conn.transaction():
+                    await conn.execute(
+                        "CREATE TEMP TABLE temp_active_ids (id TEXT PRIMARY KEY) ON COMMIT DROP;"
+                    )
+                    records = [(jid,) for jid in active_job_ids]
+                    await conn.executemany(
+                        "INSERT INTO temp_active_ids (id) VALUES ($1) ON CONFLICT DO NOTHING;",
+                        records,
+                    )
+                    query = """
+                        UPDATE jobs j
+                        SET deleted_at = CURRENT_TIMESTAMP
+                        WHERE j.company_id = $1
+                          AND j.deleted_at IS NULL
+                          AND NOT EXISTS (
+                              SELECT 1 FROM temp_active_ids t WHERE t.id = j.id
+                          );
+                    """
+                    status = await conn.execute(query, company_id)
+                    return int(status.split()[-1]) if status else 0
+
+        query = """
+            UPDATE jobs
+            SET deleted_at = CURRENT_TIMESTAMP
+            WHERE company_id = $1
+              AND deleted_at IS NULL
+              AND NOT (id = ANY($2::text[]));
+        """
+        async with self.pool.acquire() as conn:
+            status = await conn.execute(query, company_id, active_job_ids)
+            return int(status.split()[-1]) if status else 0
+
+    async def evict_stale_deleted_descriptions(self, days: int = 7) -> int:
+        """Clears descriptions of jobs deleted more than `days` ago, provided they
+        do not have an active or pending match in matches ('APPLIED', 'INTERVIEWING', 'OFFER', 'PENDING').
+        Reclaims TOAST and index space while preserving match and analytics records."""
+        query = """
+            UPDATE jobs j
+            SET description = ''
+            WHERE j.deleted_at < CURRENT_TIMESTAMP - ($1::int * INTERVAL '1 day')
+              AND j.description != ''
+              AND NOT EXISTS (
+                  SELECT 1 FROM matches m
+                  WHERE m.job_id = j.id
+                    AND m.pipeline_status IN ('APPLIED', 'INTERVIEWING', 'OFFER', 'PENDING')
+              );
+        """
+        async with self.pool.acquire() as conn:
+            status = await conn.execute(query, days)
+            return int(status.split()[-1]) if status else 0
 
 
 class CompanyRepositoryPostgres:

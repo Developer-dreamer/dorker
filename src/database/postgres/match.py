@@ -52,6 +52,7 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
         query = """
                 SELECT m.suitability_tier, COUNT(*) FROM matches m
                 WHERE ltrim(m.version, 'v')::semver >= $1::semver
+                    AND m.pipeline_status = 'PENDING'
                 GROUP BY m.suitability_tier;              
                 """
 
@@ -110,7 +111,7 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
         self, tiers: List[SuitabilityTier], offset: int = 0
     ) -> JobForAnalytics | None:
         query = """
-                SELECT j.id AS id,
+                SELECT j.id   AS id,
                        j.title,
                        j.location,
                        c.name AS company,
@@ -119,7 +120,7 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
                        j.salary_min,
                        j.salary_max,
                        j.salary_currency,
-                       m.id AS match_id,
+                       m.id   AS match_id,
                        m.job_id,
                        m.technical_capability_score,
                        m.strategic_value_score,
@@ -132,7 +133,15 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
                   AND m.pipeline_status = 'PENDING'
                   AND ltrim(m.version, 'v')::semver >= $1::semver
                   AND m.suitability_tier = ANY ($2)
-                ORDER BY m.id DESC LIMIT 1
+                ORDER BY CASE m.suitability_tier
+                        WHEN 'SUITABLE' THEN 1
+                        WHEN 'RUNWAY' THEN 2
+                        WHEN 'STRETCH' THEN 3
+                        ELSE 4
+                    END ASC,
+                    c.tier ASC,
+                    COALESCE(j.posted_at, j.fetched_at) DESC
+                LIMIT 1
                 OFFSET $3;
                 """
         tier_values = [t.value for t in tiers]

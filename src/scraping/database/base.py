@@ -7,6 +7,10 @@ from src.shared.models.job import Job as JobDomain
 
 class JobRepository(Protocol):
     async def save_job_batch(self, jobs: List[JobDomain]) -> None: ...
+    async def mark_deleted_jobs_for_company(
+        self, company_id: int, active_job_ids: list[str]
+    ) -> int: ...
+    async def evict_stale_deleted_descriptions(self, days: int = 7) -> int: ...
 
 
 class CompanyRepository(Protocol):

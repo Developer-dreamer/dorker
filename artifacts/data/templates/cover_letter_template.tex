@@ -19,8 +19,18 @@
 \usepackage{relsize}
 \usepackage{graphicx}
 
-% Requires system or TeX installation of TeX Gyre Heros
-\setmainfont{TeX Gyre Heros}
+% Prefer TeX Gyre Heros if available, otherwise fallback to system Helvetica or Arial
+\IfFontExistsTF{TeX Gyre Heros}{%
+  \setmainfont{TeX Gyre Heros}%
+}{%
+  \IfFontExistsTF{Helvetica}{%
+    \setmainfont{Helvetica}%
+  }{%
+    \IfFontExistsTF{Arial}{%
+      \setmainfont{Arial}%
+    }{}%
+  }%
+}
 
 \setlength{\tabcolsep}{0in}
 \pagenumbering{gobble}
@@ -55,11 +65,11 @@
 \NewDocumentCommand{\Header}{m m m m m m o}{
     \fancyhf{}
     \begin{center}
-        {\Huge\textbf{\textsc{\textcolor{NavyBlue}{\VAR{name}}}}}\\[4pt]
-        \textcolor{black}{
-            \VAR{city} \CustomBullet \VAR{phone} \CustomBullet \href{mailto:\VAR{email}}{\VAR{email}} \\
-            \href{https://linkedin.com/in/\VAR{linkedin}}{linkedin.com/in/\VAR{linkedin}} \CustomBullet \href{https://github.com/\VAR{github}}{github.com/\VAR{github}}
-            \BLOCK{if website} \CustomBullet \href{\VAR{website}}{\VAR{website}}\BLOCK{endif}
+        {\Huge\textbf{\textsc{\textcolor{NavyBlue}{#1}}}}\\[4pt]
+        {\color{black}
+            #2 \CustomBullet #3 \CustomBullet \href{mailto:#4}{#4} \\
+            \href{https://linkedin.com/in/#5}{linkedin.com/in/#5} \CustomBullet \href{https://github.com/#6}{github.com/#6}%
+            \IfValueT{#7}{\CustomBullet \href{#7}{#7}}
         }\\[3pt]
     \end{center}
     \vspace{-15pt}
@@ -67,7 +77,11 @@
 
 \begin{document}
 
+\BLOCK{if website}
 \Header{\VAR{name}}{\VAR{city}}{\VAR{phone}}{\VAR{email}}{\VAR{linkedin}}{\VAR{github}}[\VAR{website}]
+\BLOCK{else}
+\Header{\VAR{name}}{\VAR{city}}{\VAR{phone}}{\VAR{email}}{\VAR{linkedin}}{\VAR{github}}
+\BLOCK{endif}
 
 \section{}
 

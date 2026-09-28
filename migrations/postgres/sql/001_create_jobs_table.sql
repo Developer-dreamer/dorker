@@ -76,13 +76,14 @@ CREATE TABLE IF NOT EXISTS jobs (
     FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
 );
 
+CREATE INDEX idx_jobs_company_active ON jobs (company_id) WHERE deleted_at IS NULL;
 CREATE INDEX idx_jobs_unnormalized ON jobs (id) WHERE is_normalized = FALSE;
-CREATE INDEX idx_jobs_searchable ON jobs USING GIN (searchable);
+CREATE INDEX idx_jobs_searchable ON jobs USING GIN (searchable) WHERE deleted_at IS NULL;
 
--- Index title and description with trigrams
-CREATE INDEX idx_jobs_title_trgm ON jobs USING GIN (title gin_trgm_ops);
-CREATE INDEX idx_jobs_desc_trgm ON jobs USING GIN (description gin_trgm_ops);
-CREATE INDEX idx_jobs_location_trgm ON jobs USING GIN (location gin_trgm_ops);
+-- Index title, description, and location with trigrams (partial for active jobs)
+CREATE INDEX idx_jobs_title_trgm ON jobs USING GIN (title gin_trgm_ops) WHERE deleted_at IS NULL;
+CREATE INDEX idx_jobs_desc_trgm ON jobs USING GIN (description gin_trgm_ops) WHERE deleted_at IS NULL;
+CREATE INDEX idx_jobs_location_trgm ON jobs USING GIN (location gin_trgm_ops) WHERE deleted_at IS NULL;
 
 CREATE INDEX idx_jobs_effective_date
     ON jobs ((COALESCE(posted_at, fetched_at)) DESC);
