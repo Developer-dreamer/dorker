@@ -231,7 +231,6 @@ class Fetcher:
                 timeout=self.timeout,
                 follow_redirects=self.follow_redirects,
                 headers=self.headers or None,
-                proxy=self.proxy,
             )
         return self._client
 

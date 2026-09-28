@@ -10,11 +10,17 @@ import torch
 from asyncpg import Pool
 from typesafe_sdk import AsyncTypeSafeClient
 
-from src.analytics.classification import ClassifyJobTierJev
-from src.database.postgres.job_fact_sheet import JobFactSheetRepositoryPostgres
+from src.analytics.classification import ClassifyJobTierJev, ClassifyProfileToJob
 from src.analytics.engine import MatchingEngine
-from src.database.postgres import JobRepositoryPostgres, MatchRepository
-from src.shared.models.version import RuntimeVersion
+from src.analytics.generation import OpenAIClient, SummarySLM
+from src.client import TelegramBot
+from src.database.postgres import (
+    ApplicationPacketRepositoryPostgres,
+    JobFactSheetRepositoryPostgres,
+    JobRepositoryPostgres,
+    MatchRepositoryPostgres,
+)
+from src.shared.models import RuntimeVersion
 
 os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.8"
 os.environ["PYTORCH_MPS_LOW_WATERMARK_RATIO"] = "0.3"
@@ -37,7 +43,7 @@ logger = logging.getLogger("analyst")
 
 PG_DSN = os.environ.get("PG_DSN", "postgresql://postgres:password@localhost:5432/dorker_db")
 MODEL = "jev-1.13.0"
-PIPELINE_VERSION = "0.2.2"
+PIPELINE_VERSION = "0.3.0"
 
 device = "mps" if torch.backends.mps.is_available() else "cpu"
 
@@ -67,14 +73,39 @@ async def run() -> None:
             )
             job_repo = JobRepositoryPostgres(pool, runtime_version)
             fact_sheet_repo = JobFactSheetRepositoryPostgres(pool, runtime_version)
-            match_repo = MatchRepository(pool, runtime_version)
-            jev = ClassifyJobTierJev(client, state=cv)
-
-            engine = MatchingEngine(
-                logger, runtime_version, job_repo, fact_sheet_repo, match_repo, jev=jev
+            match_repo = MatchRepositoryPostgres(pool, runtime_version)
+            job_clf = ClassifyJobTierJev(client, state=cv)
+            application_repo = ApplicationPacketRepositoryPostgres(pool, runtime_version)
+            profile_clf = ClassifyProfileToJob(
+                client, profile_path=ROOT / "artifacts" / "data" / "prompts" / "profile.xml"
+            )
+            generator = OpenAIClient(
+                prompt_path=ROOT / "artifacts" / "data" / "prompts" / "coverletter.md"
+            )
+            slm = SummarySLM(
+                logger, model_path=ROOT / "models" / "deepseek-r1-distill-qwen-7b-q4_k_m.gguf"
             )
 
-            await engine.run()
+            engine = MatchingEngine(
+                logger,
+                runtime_version,
+                job_repo,
+                fact_sheet_repo,
+                match_repo,
+                application_repo,
+                job_clf=job_clf,
+                profile_clf=profile_clf,
+                application_generator=generator,
+                slm=slm,
+            )
+            # await engine.classify_background()
+
+            telegram_api_key = os.getenv("TELEGRAM_API_KEY")
+            if not telegram_api_key:
+                raise ValueError("TELEGRAM_API_KEY environment variable is not set")
+            bot = TelegramBot(logger, telegram_api_key, engine=engine)
+            await bot.run()
+            await bot.stop()
 
 
 if __name__ == "__main__":

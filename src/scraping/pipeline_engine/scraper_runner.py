@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from src.scraping.base import BaseScraper
 from src.scraping.configuration_manager import DynamicConfigManager
-from src.scraping.database.base import CompanyRepository, DescriptionCache
+from src.scraping.database.base import CompanyRepository, DescriptionCache, JobRepository
 from src.scraping.exceptions import CompanyNotFoundError
 from src.scraping.models import Job
 from src.scraping.ui.cli import Counts, DescCounts
@@ -29,6 +29,7 @@ class ScraperRunner:
         priority_semaphore: PrioritySemaphore,
         description_cache: DescriptionCache,
         company_repo: CompanyRepository,
+        job_repo: JobRepository,
         db_queue: asyncio.Queue[JobDomain | None],
         concurrency: int,
         timeout: float,
@@ -36,6 +37,7 @@ class ScraperRunner:
         ui_queue: asyncio.Queue[dict[str, Any] | None] | None = None,
     ) -> None:
         self.logger = logger
+        self.job_repo = job_repo
 
         self.cfg = cfg
         self.per_ats_cfg_copy = cfg[ats.name]
@@ -76,8 +78,9 @@ class ScraperRunner:
         self.tenant_delay = float(self.per_ats_cfg_copy.get("tenant_delay_seconds", 0))
         self.description_delay = float(self.per_ats_cfg_copy.get("description_delay_seconds", 0))
 
+        scraper_cls = self.per_ats_cfg_copy.get("scraper")
         self.uses_streaming = bool(
-            self.per_ats_cfg_copy.get("singleton") and hasattr(cfg["scraper"], "fetch_stream")
+            self.per_ats_cfg_copy.get("singleton") and hasattr(scraper_cls, "fetch_stream")
         )
 
         self.description_cache = description_cache
@@ -152,7 +155,7 @@ class ScraperRunner:
             f"{self.counts.error} failed / {len(self.ats.companies)} total\n"
             f"  Jobs Processed:   {self.counts.jobs_scraped:,} "
             f"scraped -> {self.counts.jobs_queued:,} "
-            f"queued ({self.counts.jobs_deduped:,} deduped)\n"
+            f"queued ({self.counts.jobs_deduped:,} deduped, {self.counts.jobs_deleted:,} deleted)\n"
             f"  Throughput:       {rate:.1f} jobs/sec\n"
             f"  Descriptions:     {self.desc_counts.fetched} fetched over HTTP, "
             f"{self.desc_counts.cache} cache hits, {self.desc_counts.present} present in payload, "
@@ -218,9 +221,12 @@ class ScraperRunner:
     async def _run_streaming(self) -> None:
         company_id = self.ats.companies[0].id
         desc_stats = DescCounts()
+        seen_stream_ids: list[str] = []
 
         try:
             async for job in self.scraper.fetch_stream():
+                if job.global_id:
+                    seen_stream_ids.append(job.global_id)
                 cached = await self.description_cache.get(job)
                 if cached:
                     job.description = cached
@@ -240,6 +246,22 @@ class ScraperRunner:
             await self._drain_description_tasks(all_tasks=True)
             self.counts.success = 1
 
+            if seen_stream_ids:
+                try:
+                    deleted_count = await self.job_repo.mark_deleted_jobs_for_company(
+                        company_id, seen_stream_ids
+                    )
+                    self.counts.jobs_deleted += deleted_count
+                    if deleted_count > 0:
+                        self.logger.info(
+                            f"[{self.ats.name}] Reconciled streaming deletions for company {company_id}: "
+                            f"{deleted_count} jobs marked as deleted."
+                        )
+                except Exception as exc:
+                    self.logger.error(
+                        f"[{self.ats.name}] Failed to reconcile streaming deleted jobs for company {company_id}: {exc}"
+                    )
+
         except CompanyNotFoundError:
             for task in self.pending_descriptions:
                 task.cancel()
@@ -255,6 +277,20 @@ class ScraperRunner:
             )
 
     async def _run_default(self, batch_size: int = 50) -> None:
+        if self.ui_queue:
+            self.ui_queue.put_nowait(
+                {
+                    "type": "progress",
+                    "ats": self.ats.name,
+                    "current": 0,
+                    "total": len(self.ats.companies),
+                    "slug": "starting...",
+                    "found": self.counts.jobs_scraped,
+                    "queued": self.counts.jobs_queued,
+                    "dupes": self.counts.jobs_deduped,
+                    "deleted": self.counts.jobs_deleted,
+                }
+            )
         for i in range(0, len(self.ats.companies), batch_size):
             if await self._check_yield_or_exit(i):
                 return
@@ -403,8 +439,25 @@ class ScraperRunner:
         tenant_desc_stats = DescCounts()
         tenant_queued = 0
         tenant_deduped = 0
+        tenant_deleted = 0
 
         if is_success:
+            scraped_ids = [job.global_id for job in jobs if job.global_id]
+            try:
+                tenant_deleted = await self.job_repo.mark_deleted_jobs_for_company(
+                    company_id, scraped_ids
+                )
+                self.counts.jobs_deleted += tenant_deleted
+                if tenant_deleted > 0:
+                    self.logger.info(
+                        f"[{self.ats.name}] Reconciled deletions for company {company.slug}: "
+                        f"{tenant_deleted} jobs marked as deleted."
+                    )
+            except Exception as exc:
+                self.logger.error(
+                    f"[{self.ats.name}] Failed to reconcile deleted jobs for company {company.slug}: {exc}"
+                )
+
             for job in jobs:
                 self.counts.jobs_scraped += 1
                 key = self._job_dedupe_key(job)
@@ -440,9 +493,10 @@ class ScraperRunner:
                     "current": self.tenants_completed,
                     "total": len(self.ats.companies),
                     "slug": slug,
-                    "found": len(jobs),
-                    "queued": tenant_queued,
-                    "dupes": tenant_deduped,
+                    "found": self.counts.jobs_scraped,
+                    "queued": self.counts.jobs_queued,
+                    "dupes": self.counts.jobs_deduped,
+                    "deleted": self.counts.jobs_deleted,
                 }
             )
 
@@ -451,7 +505,7 @@ class ScraperRunner:
         self.logger.info(
             f"[{self.ats.name}] [{self.tenants_completed}/{len(self.ats.companies)}] "
             f"[{tag}] '{slug}' in {elapsed:.1f}s: "
-            f"{len(jobs)} found -> {tenant_queued} queued, {tenant_deduped} dupes "
+            f"{len(jobs)} found -> {tenant_queued} queued, {tenant_deduped} dupes, {tenant_deleted} deleted "
             f"(desc: {tenant_desc_stats.fetched} fetched, {tenant_desc_stats.cache} cached, "
             f"{tenant_desc_stats.present} present, {tenant_desc_stats.missing} missing)"
         )
@@ -498,6 +552,7 @@ class ScraperRunner:
                     "found": self.counts.jobs_scraped,
                     "queued": self.counts.jobs_queued,
                     "dupes": self.counts.jobs_deduped,
+                    "deleted": self.counts.jobs_deleted,
                 }
             )
 

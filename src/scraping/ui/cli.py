@@ -14,6 +14,7 @@ class ATSState:
     found: int = 0
     queued: int = 0
     dupes: int = 0
+    deleted: int = 0
 
 
 @dataclass
@@ -24,6 +25,7 @@ class Counts:
     jobs_scraped: int = 0
     jobs_queued: int = 0
     jobs_deduped: int = 0
+    jobs_deleted: int = 0
 
 
 @dataclass
@@ -58,9 +60,10 @@ class Dashboard:
 
         working_lines = [Text("Working:", style="orange3")]
         for ats, state in self.working.items():
+            del_suffix = f", {state.deleted} deleted" if state.deleted else ""
             line = (
                 f"- {ats} [{state.current}/{state.total}] | {state.slug} | {state.found} found,"
-                f" {state.queued} queued, {state.dupes} dupes"
+                f" {state.queued} queued, {state.dupes} dupes{del_suffix}"
             )
             working_lines.append(Text(line, style="orange3"))
         if not self.working:

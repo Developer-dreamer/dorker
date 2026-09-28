@@ -70,7 +70,7 @@ class MetaScraper(BaseScraper):
 
         return self._run_sync(run())
 
-    async def _fetch_via_cloakbrowser(self) -> list[Job]:
+    async def _fetch_via_cloakbrowser(self, launch_async=None, cloakbrowser=None) -> list[Job]:
         from cloakbrowser import launch_async
 
         proxy = cb.evomi_proxy_from_env()

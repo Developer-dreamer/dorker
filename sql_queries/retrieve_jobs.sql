@@ -4,13 +4,9 @@ SELECT j.id,
 FROM jobs j
 WHERE
   -- 1. Anti-Joins for version control
-  NOT EXISTS (
-      SELECT 1 FROM jobs_fact_sheets jfs
-      WHERE jfs.job_id = j.id AND ltrim(jfs.version, 'v')::semver >= '0.2.2'::semver
-  )
-  AND NOT EXISTS (
+    NOT EXISTS (
       SELECT 1 FROM matches m
-      WHERE m.job_id = j.id AND ltrim(m.version, 'v')::semver >= '0.2.2'::semver
+      WHERE m.job_id = j.id AND ltrim(m.version, 'v')::semver >= '0.3.0'::semver
   )
 
   -- 2. MUST CONTAIN ONE OF THESE (Positive Match)

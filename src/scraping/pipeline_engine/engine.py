@@ -53,6 +53,17 @@ class RunEngine:
             await self.db_writer_queue.put(None)
             await db_worker_task
 
+        # Run maintenance cleanup: evict descriptions of stale deleted jobs (> 31 days)
+        # without active matches in APPLIED, INTERVIEWING, OFFER, or PENDING
+        try:
+            evicted = await self.job_repository.evict_stale_deleted_descriptions(days=31)
+            if evicted > 0:
+                self.logger.info(
+                    f"[Engine] Maintenance: evicted descriptions from {evicted} stale deleted jobs."
+                )
+        except Exception as exc:
+            self.logger.error(f"[Engine] Stale description eviction failed: {exc}")
+
     async def _run_single_ats(self, ats: ATS) -> None:
         await self.priority_sem.acquire(ats.tier)
         try:
@@ -63,8 +74,6 @@ class RunEngine:
 
             with self._pipeline_lock(ats.name) as acquired:
                 if not acquired:
-                    if self.ui_queue:
-                        self.ui_queue.put_nowait({"type": "finish", "ats": ats.name})
                     return
 
                 self.logger.info(f"[Engine] === Starting scrape for ATS: {ats.name} ===")
@@ -76,6 +85,7 @@ class RunEngine:
                     priority_semaphore=self.priority_sem,
                     description_cache=self.description_cache,
                     company_repo=self.company_repo,
+                    job_repo=self.job_repository,
                     db_queue=self.db_writer_queue,
                     concurrency=1,
                     timeout=1,
@@ -83,6 +93,8 @@ class RunEngine:
                 )
 
                 await ats_runner.run()
+        except Exception as exc:
+            self.logger.error(f"[Engine] ATS {ats.name} runner crashed: {exc}", exc_info=True)
         finally:
             self.priority_sem.release()
             if self.ui_queue:
@@ -127,8 +139,15 @@ class RunEngine:
         async def _flush() -> None:
             if not buffer:
                 return
-            await self.job_repository.save_job_batch(buffer)
-            buffer.clear()
+            try:
+                await self.job_repository.save_job_batch(buffer)
+            except Exception as exc:
+                self.logger.error(
+                    f"[DB Writer] Failed to save batch of {len(buffer)} jobs: {exc}",
+                    exc_info=True,
+                )
+            finally:
+                buffer.clear()
 
         try:
             while True:
