@@ -1,10 +1,14 @@
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
 import asyncpg
+import logging_loki
+import pyroscope
+from pythonjsonlogger.json import JsonFormatter
 from rich.live import Live
 
 from src.scraping.configuration_manager import DynamicConfigManager
@@ -32,9 +36,50 @@ logging.basicConfig(
     filename=LOG_PATH,
     filemode="a",
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
+    level=logging.WARN,
 )
-logger = logging.getLogger("orchestrator")
+logger = logging.getLogger("dorker.scraper")
+logger.setLevel(logging.INFO)
+
+now_utc = datetime.now(timezone.utc)
+# Format to hh:mm:ss-dd/mm/yy
+formatted_date = now_utc.strftime("%H:%M:%S-%d/%m/%y")
+
+RUN_ID = formatted_date
+pyroscope.configure(
+    application_name="dorker.scraper",
+    server_address="https://profiles-prod-008.grafana.net",
+    basic_auth_username="1503682",
+    basic_auth_password=os.getenv("GRAPHANA_API_KEY"),
+    tags={
+        "environment": "development",
+        "run_id": RUN_ID,
+    },
+    cpu_enabled=True,  # keep CPU profiling on (default True)
+    mem_enabled=True,  # enable memory (allocation) profiling
+    mem_max_nframe=128,  # max stack frames per sampled allocation (default)
+    mem_heap_sample_size=512 * 1024,  # avg bytes between samples (default)
+)
+
+loki_tags = {
+    "app": "dorker.scraper",
+    "environment": "production",
+    "run_id": RUN_ID,
+}
+
+loki_handler = logging_loki.LokiHandler(
+    url="https://logs-prod-021.grafana.net/loki/api/v1/push",
+    tags=loki_tags,
+    auth=("1461472", os.getenv("GRAPHANA_API_KEY")),
+    version="1",
+)
+json_formatter = JsonFormatter(
+    "%(asctime)s %(levelname)s %(name)s %(message)s",
+    rename_fields={"levelname": "level", "asctime": "timestamp"},  # Optional: clean up key names
+)
+loki_handler.setFormatter(json_formatter)
+logger.addHandler(loki_handler)
+print(f"Application configured with Run ID set to: {RUN_ID}")
 
 
 async def ui_worker(

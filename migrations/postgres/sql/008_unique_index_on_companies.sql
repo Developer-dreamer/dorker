@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_companies ON companies(ats, name, slug, url);

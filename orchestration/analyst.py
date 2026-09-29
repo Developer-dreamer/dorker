@@ -13,7 +13,6 @@ from typesafe_sdk import AsyncTypeSafeClient
 from src.analytics.classification import ClassifyJobTierJev, ClassifyProfileToJob
 from src.analytics.engine import MatchingEngine
 from src.analytics.generation import OpenAIClient, SummarySLM
-from src.client import TelegramBot
 from src.database.postgres import (
     ApplicationPacketRepositoryPostgres,
     JobFactSheetRepositoryPostgres,
@@ -80,7 +79,7 @@ async def run() -> None:
                 client, profile_path=ROOT / "artifacts" / "data" / "prompts" / "profile.xml"
             )
             generator = OpenAIClient(
-                prompt_path=ROOT / "artifacts" / "data" / "prompts" / "coverletter.md"
+                prompt_path=ROOT / "artifacts" / "data" / "prompts" / "coverletter_example.md"
             )
             slm = SummarySLM(
                 logger, model_path=ROOT / "models" / "deepseek-r1-distill-qwen-7b-q4_k_m.gguf"
@@ -98,14 +97,14 @@ async def run() -> None:
                 application_generator=generator,
                 slm=slm,
             )
-            # await engine.classify_background()
+            await engine.classify_background()
 
-            telegram_api_key = os.getenv("TELEGRAM_API_KEY")
-            if not telegram_api_key:
-                raise ValueError("TELEGRAM_API_KEY environment variable is not set")
-            bot = TelegramBot(logger, telegram_api_key, engine=engine)
-            await bot.run()
-            await bot.stop()
+            # telegram_api_key = os.getenv("TELEGRAM_API_KEY")
+            # if not telegram_api_key:
+            #     raise ValueError("TELEGRAM_API_KEY environment variable is not set")
+            # bot = TelegramBot(logger, telegram_api_key, engine=engine)
+            # await bot.run()
+            # await bot.stop()
 
 
 if __name__ == "__main__":

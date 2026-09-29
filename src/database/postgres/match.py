@@ -228,3 +228,6 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
                 jobs.append(job)
 
             return jobs
+
+    async def append_question(self, match_id: UUID, question: str) -> None:
+        raise NotImplementedError()
