@@ -80,6 +80,7 @@ class ClassifyJobTierJev(Classifier[MatchedJob]):
     @staticmethod
     def _classify_local(j_id: str, resp: SystemOneResponse) -> MatchedJob:
         matched_job = MatchedJob(job_id=j_id)
+        matched_job.debug = resp.model_dump_json()
 
         raw_tech_score = resp.scores["technical_capability_score"]
         raw_strat_score = resp.scores["strategic_value_score"]
@@ -111,6 +112,5 @@ class ClassifyJobTierJev(Classifier[MatchedJob]):
             matched_job.rejection_reason = "Fails to meet baseline Level 2 (0.50) criteria."
 
         matched_job.suitability_tier = tier
-        matched_job.debug = resp.model_dump_json()
 
         return matched_job

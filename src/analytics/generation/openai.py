@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Tuple, Type
@@ -22,14 +23,19 @@ from src.shared.models import (
     ApplicationGeneratedResponse,
     BatchStatus,
     JobForAnalytics,
+    OpenAIBaseResponse,
     OpenAIBatchRecord,
+    RequestedCoverletter,
+    RequestedFullResponse,
+    RequestedGeneration,
+    RequestedQuestions,
 )
 
 MAX_BYTES_PER_BATCH = 2e8  # 200 MB per request
 MAX_REQUESTS_PER_BATCH = 50_000  # 50 000 separate questions to AI model
 
 
-class OpenAIClient(ApplicationGenerator[ApplicationGeneratedResponse]):
+class OpenAIClient(ApplicationGenerator[OpenAIBaseResponse]):
     def __init__(
         self,
         prompt_path: Path,
@@ -46,26 +52,10 @@ class OpenAIClient(ApplicationGenerator[ApplicationGeneratedResponse]):
         with open(self.prompt_path, "r") as f:
             self.master_prompt = f.read()
 
-    async def generate_sync(self, job: JobForAnalytics) -> ApplicationGeneratedResponse:
-        developer_instructions = self.master_prompt
-        if job.application is not None:
-            developer_instructions += "\n<candidate_context>\n"
-            for material in job.application.materials:
-                developer_instructions += material.text + "\n"
-            developer_instructions += "</candidate_context>"
-
-        assert job.match is not None
-        content = f"""
-                    Here is the job and corresponding match (computed with Jev by TypeSafe AI) to it.
-                    Your task is to analyze this and by following developer instructions output 
-                    requested model. 
-                    <computed_match>
-                    {job.match.model_dump_json()}
-                    </computed_match>
-                    <job_payload>
-                    {job.model_dump_json(exclude={"match", "application"})}
-                    </job_payload>
-                    """
+    async def generate_sync(
+        self, request: RequestedGeneration, job: JobForAnalytics
+    ) -> OpenAIBaseResponse:
+        developer_instructions, content, schema = self._resolve_generation_objective(request, job)
 
         resp = await self._client.responses.create(
             model="gpt-6-luna",
@@ -83,9 +73,9 @@ class OpenAIClient(ApplicationGenerator[ApplicationGeneratedResponse]):
             text=ResponseTextConfigParam(
                 format=ResponseFormatTextJSONSchemaConfigParam(
                     type="json_schema",
-                    name=ApplicationGeneratedResponse.__name__,
+                    name=schema.__name__,
                     strict=True,
-                    schema=to_strict_json_schema(ApplicationGeneratedResponse),
+                    schema=to_strict_json_schema(schema),
                 )
             ),
             max_output_tokens=5000,
@@ -93,9 +83,55 @@ class OpenAIClient(ApplicationGenerator[ApplicationGeneratedResponse]):
 
         resp_json = resp.output_text
         debug = resp.model_dump_json(exclude_none=True, exclude={"output_text"})
-        application = ApplicationGeneratedResponse.model_validate_json(resp_json)
-        application.debug = debug
-        return application
+        parsed_response = schema.model_validate_json(resp_json)
+        parsed_response.debug = debug
+
+        return parsed_response
+
+    def _resolve_generation_objective(
+        self, request: RequestedGeneration, job: JobForAnalytics
+    ) -> Tuple[str, str, Type[OpenAIBaseResponse]]:
+        developer_instructions = self.master_prompt
+        if job.application is not None:
+            developer_instructions += "\n<candidate_context>\n"
+            for material in job.application.materials:
+                developer_instructions += material.text + "\n"
+            developer_instructions += "</candidate_context>"
+
+        output_schema: Type[OpenAIBaseResponse] = RequestedFullResponse
+        if request.questions and request.cover_letter:
+            pass
+        elif request.questions:
+            developer_instructions = re.sub(
+                r"\s*<cover_letter_generation>.*?</cover_letter_generation>\s*",
+                "\n\n",
+                developer_instructions,
+                flags=re.DOTALL,
+            )
+            output_schema = RequestedQuestions
+        elif request.cover_letter:
+            developer_instructions = re.sub(
+                r"\s*<questions_generation>.*?</questions_generation>\s*",
+                "\n\n",
+                developer_instructions,
+                flags=re.DOTALL,
+            )
+            output_schema = RequestedCoverletter
+
+        assert job.match is not None
+        content = f"""
+                Here is the job and corresponding match (computed with Jev by TypeSafe AI) to it.
+                Your task is to analyze this and by following developer instructions output 
+                requested model. 
+                <computed_match>
+                {job.match.model_dump_json()}
+                </computed_match>
+                <job_payload>
+                {job.model_dump_json(exclude={"match", "application"})}
+                </job_payload>
+                """
+
+        return developer_instructions, content, output_schema
 
     async def queue_generation(self, jobs: List[JobForAnalytics]) -> None:
         assert self.batch_directory is not None
@@ -139,7 +175,7 @@ class OpenAIClient(ApplicationGenerator[ApplicationGeneratedResponse]):
 
         await self._batch_repo.save_batch(record)
 
-    async def harvest_results(self) -> List[Tuple[UUID, ApplicationGeneratedResponse]]:
+    async def harvest_results(self) -> List[Tuple[UUID, OpenAIBaseResponse]]:
         raise NotImplementedError()
 
     def _build_batch_line(

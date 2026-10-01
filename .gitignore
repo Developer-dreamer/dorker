@@ -16,6 +16,9 @@ artifacts/data/prompts/**
 # Re-include files containing "example" anywhere in their name
 !artifacts/data/prompts/**/*example*
 
+# AI tools
+.codex/
+
 # IDE config
 .vscode/
 .idea/

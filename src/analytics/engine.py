@@ -3,7 +3,7 @@ import time
 from datetime import timedelta
 from enum import Enum
 from logging import Logger
-from typing import List
+from typing import List, cast
 from uuid import UUID
 
 from src.database import (
@@ -15,12 +15,17 @@ from src.database import (
 from src.shared.models import (
     ApplicationGeneratedResponse,
     ApplicationPacket,
+    JobForAnalytics,
     MatchedJob,
+    OpenAIBaseResponse,
+    RequestedCoverletter,
+    RequestedFullResponse,
+    RequestedGeneration,
+    RequestedQuestions,
     RuntimeVersion,
     SuitabilityTier,
 )
 
-from ..shared import JobForAnalytics
 from .classification import SLM, Classifier
 from .ml.filter_description import DescriptionFilter
 from .protocols import ApplicationGenerator, MatchingProvider
@@ -42,7 +47,7 @@ class MatchingEngine(MatchingProvider):
         application_repo: ApplicationPacketRepository,
         job_clf: Classifier[MatchedJob],
         profile_clf: Classifier[ApplicationPacket],
-        application_generator: ApplicationGenerator[ApplicationGeneratedResponse] | None = None,
+        application_generator: ApplicationGenerator[OpenAIBaseResponse] | None = None,
         slm: SLM | None = None,
         desc_filter: DescriptionFilter | None = None,
     ):
@@ -79,8 +84,26 @@ class MatchingEngine(MatchingProvider):
     async def append_question(self, match_id: UUID, question: str) -> None:
         return await self.match_repo.append_question(match_id, question)
 
+    def _to_application_response(
+        self, request: RequestedGeneration, resp: OpenAIBaseResponse
+    ) -> ApplicationGeneratedResponse:
+        application = ApplicationGeneratedResponse()
+        application.debug = resp.debug
+        if request.cover_letter and request.questions:
+            resp_full = cast(RequestedFullResponse, resp)
+            application.cover_letter = resp_full.cover_letter
+            application.questions = resp_full.questions
+        elif request.questions:
+            resp_q = cast(RequestedQuestions, resp)
+            application.questions = resp_q.questions
+        elif request.cover_letter:
+            resp_c = cast(RequestedCoverletter, resp)
+            application.cover_letter = resp_c.cover_letter
+
+        return application
+
     async def generate_application_for_match(
-        self, job: JobForAnalytics
+        self, request: RequestedGeneration, job: JobForAnalytics
     ) -> ApplicationGeneratedResponse:
         assert self.application_generator is not None
 
@@ -90,10 +113,11 @@ class MatchingEngine(MatchingProvider):
         job.application = packet
 
         # 2. Generate Application (Cover Letter / Follow Up)
-        resp = await self.application_generator.generate_sync(job)
-        await self.application_repo.update_packet(job.application.id, resp)
+        resp = await self.application_generator.generate_sync(request, job)
+        application = self._to_application_response(request, resp)
 
-        return resp
+        await self.application_repo.update_packet(job.application.id, application)
+        return application
 
     async def _classify_jobs_jev(self) -> None:
         entries = await self.job_repo.get_matched_jobs(time_interval=timedelta(weeks=5), limit=1000)
@@ -144,6 +168,8 @@ class MatchingEngine(MatchingProvider):
             assert job.application is not None
 
             self.logger.info(f"--- [{idx}/{len(jobs)}] Processing job {job.id} ({job.title}) ---")
-            resp = await self.application_generator.generate_sync(job)
+            request = RequestedGeneration(cover_letter=True, questions=bool(job.questions))
+            resp = await self.application_generator.generate_sync(request, job)
+            application = self._to_application_response(request, resp)
 
-            await self.application_repo.update_packet(job.application.id, resp)
+            await self.application_repo.update_packet(job.application.id, application)

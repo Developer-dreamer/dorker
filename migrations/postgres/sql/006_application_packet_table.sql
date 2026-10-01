@@ -5,8 +5,8 @@ CREATE TABLE IF NOT EXISTS applications (
     match_id UUID NOT NULL,
 
     summary TEXT,
-    follow_up_message TEXT,
     cover_letter TEXT,
+    questions JSONB,
 
     materials JSONB NOT NULL,
 

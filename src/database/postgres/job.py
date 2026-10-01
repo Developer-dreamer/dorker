@@ -19,6 +19,7 @@ class JobRepositoryPostgres(JobRepository):
                        j.title,
                        j.location,
                        j.description,
+                       j.questions,
                        j.salary_min,
                        j.salary_max,
                        j.salary_currency
@@ -93,6 +94,7 @@ class JobRepositoryTest(JobRepository):
                        j.title,
                        j.location,
                        j.description,
+                       j.questions,
                        j.salary_min,
                        j.salary_max,
                        j.salary_currency

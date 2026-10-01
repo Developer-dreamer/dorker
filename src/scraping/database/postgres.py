@@ -25,12 +25,12 @@ class JobRepositoryPostgres(JobRepository):
         query = """
                     INSERT INTO jobs (
                         id, ats_type, ats_id, url, apply_url, title, company_id, location,
-                        country_iso, region, employment_type, description, salary_min,
+                        country_iso, region, employment_type, description, questions, salary_min,
                         salary_max, salary_currency, is_normalized, posted_at, fetched_at
                     ) VALUES (
                         $1, $2, $3, $4, $5, $6, $7, $8,
                         $9, $10, $11, $12, $13, $14, $15, $16,
-                        $17, $18
+                        $17, $18, $19
                     )
                     ON CONFLICT (id) DO UPDATE SET
                         deleted_at = NULL,
@@ -87,6 +87,7 @@ class JobRepositoryPostgres(JobRepository):
             job.region,
             job.employment_type or "FULL_TIME",
             job.description or "",
+            job.questions,
             job.salary_min,
             job.salary_max,
             job.salary_currency,

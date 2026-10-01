@@ -109,6 +109,7 @@ class JobForAnalytics(BaseModel):
     url: str | None = None
 
     description: str
+    questions: list[str] = Field(default_factory=list)
 
     salary_min: float | None
     salary_max: float | None
@@ -144,6 +145,7 @@ class Job(BaseModel):
     region: str | None
     employment_type: EmploymentType | None
     description: str | None
+    questions: list[str] = Field(default_factory=list)
 
     salary_min: float | None
     salary_max: float | None
@@ -168,6 +170,7 @@ class Job(BaseModel):
             self.region,
             self.employment_type or "FULL_TIME",
             self.description or "",
+            self.questions,
             self.salary_min,
             self.salary_max,
             self.salary_currency,

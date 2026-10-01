@@ -156,6 +156,8 @@ class ClassifyProfileToJob(Classifier[ApplicationPacket]):
                 if answer.noul >= self.reject_block_threshold:
                     if key in material_lookup:
                         approved_materials.append(material_lookup[key])
+                elif "project.dorker" in key:
+                    approved_materials.append(material_lookup[key])
 
         assert job.match is not None
 

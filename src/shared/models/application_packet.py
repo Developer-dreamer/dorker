@@ -1,7 +1,7 @@
 from typing import List, Optional
+from uuid import UUID
 
-from pyarrow.lib import UUID
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 
 class Material(BaseModel):
@@ -16,18 +16,54 @@ class Material(BaseModel):
     text: str = Field(default="", description="The exact text located inside profile.")
 
 
-class ApplicationGeneratedResponse(BaseModel):
-    summary: str = Field(
-        description="The summary of the application.",
-    )
-    follow_up_message: str = Field(
-        description="The follow up message when short application message required.",
-    )
+class Question(BaseModel):
+    question: str = Field()
+    answer: Optional[str] = Field()
+
+
+class RequestedGeneration(BaseModel):
+    cover_letter: bool = Field(default=True)
+    questions: bool = Field(default=True)
+
+
+class OpenAIBaseResponse(BaseModel):
+    _debug: Optional[str] = PrivateAttr(default=None)
+
+    @property
+    def debug(self) -> Optional[str]:
+        return self._debug
+
+    @debug.setter
+    def debug(self, value: Optional[str]) -> None:
+        self._debug = value
+
+
+class RequestedCoverletter(OpenAIBaseResponse):
     cover_letter: str = Field(
         description="The cover letter attached to the application.",
     )
 
-    debug: Optional[str] = Field(default=None, description="The debug of llm thinking")
+
+class RequestedQuestions(OpenAIBaseResponse):
+    questions: List[Question] = Field(default_factory=list)
+
+
+class RequestedFullResponse(RequestedCoverletter, RequestedQuestions):
+    pass
+
+
+RequestedFullGeneration = RequestedFullResponse
+
+
+class ApplicationGeneratedResponse(BaseModel):
+    cover_letter: Optional[str] = Field(
+        default=None,
+        description="The cover letter attached to the application.",
+    )
+    questions: Optional[List[Question]] = Field(default=None)
+    debug: Optional[str] = Field(
+        default=None, description="JSON string representing model's raw answer."
+    )
 
 
 class ApplicationPacket(BaseModel):
@@ -46,6 +82,7 @@ class ApplicationPacket(BaseModel):
     cover_letter: Optional[str] = Field(
         default=None, description="The cover letter attached to the application."
     )
+    questions: List[Question] = Field(default_factory=list)
 
     materials: List[Material] = Field(
         default_factory=list,

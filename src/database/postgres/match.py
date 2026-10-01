@@ -76,6 +76,7 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
                        c.name AS company,
                        j.url,
                        j.description,
+                       j.questions,
                        j.salary_min,
                        j.salary_max,
                        j.salary_currency,
@@ -117,6 +118,7 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
                        c.name AS company,
                        j.url,
                        j.description,
+                       j.questions,
                        j.salary_min,
                        j.salary_max,
                        j.salary_currency,
@@ -185,6 +187,7 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
                        j.title,
                        j.location,
                        j.description,
+                       j.questions,
                        j.salary_min,
                        j.salary_max,
                        j.salary_currency,
@@ -230,4 +233,11 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
             return jobs
 
     async def append_question(self, match_id: UUID, question: str) -> None:
-        raise NotImplementedError()
+        query = """
+                UPDATE jobs
+                SET questions = array_append(COALESCE(questions, '{}'::text[]), $2)
+                WHERE id = (SELECT job_id FROM matches WHERE id = $1)
+                """
+
+        async with self.pool.acquire() as conn:
+            await conn.execute(query, match_id, question)

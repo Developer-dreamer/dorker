@@ -19,6 +19,7 @@ from aiogram.types import (
 
 from src.analytics.protocols import MatchingProvider
 from src.shared import SuitabilityTier
+from src.shared.models import RequestedGeneration
 
 CHAT_ID = 975840884
 
@@ -28,17 +29,25 @@ class TelegramBot:
         self.logger = logger
         self._bot = Bot(token=token)
         self._dp = Dispatcher()
-        self._register_handlers()
         self.matching_engine = engine
 
         self.questions: dict[str, list[str]] = dict()
+        self.active_question_prompt: dict[int, dict[str, Any]] = dict()
+        self._register_handlers()
 
     def _register_handlers(self) -> None:
         self._dp.message.register(self.cmd_start, CommandStart())
+        self._dp.message.register(self.handle_question_input, F.text, ~F.text.startswith("/"))
         self._dp.callback_query.register(self.handle_next, F.data == "/next")
 
         self._dp.callback_query.register(self.handle_apply, F.data.startswith("/apply:"))
         self._dp.callback_query.register(self.handle_ignore, F.data.startswith("/ignore:"))
+        self._dp.callback_query.register(
+            self.handle_question_next, F.data.startswith("/gen_q:next:")
+        )
+        self._dp.callback_query.register(
+            self.handle_question_done, F.data.startswith("/gen_q:done:")
+        )
         self._dp.callback_query.register(self.handle_generate, F.data.startswith("/gen:"))
         self._dp.callback_query.register(self.handle_did_apply, F.data.startswith("/applied:"))
 
@@ -105,7 +114,12 @@ class TelegramBot:
                 [
                     InlineKeyboardButton(text="Ignore", callback_data=f"/ignore:{match_id}"),
                     InlineKeyboardButton(text="Apply", callback_data=f"/apply:{match_id}"),
-                ]
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="Applied with CV only", callback_data=f"/applied:yes:{match_id}"
+                    ),
+                ],
             ]
         )
         await self._bot.send_message(
@@ -129,7 +143,7 @@ class TelegramBot:
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="Follow Up", callback_data=f"/gen:followup:{match_id}"
+                        text="Questions", callback_data=f"/gen:questions:{match_id}"
                     ),
                     InlineKeyboardButton(
                         text="Cover Letter", callback_data=f"/gen:letter:{match_id}"
@@ -150,6 +164,7 @@ class TelegramBot:
         if not callback.data or not isinstance(callback.message, Message):
             return
         match_id = callback.data.split(":")[1]
+        self.active_question_prompt.pop(callback.message.chat.id, None)
 
         await self.matching_engine.update_pipeline_status(uuid.UUID(match_id), "IGNORED")
         await self._clear_reply_markup(callback.message)
@@ -163,97 +178,145 @@ class TelegramBot:
             await self._bot.send_message(chat_id=chat_id, text=text[i : i + chunk_size], **kwargs)
 
     async def handle_generate(self, callback: CallbackQuery) -> None:
-        await callback.answer("Generating application materials...", show_alert=False)
+        await callback.answer()
         if not callback.data or not isinstance(callback.message, Message):
             return
         await self._clear_reply_markup(callback.message)
 
         _, gen_type, match_id = callback.data.split(":")
-        job = await self.matching_engine.get_job_by_match_id(uuid.UUID(match_id))
+        chat_id = callback.message.chat.id
 
-        if not job:
-            await self._bot.send_message(CHAT_ID, "Job not found.")
+        if gen_type == "letter":
+            await self._execute_generation(chat_id=chat_id, match_id=match_id, gen_type=gen_type)
+        else:
+            self.active_question_prompt[chat_id] = {
+                "match_id": match_id,
+                "gen_type": gen_type,
+                "count": 0,
+            }
+            markup = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(text="Next", callback_data=f"/gen_q:next:{match_id}"),
+                        InlineKeyboardButton(text="Done", callback_data=f"/gen_q:done:{match_id}"),
+                    ]
+                ]
+            )
+            await self._bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    "📝 Please enter question #1 for this application as a text message.\n\n"
+                    "You can click Next after each question to continue, or Done when finished."
+                ),
+                reply_markup=markup,
+            )
+
+    async def handle_question_input(self, message: Message) -> None:
+        chat_id = message.chat.id
+        if chat_id not in self.active_question_prompt or not message.text:
             return
 
-        resp = await self.matching_engine.generate_application_for_match(job)
+        state = self.active_question_prompt[chat_id]
+        match_id = state["match_id"]
+        question_text = message.text.strip()
+        if not question_text:
+            return
 
-        if gen_type in ["both", "letter"]:
-            from src.shared.scripts.cover_letter_file_create import generate_cover_letter
+        try:
+            await self.matching_engine.append_question(uuid.UUID(match_id), question_text)
+            self.questions.setdefault(match_id, []).append(question_text)
+            state["count"] += 1
+            current_count = state["count"]
 
-            company_name = job.company or "Company"
-            safe_name = (
-                "".join(c for c in company_name if c.isalnum() or c in ("-", "_")) or "Company"
+            markup = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(text="Next", callback_data=f"/gen_q:next:{match_id}"),
+                        InlineKeyboardButton(text="Done", callback_data=f"/gen_q:done:{match_id}"),
+                    ]
+                ]
             )
-            pdf_path = os.path.join("/tmp", f"CoverLetter_{safe_name}.pdf")
-
-            data = {
-                "name": "Serafym Podolyanchuk",
-                "city": "Kyiv",
-                "phone": "+380-(96)-563-80-50",
-                "email": "podolancukserafim@gmail.com",
-                "linkedin": "serafym-podolyanchuk",
-                "github": "Developer-dreamer",
-                "recipient_title": "Hiring Manager",
-                "company_name": company_name,
-                "company_location": job.location or "Location",
-                "salutation_name": "Hiring Manager",
-                "letter_paragraphs": resp.cover_letter.split("\n\n") if resp.cover_letter else [],
-            }
-
-            template_path = os.path.join(
-                os.getcwd(), "artifacts/data/templates/cover_letter_template.tex"
+            await message.reply(
+                text=(
+                    f"✅ Saved question #{current_count}:\n"
+                    f"_{question_text}_\n\n"
+                    f"Send question #{current_count + 1} as a message, click Next to prompt next, or click Done to begin generation."
+                ),
+                reply_markup=markup,
             )
+        except Exception as e:
+            self.logger.exception(f"Failed to append question for match {match_id}: {e}")
+            await message.reply(f"⚠️ Failed to save question: {e}")
 
-            try:
-                # Use asyncio to not block the bot during compilation
-                await asyncio.to_thread(generate_cover_letter, data, template_path, pdf_path)
-                pdf_file = FSInputFile(pdf_path)
-                msg_text = (
-                    resp.follow_up_message if gen_type == "both" else "Here is your cover letter."
-                )
-                if len(msg_text) > 1024:
-                    await self._bot.send_document(chat_id=CHAT_ID, document=pdf_file)
-                    await self._safe_send_message(chat_id=CHAT_ID, text=msg_text)
-                else:
-                    await self._bot.send_document(
-                        chat_id=CHAT_ID, document=pdf_file, caption=msg_text
-                    )
-            except FileNotFoundError as e:
-                self.logger.warning(f"LaTeX engine not installed: {e}")
-                await self._bot.send_message(
-                    chat_id=CHAT_ID,
-                    text="⚠️ *PDF compilation skipped* ('xelatex' not installed on system).",
-                )
-                if resp.cover_letter:
-                    await self._safe_send_message(
-                        chat_id=CHAT_ID,
-                        text=f"📄 *Cover Letter:*\n\n{resp.cover_letter}",
-                    )
-                if resp.follow_up_message and gen_type == "both":
-                    await self._safe_send_message(
-                        chat_id=CHAT_ID,
-                        text=f"💬 *Follow Up Message:*\n\n{resp.follow_up_message}",
-                    )
-            except Exception as e:
-                self.logger.exception(f"Failed to generate cover letter PDF: {e}")
-                err_str = str(e).strip()
-                first_err_line = err_str.splitlines()[-1] if err_str else "Unknown error"
-                await self._bot.send_message(
-                    chat_id=CHAT_ID,
-                    text=f"⚠️ Failed to compile PDF ({first_err_line[:120]}). Falling back to text:",
-                )
-                if resp.cover_letter:
-                    await self._safe_send_message(
-                        chat_id=CHAT_ID,
-                        text=f"📄 *Cover Letter:*\n\n{resp.cover_letter}",
-                    )
-                if resp.follow_up_message and gen_type == "both":
-                    await self._safe_send_message(
-                        chat_id=CHAT_ID,
-                        text=f"💬 *Follow Up Message:*\n\n{resp.follow_up_message}",
-                    )
-        else:
-            await self._safe_send_message(chat_id=CHAT_ID, text=resp.follow_up_message)
+    async def handle_question_next(self, callback: CallbackQuery) -> None:
+        await callback.answer()
+        if not callback.data or not isinstance(callback.message, Message):
+            return
+        chat_id = callback.message.chat.id
+        if chat_id not in self.active_question_prompt:
+            await callback.answer("No active question prompt.", show_alert=True)
+            return
+
+        state = self.active_question_prompt[chat_id]
+        match_id = state["match_id"]
+        next_num = state["count"] + 1
+
+        markup = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="Done", callback_data=f"/gen_q:done:{match_id}")]
+            ]
+        )
+        await self._bot.send_message(
+            chat_id=chat_id,
+            text=f"📝 Ready for question #{next_num}. Please send the question as a text message, or click Done:",
+            reply_markup=markup,
+        )
+
+    async def handle_question_done(self, callback: CallbackQuery) -> None:
+        await callback.answer()
+        if not callback.data or not isinstance(callback.message, Message):
+            return
+        chat_id = callback.message.chat.id
+        await self._clear_reply_markup(callback.message)
+
+        match_id = callback.data.split(":")[2]
+        gen_type = "questions"
+        if chat_id in self.active_question_prompt:
+            gen_type = self.active_question_prompt[chat_id].get("gen_type", "questions")
+            del self.active_question_prompt[chat_id]
+
+        await self._execute_generation(chat_id=chat_id, match_id=match_id, gen_type=gen_type)
+
+    async def _execute_generation(self, chat_id: int, match_id: str, gen_type: str) -> None:
+        await self._bot.send_message(chat_id=chat_id, text="⏳ Generating application materials...")
+
+        job = await self.matching_engine.get_job_by_match_id(uuid.UUID(match_id))
+        if not job:
+            await self._bot.send_message(chat_id=chat_id, text="Job not found.")
+            return
+
+        request = RequestedGeneration(
+            cover_letter=(gen_type in ["both", "letter"]),
+            questions=(gen_type in ["both", "questions"]),
+        )
+
+        try:
+            resp = await self.matching_engine.generate_application_for_match(request, job)
+        except Exception as e:
+            self.logger.exception(f"Generation failed for match {match_id}: {e}")
+            await self._bot.send_message(chat_id=chat_id, text=f"⚠️ Generation failed: {e}")
+            return
+
+        if resp.cover_letter:
+            await self._send_cover_letter(chat_id, job, resp.cover_letter)
+
+        if resp.questions:
+            await self._send_questions(chat_id, resp.questions)
+
+        if not resp.cover_letter and not resp.questions:
+            await self._bot.send_message(
+                chat_id=chat_id, text="⚠️ Generation completed, but no materials were returned."
+            )
 
         markup = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -263,14 +326,77 @@ class TelegramBot:
                 ]
             ]
         )
+        await self._bot.send_message(chat_id=chat_id, text="Did you apply?", reply_markup=markup)
 
-        await self._bot.send_message(chat_id=CHAT_ID, text="Did you apply?", reply_markup=markup)
+    async def _send_cover_letter(self, chat_id: int, job: Any, cover_letter: str) -> None:
+        from src.shared.scripts.cover_letter_file_create import generate_cover_letter
+
+        company_name = job.company or "Company"
+        safe_name = "".join(c for c in company_name if c.isalnum() or c in ("-", "_")) or "Company"
+        pdf_path = os.path.join("/tmp", f"CoverLetter_{safe_name}.pdf")
+
+        data = {
+            "name": "Serafym Podolyanchuk",
+            "city": "Kyiv",
+            "phone": "+380-(96)-563-80-50",
+            "email": "podolancukserafim@gmail.com",
+            "linkedin": "serafym-podolyanchuk",
+            "github": "Developer-dreamer",
+            "recipient_title": "Hiring Manager",
+            "company_name": company_name,
+            "company_location": job.location or "Location",
+            "salutation_name": "Hiring Manager",
+            "letter_paragraphs": cover_letter.split("\n\n") if cover_letter else [],
+        }
+
+        template_path = os.path.join(
+            os.getcwd(), "artifacts/data/templates/cover_letter_template.tex"
+        )
+
+        try:
+            await asyncio.to_thread(generate_cover_letter, data, template_path, pdf_path)
+            pdf_file = FSInputFile(pdf_path)
+            await self._bot.send_document(
+                chat_id=chat_id, document=pdf_file, caption="Here is your cover letter."
+            )
+        except FileNotFoundError as e:
+            self.logger.warning(f"LaTeX engine not installed: {e}")
+            await self._bot.send_message(
+                chat_id=chat_id,
+                text="⚠️ *PDF compilation skipped* ('xelatex' not installed on system).",
+            )
+            await self._safe_send_message(
+                chat_id=chat_id,
+                text=f"📄 *Cover Letter:*\n\n{cover_letter}",
+            )
+        except Exception as e:
+            self.logger.exception(f"Failed to generate cover letter PDF: {e}")
+            err_str = str(e).strip()
+            first_err_line = err_str.splitlines()[-1] if err_str else "Unknown error"
+            await self._bot.send_message(
+                chat_id=chat_id,
+                text=f"⚠️ Failed to compile PDF ({first_err_line[:120]}). Falling back to text:",
+            )
+            await self._safe_send_message(
+                chat_id=chat_id,
+                text=f"📄 *Cover Letter:*\n\n{cover_letter}",
+            )
+
+    async def _send_questions(self, chat_id: int, questions: list[Any]) -> None:
+        if not questions:
+            return
+        lines = ["📋 *Questions & Answers:*\n"]
+        for idx, q in enumerate(questions, start=1):
+            ans = q.answer or "N/A"
+            lines.append(f"❓ *{idx}. {q.question}*\n💡 {ans}\n")
+        await self._safe_send_message(chat_id=chat_id, text="\n".join(lines))
 
     async def handle_did_apply(self, callback: CallbackQuery) -> None:
         await callback.answer()
         if not callback.data or not isinstance(callback.message, Message):
             return
         _, answer, match_id = callback.data.split(":")
+        self.active_question_prompt.pop(callback.message.chat.id, None)
 
         status = "APPLIED" if answer == "yes" else "DECLINED"
         await self.matching_engine.update_pipeline_status(uuid.UUID(match_id), status)

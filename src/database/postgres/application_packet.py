@@ -10,6 +10,7 @@ from src.shared.models import (
     JobForAnalytics,
     MatchedJob,
     Material,
+    Question,
     RuntimeVersion,
 )
 
@@ -20,11 +21,21 @@ class ApplicationPacketRepositoryPostgres(ApplicationPacketRepository):
         self.pool = pool
 
     async def save_packet(self, packet: ApplicationPacket) -> None:
-        columns = ("job_id", "match_id", "materials", "summary", "debug", "version", "iteration")
+        columns = (
+            "job_id",
+            "match_id",
+            "materials",
+            "summary",
+            "questions",
+            "debug",
+            "version",
+            "iteration",
+        )
 
         query = f"""
                     INSERT INTO applications ({", ".join(columns)})
-                    VALUES ({", ".join(f"${i + 1}" for i in range(len(columns)))});
+                    VALUES ({", ".join(f"${i + 1}" for i in range(len(columns)))})
+                    RETURNING id;
                 """
 
         dumped = packet.model_dump(exclude_none=True)
@@ -34,6 +45,8 @@ class ApplicationPacketRepositoryPostgres(ApplicationPacketRepository):
         # Serialize list to JSON string for Postgres JSON/JSONB/TEXT column
         if "materials" in dumped:
             dumped["materials"] = json.dumps(dumped["materials"])
+        if "questions" in dumped:
+            dumped["questions"] = json.dumps(dumped["questions"])
 
         # Optional: ensure match_id is a UUID or str if the DB driver complains
         if "match_id" in dumped:
@@ -46,7 +59,9 @@ class ApplicationPacketRepositoryPostgres(ApplicationPacketRepository):
         }
 
         async with self.pool.acquire() as conn:
-            await conn.execute(query, *(payload.get(col) for col in columns))
+            row = await conn.fetchrow(query, *(payload.get(col) for col in columns))
+            if row:
+                packet.id = row["id"]
 
     async def get_pending_packets(self, limit: int = 1) -> List[JobForAnalytics]:
         query = """
@@ -54,6 +69,7 @@ class ApplicationPacketRepositoryPostgres(ApplicationPacketRepository):
                        j.title,
                        j.location,
                        j.description,
+                       j.questions,
                        j.salary_min,
                        j.salary_max,
                        j.salary_currency,
@@ -99,6 +115,13 @@ class ApplicationPacketRepositoryPostgres(ApplicationPacketRepository):
                     except json.JSONDecodeError:
                         raw_materials = []
 
+                raw_questions = data["questions"] or []
+                if isinstance(raw_questions, str):
+                    try:
+                        raw_questions = json.loads(raw_questions)
+                    except json.JSONDecodeError:
+                        raw_questions = []
+
                 parsed_materials = [
                     Material.model_validate_json(m)
                     if isinstance(m, str)
@@ -106,11 +129,24 @@ class ApplicationPacketRepositoryPostgres(ApplicationPacketRepository):
                     for m in (raw_materials if isinstance(raw_materials, list) else [raw_materials])
                 ]
 
+                parsed_questions: list[Question] = []
+                for q in raw_questions if isinstance(raw_questions, list) else [raw_questions]:
+                    if isinstance(q, str):
+                        try:
+                            parsed_questions.append(Question.model_validate_json(q))
+                        except Exception:
+                            parsed_questions.append(Question(question=q, answer=None))
+                    elif isinstance(q, dict):
+                        parsed_questions.append(Question.model_validate(q))
+                    elif isinstance(q, Question):
+                        parsed_questions.append(q)
+
                 job.application = ApplicationPacket(
                     id=data["application_id"],
                     job_id=job.id,
                     match_id=data["match_id"],
                     materials=parsed_materials,
+                    questions=parsed_questions,
                 )
                 jobs.append(job)
 
@@ -120,20 +156,24 @@ class ApplicationPacketRepositoryPostgres(ApplicationPacketRepository):
         query = """
                 UPDATE applications
                 SET 
-                    summary = $2,
-                    follow_up_message = $3,
-                    cover_letter = $4,
-                    debug = COALESCE(debug, '{}'::jsonb) || $5,
+                    cover_letter = $2,
+                    questions = $3,
+                    debug = COALESCE(debug, '{}'::jsonb) || COALESCE($4::jsonb, '{}'::jsonb),
                     updated_at = NOW()
                 WHERE id = $1
                 """
+
+        serialized_questions = (
+            json.dumps([q.model_dump() for q in resp.questions])
+            if resp.questions is not None
+            else None
+        )
 
         async with self.pool.acquire() as conn:
             await conn.execute(
                 query,
                 packet_id,
-                resp.summary,
-                resp.follow_up_message,
                 resp.cover_letter,
+                serialized_questions,
                 resp.debug,
             )

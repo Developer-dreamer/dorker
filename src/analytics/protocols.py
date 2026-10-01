@@ -1,8 +1,12 @@
 from typing import List, Protocol, Tuple
 from uuid import UUID
 
-from src.shared import SuitabilityTier
-from src.shared.models import ApplicationGeneratedResponse, JobForAnalytics
+from src.shared.models import (
+    ApplicationGeneratedResponse,
+    JobForAnalytics,
+    RequestedGeneration,
+    SuitabilityTier,
+)
 
 
 class MatchingProvider(Protocol):
@@ -14,7 +18,7 @@ class MatchingProvider(Protocol):
     async def get_job_by_match_id(self, match_id: UUID) -> JobForAnalytics | None: ...
     async def update_pipeline_status(self, match_id: UUID, status: str) -> None: ...
     async def generate_application_for_match(
-        self, job: JobForAnalytics
+        self, request: RequestedGeneration, job: JobForAnalytics
     ) -> ApplicationGeneratedResponse: ...
 
 
@@ -28,6 +32,6 @@ class SLM(Protocol):
 
 
 class ApplicationGenerator[T](Protocol):
-    async def generate_sync(self, job: JobForAnalytics) -> T: ...
+    async def generate_sync(self, request: RequestedGeneration, job: JobForAnalytics) -> T: ...
     async def queue_generation(self, jobs: List[JobForAnalytics]) -> None: ...
     async def harvest_results(self) -> List[Tuple[UUID, T]]: ...
