@@ -42,6 +42,23 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
         async with self.pool.acquire() as conn:
             await conn.execute(query, *(payload[col] for col in columns))
 
+    async def get_pending_summary_match_ids(self, limit: int = 100) -> list[UUID]:
+        query = """
+            SELECT m.id
+            FROM matches m
+            JOIN jobs j ON j.id = m.job_id
+            WHERE m.suitability_tier <> 'REJECTED'
+              AND (m.job_summary IS NULL OR btrim(m.job_summary) = '')
+              AND ltrim(m.version, 'v')::semver >= $1::semver
+              AND j.deleted_at IS NULL
+            ORDER BY m.id
+            LIMIT $2
+        """
+        version_filter = self.runtime_version.min_version or self.runtime_version.version
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(query, version_filter, limit)
+        return [row["id"] for row in rows]
+
     async def update_summary(self, match_id: UUID, summary: str) -> None:
         async with self.pool.acquire() as conn:
             await conn.execute(
@@ -56,8 +73,9 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
                 GROUP BY m.suitability_tier;              
                 """
 
+        version_filter = self.runtime_version.min_version or self.runtime_version.version
         async with self.pool.acquire() as conn:
-            rows = await conn.fetch(query, self.runtime_version.version)
+            rows = await conn.fetch(query, version_filter)
             return dict(rows)
 
     async def update_pipeline_status(self, match_id: UUID, status: str) -> None:
@@ -85,7 +103,9 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
                        m.technical_capability_score,
                        m.strategic_value_score,
                        m.suitability_tier,
-                       m.job_summary
+                       m.job_summary,
+                       m.debug,
+                       m.rejection_reason
                 FROM matches m
                          JOIN jobs j ON j.id = m.job_id
                          LEFT JOIN companies c ON j.company_id = c.id
@@ -104,6 +124,8 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
                 "strategic_value_score": data["strategic_value_score"],
                 "suitability_tier": data["suitability_tier"],
                 "job_summary": data["job_summary"],
+                "debug": data["debug"],
+                "rejection_reason": data["rejection_reason"],
             }
             job.match = MatchedJob.model_validate(match_data)
             return job
@@ -148,8 +170,9 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
                 """
         tier_values = [t.value for t in tiers]
 
+        version_filter = self.runtime_version.min_version or self.runtime_version.version
         async with self.pool.acquire() as conn:
-            row = await conn.fetchrow(query, self.runtime_version.version, tier_values, offset)
+            row = await conn.fetchrow(query, version_filter, tier_values, offset)
             if not row:
                 return None
 
@@ -205,9 +228,10 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
                 LIMIT $4;
                 """
 
+        version_filter = self.runtime_version.min_version or self.runtime_version.version
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
-                query, self.runtime_version.model, self.runtime_version.version, tier.value, limit
+                query, self.runtime_version.model, version_filter, tier.value, limit
             )
             jobs: List[JobForAnalytics] = []
 

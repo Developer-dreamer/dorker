@@ -34,3 +34,7 @@ Extended job family enum
 ## v0.3.0
 
 Configured cover letter generation
+
+## v0.3.1
+
+Implemented dynamic questions fullfillment and integrated AI discussion

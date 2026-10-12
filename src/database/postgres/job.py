@@ -82,8 +82,9 @@ class JobRepositoryPostgres(JobRepository):
                 LIMIT $3;
                 """
 
+        version_filter = self.runtime_version.min_version or self.runtime_version.version
         async with self.pool.acquire() as conn:
-            rows = await conn.fetch(query, self.runtime_version.version, time_interval, limit)
+            rows = await conn.fetch(query, version_filter, time_interval, limit)
             return [JobForAnalytics(**dict(row)) for row in rows]
 
 

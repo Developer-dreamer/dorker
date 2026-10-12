@@ -17,7 +17,8 @@ from aiogram.types import (
     Message,
 )
 
-from src.analytics.protocols import MatchingProvider
+from src.analytics.discussion import DiscussionService
+from src.analytics.protocols import DataIntegrityException, MatchingProvider
 from src.shared import SuitabilityTier
 from src.shared.models import RequestedGeneration
 
@@ -25,11 +26,22 @@ CHAT_ID = 975840884
 
 
 class TelegramBot:
-    def __init__(self, logger: Logger, token: str, engine: MatchingProvider) -> None:
+    def __init__(
+        self,
+        logger: Logger,
+        token: str,
+        engine: MatchingProvider,
+        discussion: DiscussionService | None = None,
+        chat_id: int = CHAT_ID,
+    ) -> None:
         self.logger = logger
         self._bot = Bot(token=token)
         self._dp = Dispatcher()
         self.matching_engine = engine
+        self.discussion = discussion
+        self.chat_id = chat_id
+        self.active_discussion: dict[int, uuid.UUID] = {}
+        self._chat_locks: dict[int, asyncio.Lock] = {}
 
         self.questions: dict[str, list[str]] = dict()
         self.active_question_prompt: dict[int, dict[str, Any]] = dict()
@@ -37,19 +49,211 @@ class TelegramBot:
 
     def _register_handlers(self) -> None:
         self._dp.message.register(self.cmd_start, CommandStart())
-        self._dp.message.register(self.handle_question_input, F.text, ~F.text.startswith("/"))
-        self._dp.callback_query.register(self.handle_next, F.data == "/next")
+        self._dp.message.register(self.handle_text, F.text)
+        self._dp.callback_query.register(self.handle_job_callback)
 
-        self._dp.callback_query.register(self.handle_apply, F.data.startswith("/apply:"))
-        self._dp.callback_query.register(self.handle_ignore, F.data.startswith("/ignore:"))
-        self._dp.callback_query.register(
-            self.handle_question_next, F.data.startswith("/gen_q:next:")
+    def _chat_lock(self, chat_id: int) -> asyncio.Lock:
+        return self._chat_locks.setdefault(chat_id, asyncio.Lock())
+
+    async def handle_job_callback(self, callback: CallbackQuery) -> None:
+        if not isinstance(callback.message, Message) or not callback.data:
+            return
+        chat_id = callback.message.chat.id
+        if chat_id != self.chat_id or callback.from_user.id != self.chat_id:
+            await callback.answer(
+                "This bot is configured for another private chat.", show_alert=True
+            )
+            return
+        handlers = {
+            "/next": self.handle_next,
+            "/apply": self.handle_apply,
+            "/ignore": self.handle_ignore,
+            "/gen_q:next": self.handle_question_next,
+            "/gen_q:done": self.handle_question_done,
+            "/gen": self.handle_generate,
+            "/applied": self.handle_did_apply,
+            "/discuss": self.handle_discuss,
+            "/finish": self.handle_discussion_finish,
+        }
+        prefix = callback.data.rsplit(":", 1)[0]
+        if prefix.startswith("/applied:") or prefix.startswith("/gen:"):
+            prefix = prefix.split(":")[0]
+        handler = handlers.get(prefix)
+        if handler is None:
+            return
+        if self._chat_lock(chat_id).locked():
+            await callback.answer("Please wait for the current request to finish.")
+            return
+        async with self._chat_lock(chat_id):
+            if chat_id in self.active_discussion and prefix != "/finish":
+                await callback.answer("Finish the current discussion first.", show_alert=True)
+                return
+            try:
+                await handler(callback)
+                if (
+                    self.discussion
+                    and ":" in callback.data
+                    and prefix not in {"/discuss", "/finish"}
+                ):
+                    await self.discussion.record_action(
+                        uuid.UUID(callback.data.rsplit(":", 1)[1]),
+                        callback.from_user.id,
+                        chat_id,
+                        callback.data,
+                    )
+            except ValueError as error:
+                await self._bot.send_message(chat_id, str(error))
+            except Exception:
+                self.logger.exception("Job action failed")
+                await self._bot.send_message(
+                    chat_id, "Could not complete this action. Please try again."
+                )
+
+    async def handle_discuss(self, callback: CallbackQuery) -> None:
+        await callback.answer()
+        if (
+            self.discussion is None
+            or not callback.data
+            or not isinstance(callback.message, Message)
+        ):
+            return
+        chat_id = callback.message.chat.id
+        if chat_id in self.active_question_prompt:
+            raise ValueError("Finish entering application questions first.")
+        match_id = uuid.UUID(callback.data.split(":")[1])
+        job = await self.matching_engine.get_job_by_match_id(match_id)
+        if job is None:
+            raise ValueError("Job not found.")
+        await self._bot.send_message(chat_id, "Selecting relevant profile materials with Jev...")
+        await self.discussion.start(job, callback.from_user.id, chat_id)
+        self.active_discussion[chat_id] = match_id
+        await self._clear_reply_markup(callback.message)
+        await self._bot.send_message(
+            chat_id,
+            "Discussion started with this job, Jev-selected materials and its assessment. "
+            "What would you like to clarify?\n\n"
+            "/context <text> — attach information for discussion\n"
+            "/use <text> — confirm a correction or experience detail for application generation\n"
+            "/materials [filter] — list available profile paths\n"
+            "/material <path> — include that profile block in the application",
+            reply_markup=self._discussion_markup(match_id),
         )
-        self._dp.callback_query.register(
-            self.handle_question_done, F.data.startswith("/gen_q:done:")
+
+    def _discussion_markup(self, match_id: uuid.UUID) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Finish discussion", callback_data=f"/finish:{match_id}"
+                    ),
+                ]
+            ]
         )
-        self._dp.callback_query.register(self.handle_generate, F.data.startswith("/gen:"))
-        self._dp.callback_query.register(self.handle_did_apply, F.data.startswith("/applied:"))
+
+    async def handle_discussion_finish(self, callback: CallbackQuery) -> None:
+        await callback.answer()
+        if (
+            self.discussion is None
+            or not callback.data
+            or not isinstance(callback.message, Message)
+        ):
+            return
+        chat_id = callback.message.chat.id
+        match_id = uuid.UUID(callback.data.split(":")[1])
+        if self.active_discussion.get(chat_id) != match_id:
+            raise ValueError("This discussion is no longer active.")
+        await self.discussion.finish(match_id, callback.from_user.id, chat_id)
+        del self.active_discussion[chat_id]
+        await self._clear_reply_markup(callback.message)
+        await self._bot.send_message(
+            chat_id,
+            "Discussion finished. Confirmed additions will be used when generating materials.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="Prepare application", callback_data=f"/apply:{match_id}"
+                        ),
+                        InlineKeyboardButton(text="Ignore", callback_data=f"/ignore:{match_id}"),
+                    ]
+                ]
+            ),
+        )
+
+    async def handle_text(self, message: Message) -> None:
+        if (
+            message.chat.id != self.chat_id
+            or not message.from_user
+            or message.from_user.id != self.chat_id
+        ):
+            return
+        async with self._chat_lock(message.chat.id):
+            match_id = self.active_discussion.get(message.chat.id)
+            if match_id is None or self.discussion is None:
+                if message.text and not message.text.startswith("/"):
+                    await self.handle_question_input(message)
+                return
+            text = (message.text or "").strip()
+            parts = text.split(maxsplit=1)
+            command = parts[0] if parts else ""
+            argument = parts[1] if len(parts) > 1 else ""
+            confirmed = command in {"/use", "/material"}
+            material_path = None
+            if command == "/materials":
+                paths = [
+                    m.id
+                    for m in self.discussion.profile.get_materials()
+                    if argument.casefold() in m.id.casefold()
+                ]
+                await self._safe_send_message(
+                    message.chat.id,
+                    "\n".join(paths[:40]) or "No matching profile paths.",
+                    reply_markup=self._discussion_markup(match_id),
+                )
+                return
+            if command == "/material":
+                try:
+                    material = self.discussion.profile.get_material(argument.strip())
+                except DataIntegrityException:
+                    await message.reply(
+                        "Unknown profile path. Use /materials [filter] to find one."
+                    )
+                    return
+                text, material_path = material.text, material.id
+            elif command in {"/use", "/context"}:
+                text = argument.strip()
+                if not text:
+                    await message.reply(f"Usage: {command} <text>")
+                    return
+                if command == "/context":
+                    text = "Attached context for discussion:\n" + text
+            elif command.startswith("/"):
+                await message.reply(
+                    "Use /context, /use, /materials or /material during discussion."
+                )
+                return
+            try:
+                answer = await self.discussion.send(
+                    match_id,
+                    message.from_user.id,
+                    message.chat.id,
+                    text,
+                    confirmed=confirmed,
+                    material_path=material_path,
+                )
+                await self._safe_send_message(
+                    message.chat.id,
+                    ("Saved for application generation.\n\n" if confirmed else "") + answer,
+                    reply_markup=self._discussion_markup(match_id),
+                )
+            except ValueError as error:
+                await message.reply(str(error), reply_markup=self._discussion_markup(match_id))
+            except Exception:
+                self.logger.exception("Discussion request failed for match %s", match_id)
+                await message.reply(
+                    "Could not get an AI response. Please try again.",
+                    reply_markup=self._discussion_markup(match_id),
+                )
 
     async def cmd_start(self, message: Message) -> None:
         user_id = message.from_user.id if message.from_user else "unknown"
@@ -71,7 +275,7 @@ class TelegramBot:
         )
         if not job:
             await self._bot.send_message(
-                chat_id=CHAT_ID,
+                chat_id=self.chat_id,
                 text="No more pending matched jobs found.",
             )
             return
@@ -122,8 +326,16 @@ class TelegramBot:
                 ],
             ]
         )
+        if self.discussion is not None:
+            markup.inline_keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        text="Discuss with AI", callback_data=f"/discuss:{match_id}"
+                    ),
+                ]
+            )
         await self._bot.send_message(
-            chat_id=CHAT_ID,
+            chat_id=self.chat_id,
             text=text,
             reply_markup=markup,
         )
@@ -156,7 +368,7 @@ class TelegramBot:
 
         await self._clear_reply_markup(callback.message)
         await self._bot.send_message(
-            chat_id=CHAT_ID, text="What would you like to generate?", reply_markup=markup
+            chat_id=self.chat_id, text="What would you like to generate?", reply_markup=markup
         )
 
     async def handle_ignore(self, callback: CallbackQuery) -> None:
@@ -174,8 +386,14 @@ class TelegramBot:
         if not text:
             return
         chunk_size = 4000
+        markup = kwargs.pop("reply_markup", None)
         for i in range(0, len(text), chunk_size):
-            await self._bot.send_message(chat_id=chat_id, text=text[i : i + chunk_size], **kwargs)
+            await self._bot.send_message(
+                chat_id=chat_id,
+                text=text[i : i + chunk_size],
+                reply_markup=markup if i + chunk_size >= len(text) else None,
+                **kwargs,
+            )
 
     async def handle_generate(self, callback: CallbackQuery) -> None:
         await callback.answer()
@@ -301,7 +519,39 @@ class TelegramBot:
         )
 
         try:
-            resp = await self.matching_engine.generate_application_for_match(request, job)
+            materials = (
+                await self.discussion.confirmed_materials(
+                    uuid.UUID(match_id),
+                    self.chat_id,
+                    chat_id,
+                )
+                if self.discussion
+                else []
+            )
+            selected_packet = (
+                await self.discussion.selected_packet(
+                    uuid.UUID(match_id),
+                    self.chat_id,
+                    chat_id,
+                )
+                if self.discussion
+                else None
+            )
+            if selected_packet is not None:
+                resp = await self.matching_engine.generate_application_for_match(
+                    request,
+                    job,
+                    materials=materials,
+                    selected_packet=selected_packet,
+                )
+            elif materials:
+                resp = await self.matching_engine.generate_application_for_match(
+                    request,
+                    job,
+                    materials=materials,
+                )
+            else:
+                resp = await self.matching_engine.generate_application_for_match(request, job)
         except Exception as e:
             self.logger.exception(f"Generation failed for match {match_id}: {e}")
             await self._bot.send_message(chat_id=chat_id, text=f"⚠️ Generation failed: {e}")
@@ -427,7 +677,7 @@ class TelegramBot:
             while True:
                 res = await self.matching_engine.get_matching_count()
                 await self._bot.send_message(
-                    chat_id=CHAT_ID,
+                    chat_id=self.chat_id,
                     text=(
                         f"Your matches are ready:\n"
                         f"SUITABLE: {res.get('SUITABLE', 0)}\n"

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 from datetime import timedelta
 from enum import Enum
@@ -17,6 +18,7 @@ from src.shared.models import (
     ApplicationPacket,
     JobForAnalytics,
     MatchedJob,
+    Material,
     OpenAIBaseResponse,
     RequestedCoverletter,
     RequestedFullResponse,
@@ -26,9 +28,9 @@ from src.shared.models import (
     SuitabilityTier,
 )
 
-from .classification import SLM, Classifier
+from .classification import Classifier
 from .ml.filter_description import DescriptionFilter
-from .protocols import ApplicationGenerator, MatchingProvider
+from .protocols import ApplicationGenerator, MatchingProvider, ProfileRepository
 
 
 class MatchingType(str, Enum):
@@ -47,8 +49,9 @@ class MatchingEngine(MatchingProvider):
         application_repo: ApplicationPacketRepository,
         job_clf: Classifier[MatchedJob],
         profile_clf: Classifier[ApplicationPacket],
+        profile: ProfileRepository,
         application_generator: ApplicationGenerator[OpenAIBaseResponse] | None = None,
-        slm: SLM | None = None,
+        summary_available: asyncio.Event | None = None,
         desc_filter: DescriptionFilter | None = None,
     ):
         self.logger = logger
@@ -59,9 +62,10 @@ class MatchingEngine(MatchingProvider):
         self.application_repo = application_repo
 
         self.application_generator = application_generator
-        self.slm = slm
+        self.summary_available = summary_available
         self.job_clf = job_clf
         self.profile_clf = profile_clf
+        self.profile = profile
         self.desc_filter = desc_filter
 
     async def classify_background(self) -> None:
@@ -103,12 +107,35 @@ class MatchingEngine(MatchingProvider):
         return application
 
     async def generate_application_for_match(
-        self, request: RequestedGeneration, job: JobForAnalytics
+        self,
+        request: RequestedGeneration,
+        job: JobForAnalytics,
+        materials: list[Material] | None = None,
+        selected_packet: ApplicationPacket | None = None,
     ) -> ApplicationGeneratedResponse:
         assert self.application_generator is not None
 
         # 1. Classify profile for job
-        packet = await self.profile_clf.classify(job)
+        if selected_packet is not None:
+            if (
+                job.match is None
+                or selected_packet.match_id != job.match.id
+                or selected_packet.job_id != job.id
+            ):
+                raise ValueError("Selected materials belong to a different job/match.")
+            packet = selected_packet.model_copy(deep=True)
+        else:
+            packet = await self.profile_clf.classify(job, self.profile)
+        if materials:
+            # Explicit user selections take precedence over the profile classifier.
+            selected = {material.id: material for material in packet.materials}
+            selected.update({material.id: material for material in materials})
+            packet.materials = list(selected.values())
+            debug = json.loads(packet.debug or "{}")
+            if not isinstance(debug, dict):
+                debug = {"classifier_output": debug}
+            debug["user_confirmed_materials"] = [m.model_dump() for m in materials]
+            packet.debug = json.dumps(debug)
         await self.application_repo.save_packet(packet)
         job.application = packet
 
@@ -130,12 +157,13 @@ class MatchingEngine(MatchingProvider):
             )
 
             try:
-                res = await self.job_clf.classify(job)
-                if self.slm is not None and res.suitability_tier != SuitabilityTier.REJECTED:
-                    summary = await asyncio.to_thread(self.slm.generate, job, str)
-                    res.job_summary = summary
-
+                res = await self.job_clf.classify(job, self.profile)
                 await self.match_repo.save_match(res)
+                if (
+                    self.summary_available is not None
+                    and res.suitability_tier != SuitabilityTier.REJECTED
+                ):
+                    self.summary_available.set()
             except Exception as e:
                 self.logger.error(f"Error classifying job {job.id}: {str(e)}")
                 return
@@ -152,7 +180,7 @@ class MatchingEngine(MatchingProvider):
         for idx, job in enumerate(jobs, start=1):
             self.logger.info(f"--- [{idx}/{len(jobs)}] Processing job {job.id} ({job.title}) ---")
             try:
-                packet = await self.profile_clf.classify(job)
+                packet = await self.profile_clf.classify(job, self.profile)
                 await self.application_repo.save_packet(packet)
             except Exception as e:
                 self.logger.error(f"Error classifying job {job.id}: {str(e)}")

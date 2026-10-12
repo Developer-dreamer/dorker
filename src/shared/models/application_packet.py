@@ -1,14 +1,15 @@
 from typing import List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, PrivateAttr
 
 
 class Material(BaseModel):
     model_config = ConfigDict()
 
-    path: str = Field(
+    id: str = Field(
         default="",
+        validation_alias=AliasChoices("id", "path"),
         description="""The path of the material inside the XML markdown.
                     Identifies how to reach the text block inside the profile.md like files.""",
     )
@@ -75,9 +76,6 @@ class ApplicationPacket(BaseModel):
 
     summary: Optional[str] = Field(
         default=None, description="The summary of job description and application process."
-    )
-    follow_up_message: Optional[str] = Field(
-        default=None, description="Follow up message when short application message required."
     )
     cover_letter: Optional[str] = Field(
         default=None, description="The cover letter attached to the application."

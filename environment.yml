@@ -69,7 +69,6 @@ dependencies:
       - debugpy==1.8.21
       - defusedxml==0.7.1
       - diskcache==5.6.3
-      - dorker==0.2.2
       - einops==0.8.2
       - executing==2.2.1
       - fastjsonschema==2.22.2
