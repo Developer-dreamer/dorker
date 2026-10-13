@@ -73,6 +73,7 @@ pyroscope.configure(
     mem_heap_sample_size=512 * 1024,  # avg bytes between samples (default)
 )
 
+
 class FileReportingLokiHandler(logging_loki.LokiHandler):
     def handleError(self, record: logging.LogRecord) -> None:
         # Do not call the default handler: it prints tracebacks over Rich's UI.

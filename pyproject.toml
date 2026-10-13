@@ -42,6 +42,9 @@ max-complexity = 20
 
 [tool.mypy]
 files = ["src", "orchestration"]
+mypy_path = "$MYPY_CONFIG_FILE_DIR/src/shared/types"
+# Load these as third-party stubs via mypy_path, rather than as src.* modules.
+exclude = ["^src/shared/types/logging_loki/"]
 
 strict = true
 warn_return_any = true

@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
 from aiogram.types import CallbackQuery, Chat, Message, User
@@ -330,6 +330,7 @@ class TelegramTests(unittest.IsolatedAsyncioTestCase):
         self.engine = SimpleNamespace(
             get_job_by_match_id=AsyncMock(return_value=self.job),
             get_matched_job=AsyncMock(return_value=None),
+            get_matching_count=AsyncMock(return_value={"SUITABLE": 2, "STRETCH": 1}),
             append_question=AsyncMock(),
             update_pipeline_status=AsyncMock(),
             generate_application_for_match=AsyncMock(return_value=ApplicationGeneratedResponse()),
@@ -425,6 +426,195 @@ class TelegramTests(unittest.IsolatedAsyncioTestCase):
             await self.bot.handle_text(self.message("Why this company?"))
         self.engine.append_question.assert_awaited_once_with(self.job.match.id, "Why this company?")
         self.assertEqual(self.bot.active_question_prompt[42]["count"], 1)
+
+    async def test_questions_advance_with_done_only_and_preserve_generation_type(self):
+        match_id = self.job.match.id
+        await self.call_action(f"/gen:both:{match_id}")
+        prompt = self.bot._bot.send_message.call_args.kwargs
+        self.assertEqual(
+            [b.text for row in prompt["reply_markup"].inline_keyboard for b in row], ["Done"]
+        )
+        with patch.object(Message, "reply", new_callable=AsyncMock) as reply:
+            await self.bot.handle_text(self.message("Why this company?"))
+            await self.bot.handle_text(self.message("What have you built?"))
+        self.assertEqual(self.engine.append_question.await_count, 2)
+        self.assertIn("question #3", reply.call_args.kwargs["text"])
+        self.assertEqual(
+            [b.text for row in reply.call_args.kwargs["reply_markup"].inline_keyboard for b in row],
+            ["Done"],
+        )
+        await self.call_action(f"/gen_q:done:{uuid4()}")
+        self.engine.generate_application_for_match.assert_not_awaited()
+        await self.call_action(f"/gen_q:done:{match_id}")
+        self.engine.generate_application_for_match.assert_awaited_once_with(
+            RequestedGeneration(cover_letter=True, questions=True), self.job
+        )
+        await self.call_action(f"/gen_q:done:{match_id}")
+        self.assertEqual(self.engine.generate_application_for_match.await_count, 1)
+
+    async def test_matches_command_and_keyboard_query_on_demand(self):
+        self.engine.get_matched_job.return_value = self.job
+        for text in ("/matches", "🔎 Matches"):
+            await self.bot.handle_text(self.message(text))
+        self.assertEqual(self.engine.get_matching_count.await_count, 2)
+        self.assertEqual(self.engine.get_matched_job.await_count, 2)
+        self.assertEqual(self.bot.current_match[42], self.job.match.id)
+        self.assertIn("SUITABLE: 2", self.bot._bot.send_message.call_args_list[0].args[1])
+        self.engine.get_matched_job.return_value = None
+        await self.bot.handle_text(self.message("/matches"))
+        self.assertNotIn(42, self.bot.current_match)
+
+    async def test_assessment_logs_once_without_saving_or_ai(self):
+        self.bot.current_match[42] = self.job.match.id
+        self.bot.logger = Mock()
+        await self.bot.handle_text(self.message("✍️ Assessment"))
+        self.assertIn(
+            "What is incorrect with the classification?",
+            self.bot._bot.send_message.call_args.args[1],
+        )
+        await self.bot.handle_text(self.message("This role requires local residency."))
+        self.bot.logger.info.assert_called_once_with(
+            "Classification assessment: match=%s user=%s chat=%s text=%s",
+            self.job.match.id,
+            42,
+            42,
+            "This role requires local residency.",
+        )
+        await self.bot.handle_text(self.message("Another unrelated message"))
+        self.assertEqual(self.bot.logger.info.call_count, 1)
+        self.assertNotIn(42, self.bot.active_assessment)
+        self.engine.append_question.assert_not_awaited()
+        self.engine.update_pipeline_status.assert_not_awaited()
+        self.assertEqual(self.repo.messages, [])
+        self.service.model.reply.assert_not_awaited()
+
+    async def test_assessment_requires_job_can_cancel_and_blocks_navigation(self):
+        await self.bot.handle_text(self.message("/assessment"))
+        self.assertNotIn(42, self.bot.active_assessment)
+        self.bot.current_match[42] = self.job.match.id
+        await self.bot.handle_text(self.message("/assessment"))
+        await self.bot.handle_text(self.message("/matches"))
+        await self.call_action(f"/ignore:{self.job.match.id}")
+        self.engine.get_matching_count.assert_not_awaited()
+        self.engine.update_pipeline_status.assert_not_awaited()
+        await self.bot.handle_text(self.message("/cancel"))
+        self.assertNotIn(42, self.bot.active_assessment)
+
+    async def test_menu_commands_respect_active_flows_and_authorized_user(self):
+        for text in ("/start", "/matches", "/assessment", "🔎 Matches"):
+            await self.bot.handle_text(self.message(text, user_id=99))
+        self.bot._bot.send_message.assert_not_awaited()
+        self.bot.active_question_prompt[42] = {
+            "match_id": str(self.job.match.id),
+            "gen_type": "questions",
+            "count": 0,
+        }
+        for text in ("/matches", "/assessment", "🔎 Matches", "✍️ Assessment"):
+            await self.bot.handle_text(self.message(text))
+        self.engine.get_matching_count.assert_not_awaited()
+        self.engine.append_question.assert_not_awaited()
+        self.assertNotIn(42, self.bot.active_assessment)
+        self.bot.active_question_prompt.clear()
+        self.bot.active_discussion[42] = self.job.match.id
+        await self.bot.handle_text(self.message("/assessment"))
+        self.assertNotIn(42, self.bot.active_assessment)
+        await self.bot.handle_text(self.message("🏠 Menu"))
+        markup = self.bot._bot.send_message.call_args.kwargs["reply_markup"]
+        self.assertEqual(
+            [[b.text for b in row] for row in markup.keyboard],
+            [
+                ["📎 Context", "✅ Use in application"],
+                ["📚 Materials", "➕ Include material"],
+                ["✓ Finish discussion", "🏠 Menu"],
+            ],
+        )
+
+    async def test_startup_shows_first_match_without_counts_or_monitor(self):
+        self.engine.get_matched_job.return_value = self.job
+        self.bot._bot.delete_webhook = AsyncMock()
+        self.bot._bot.set_my_commands = AsyncMock()
+        self.bot._bot.session = SimpleNamespace(close=AsyncMock())
+        self.bot._dp.start_polling = AsyncMock()
+        await self.bot.run()
+        self.engine.get_matched_job.assert_awaited_once()
+        self.engine.get_matching_count.assert_not_awaited()
+        self.bot._dp.start_polling.assert_awaited_once()
+        self.bot._bot.session.close.assert_awaited_once()
+        commands = self.bot._bot.set_my_commands.call_args.args[0]
+        self.assertEqual([c.command for c in commands], ["matches", "assessment", "menu", "cancel"])
+
+    async def test_startup_match_failure_still_starts_polling(self):
+        self.engine.get_matched_job.side_effect = RuntimeError("Database unavailable")
+        self.bot.logger = Mock()
+        self.bot._bot.delete_webhook = AsyncMock()
+        self.bot._bot.set_my_commands = AsyncMock()
+        self.bot._bot.session = SimpleNamespace(close=AsyncMock())
+        self.bot._dp.start_polling = AsyncMock()
+        await self.bot.run()
+        self.bot._dp.start_polling.assert_awaited_once()
+        self.bot.logger.exception.assert_called_once()
+
+    async def test_discussion_defaults_to_chat_and_menu_buttons_prompt_for_input(self):
+        match_id = self.job.match.id
+        await self.call_action(f"/discuss:{match_id}")
+        self.service.send = AsyncMock(wraps=self.service.send)
+        await self.bot.handle_text(self.message("Does this role suit me?"))
+        self.assertEqual(self.service.send.call_args.args[3], "Does this role suit me?")
+        self.assertFalse(self.service.send.call_args.kwargs["confirmed"])
+        await self.bot.handle_text(self.message("✅ Use in application"))
+        self.assertEqual(self.service.send.await_count, 1)
+        await self.bot.handle_text(self.message("I have worked on distributed systems."))
+        self.assertTrue(self.service.send.call_args.kwargs["confirmed"])
+        await self.bot.handle_text(self.message("📎 Context"))
+        await self.bot.handle_text(self.message("I prefer remote roles."))
+        self.assertEqual(
+            self.service.send.call_args.args[3],
+            "Attached context for discussion:\nI prefer remote roles.",
+        )
+        self.assertFalse(self.service.send.call_args.kwargs["confirmed"])
+        await self.bot.handle_text(self.message("Another chat message"))
+        self.assertEqual(self.service.send.call_args.args[3], "Another chat message")
+        self.assertFalse(self.service.send.call_args.kwargs["confirmed"])
+        self.engine.append_question.assert_not_awaited()
+
+    async def test_discussion_material_buttons_cancel_and_restore_main_menu(self):
+        match_id = self.job.match.id
+        await self.call_action(f"/discuss:{match_id}")
+        self.service.send = AsyncMock(wraps=self.service.send)
+        await self.bot.handle_text(self.message("📚 Materials"))
+        self.service.send.assert_not_awaited()
+        self.assertIn(
+            "profile.projects.project.python", self.bot._bot.send_message.call_args.kwargs["text"]
+        )
+        await self.bot.handle_text(self.message("➕ Include material"))
+        await self.bot.handle_text(self.message("profile.projects.project.python"))
+        self.assertEqual(
+            self.service.send.call_args.kwargs["material_path"], "profile.projects.project.python"
+        )
+        self.assertTrue(self.service.send.call_args.kwargs["confirmed"])
+        await self.bot.handle_text(self.message("✅ Use in application"))
+        await self.bot.handle_text(self.message("/cancel"))
+        await self.bot.handle_text(self.message("Just chatting again"))
+        self.assertFalse(self.service.send.call_args.kwargs["confirmed"])
+        await self.bot.handle_text(self.message("📎 Context"))
+        await self.bot.handle_text(self.message("✓ Finish discussion"))
+        self.assertNotIn(42, self.bot.active_discussion)
+        self.assertNotIn(42, self.bot.discussion_input)
+        restored_menu = self.bot._bot.send_message.call_args_list[-2].kwargs["reply_markup"]
+        self.assertEqual(
+            [[b.text for b in row] for row in restored_menu.keyboard],
+            [["🔎 Matches", "✍️ Assessment"], ["🏠 Menu"]],
+        )
+
+    async def test_explicit_discussion_command_overrides_pending_button(self):
+        await self.call_action(f"/discuss:{self.job.match.id}")
+        self.service.send = AsyncMock(wraps=self.service.send)
+        await self.bot.handle_text(self.message("✅ Use in application"))
+        await self.bot.handle_text(self.message("/context This is context only"))
+        self.assertFalse(self.service.send.call_args.kwargs["confirmed"])
+        self.assertNotIn(42, self.bot.discussion_input)
+        await self.bot.handle_text(self.message("Ordinary message"))
+        self.assertEqual(self.service.send.call_args.args[3], "Ordinary message")
 
 
 if __name__ == "__main__":

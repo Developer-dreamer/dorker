@@ -362,8 +362,7 @@ class ScraperRunner:
         # 3. LIVE DISABLE CHECK
         if not self.cfg.is_enabled(self.ats.name):
             self.logger.warning(
-                f"[{self.ats.name}] Scraper disabled mid-run. "
-                f"Aborting at {i}{total_str} {context}."
+                f"[{self.ats.name}] Scraper disabled mid-run. Aborting at {i}{total_str} {context}."
             )
             return True
 

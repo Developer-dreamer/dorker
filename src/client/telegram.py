@@ -8,13 +8,15 @@ from typing import Any
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import CommandStart
 from aiogram.types import (
+    BotCommand,
     CallbackQuery,
     FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    KeyboardButton,
     Message,
+    ReplyKeyboardMarkup,
 )
 
 from src.analytics.discussion import DiscussionService
@@ -23,6 +25,16 @@ from src.shared import SuitabilityTier
 from src.shared.models import RequestedGeneration
 
 CHAT_ID = 975840884
+MATCHES_BUTTON = "🔎 Matches"
+ASSESSMENT_BUTTON = "✍️ Assessment"
+MENU_BUTTON = "🏠 Menu"
+DISCUSSION_BUTTONS = {
+    "📎 Context": "/context",
+    "✅ Use in application": "/use",
+    "📚 Materials": "/materials",
+    "➕ Include material": "/material",
+    "✓ Finish discussion": "/finish",
+}
 
 
 class TelegramBot:
@@ -40,6 +52,9 @@ class TelegramBot:
         self.matching_engine = engine
         self.discussion = discussion
         self.chat_id = chat_id
+        self.current_match: dict[int, uuid.UUID] = {}
+        self.active_assessment: dict[int, uuid.UUID] = {}
+        self.discussion_input: dict[int, str] = {}
         self.active_discussion: dict[int, uuid.UUID] = {}
         self._chat_locks: dict[int, asyncio.Lock] = {}
 
@@ -48,7 +63,6 @@ class TelegramBot:
         self._register_handlers()
 
     def _register_handlers(self) -> None:
-        self._dp.message.register(self.cmd_start, CommandStart())
         self._dp.message.register(self.handle_text, F.text)
         self._dp.callback_query.register(self.handle_job_callback)
 
@@ -68,7 +82,6 @@ class TelegramBot:
             "/next": self.handle_next,
             "/apply": self.handle_apply,
             "/ignore": self.handle_ignore,
-            "/gen_q:next": self.handle_question_next,
             "/gen_q:done": self.handle_question_done,
             "/gen": self.handle_generate,
             "/applied": self.handle_did_apply,
@@ -87,6 +100,9 @@ class TelegramBot:
         async with self._chat_lock(chat_id):
             if chat_id in self.active_discussion and prefix != "/finish":
                 await callback.answer("Finish the current discussion first.", show_alert=True)
+                return
+            if chat_id in self.active_assessment:
+                await callback.answer("Send your assessment or use /cancel first.", show_alert=True)
                 return
             try:
                 await handler(callback)
@@ -130,24 +146,23 @@ class TelegramBot:
         await self._clear_reply_markup(callback.message)
         await self._bot.send_message(
             chat_id,
-            "Discussion started with this job, Jev-selected materials and its assessment. "
-            "What would you like to clarify?\n\n"
-            "/context <text> — attach information for discussion\n"
-            "/use <text> — confirm a correction or experience detail for application generation\n"
-            "/materials [filter] — list available profile paths\n"
-            "/material <path> — include that profile block in the application",
-            reply_markup=self._discussion_markup(match_id),
+            "Discussion started. Send any message to chat about this job.\n\n"
+            "Use the bottom menu to attach context, confirm details for the application, "
+            "or select profile materials. /menu shows the discussion options.",
+            reply_markup=self._discussion_markup(),
         )
 
-    def _discussion_markup(self, match_id: uuid.UUID) -> InlineKeyboardMarkup:
-        return InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="Finish discussion", callback_data=f"/finish:{match_id}"
-                    ),
-                ]
-            ]
+    def _discussion_markup(self) -> ReplyKeyboardMarkup:
+        buttons = list(DISCUSSION_BUTTONS)
+        return ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text=buttons[0]), KeyboardButton(text=buttons[1])],
+                [KeyboardButton(text=buttons[2]), KeyboardButton(text=buttons[3])],
+                [KeyboardButton(text=buttons[4]), KeyboardButton(text=MENU_BUTTON)],
+            ],
+            resize_keyboard=True,
+            is_persistent=False,
+            input_field_placeholder="Send a message to chat about this job",
         )
 
     async def handle_discussion_finish(self, callback: CallbackQuery) -> None:
@@ -162,9 +177,16 @@ class TelegramBot:
         match_id = uuid.UUID(callback.data.split(":")[1])
         if self.active_discussion.get(chat_id) != match_id:
             raise ValueError("This discussion is no longer active.")
-        await self.discussion.finish(match_id, callback.from_user.id, chat_id)
-        del self.active_discussion[chat_id]
+        await self._finish_discussion(match_id, callback.from_user.id, chat_id)
         await self._clear_reply_markup(callback.message)
+
+    async def _finish_discussion(self, match_id: uuid.UUID, user_id: int, chat_id: int) -> None:
+        if self.discussion is None:
+            return
+        await self.discussion.finish(match_id, user_id, chat_id)
+        del self.active_discussion[chat_id]
+        self.discussion_input.pop(chat_id, None)
+        await self._send_menu(chat_id)
         await self._bot.send_message(
             chat_id,
             "Discussion finished. Confirmed additions will be used when generating materials.",
@@ -188,12 +210,74 @@ class TelegramBot:
         ):
             return
         async with self._chat_lock(message.chat.id):
+            text = (message.text or "").strip()
+            menu_command = {
+                MATCHES_BUTTON: "/matches",
+                ASSESSMENT_BUTTON: "/assessment",
+                MENU_BUTTON: "/menu",
+            }.get(text, text.split(maxsplit=1)[0].split("@")[0] if text else "")
+            if menu_command in {"/start", "/menu", "/matches", "/assessment", "/cancel"}:
+                try:
+                    await self._handle_menu_command(message, menu_command)
+                except Exception:
+                    self.logger.exception("Menu request failed")
+                    await self._bot.send_message(
+                        message.chat.id, "Could not complete this request. Please try again."
+                    )
+                return
+            if message.chat.id in self.active_assessment:
+                if not text or text.startswith("/"):
+                    await self._bot.send_message(
+                        message.chat.id, "Send your assessment as text, or use /cancel."
+                    )
+                    return
+                assessment_match = self.active_assessment.pop(message.chat.id)
+                self.logger.info(
+                    "Classification assessment: match=%s user=%s chat=%s text=%s",
+                    assessment_match,
+                    message.from_user.id,
+                    message.chat.id,
+                    text,
+                )
+                await self._bot.send_message(
+                    message.chat.id,
+                    "Assessment received and logged.",
+                    reply_markup=self._get_start_markup(),
+                )
+                return
             match_id = self.active_discussion.get(message.chat.id)
             if match_id is None or self.discussion is None:
                 if message.text and not message.text.startswith("/"):
                     await self.handle_question_input(message)
                 return
-            text = (message.text or "").strip()
+            button_command = DISCUSSION_BUTTONS.get(text)
+            if button_command == "/finish":
+                try:
+                    await self._finish_discussion(match_id, message.from_user.id, message.chat.id)
+                except Exception:
+                    self.logger.exception("Could not finish discussion for match %s", match_id)
+                    await message.reply("Could not finish the discussion. Please try again.")
+                return
+            if button_command in {"/context", "/use", "/material"}:
+                self.discussion_input[message.chat.id] = button_command
+                prompts = {
+                    "/context": "Send the context to attach to this discussion.",
+                    "/use": "Send the detail to confirm for application generation.",
+                    "/material": "Send a profile path to include. Use Materials to find paths.",
+                }
+                await self._bot.send_message(
+                    message.chat.id,
+                    prompts[button_command] + " Use /cancel to return to chatting.",
+                    reply_markup=self._discussion_markup(),
+                )
+                return
+            pending = self.discussion_input.get(message.chat.id)
+            if button_command or text.startswith("/"):
+                self.discussion_input.pop(message.chat.id, None)
+            elif pending:
+                text = f"{self.discussion_input.pop(message.chat.id)} {text}"
+            if button_command:
+                text = button_command
             parts = text.split(maxsplit=1)
             command = parts[0] if parts else ""
             argument = parts[1] if len(parts) > 1 else ""
@@ -208,7 +292,7 @@ class TelegramBot:
                 await self._safe_send_message(
                     message.chat.id,
                     "\n".join(paths[:40]) or "No matching profile paths.",
-                    reply_markup=self._discussion_markup(match_id),
+                    reply_markup=self._discussion_markup(),
                 )
                 return
             if command == "/material":
@@ -228,9 +312,7 @@ class TelegramBot:
                 if command == "/context":
                     text = "Attached context for discussion:\n" + text
             elif command.startswith("/"):
-                await message.reply(
-                    "Use /context, /use, /materials or /material during discussion."
-                )
+                await message.reply("Send a message to chat, or use /menu for discussion actions.")
                 return
             try:
                 answer = await self.discussion.send(
@@ -244,24 +326,88 @@ class TelegramBot:
                 await self._safe_send_message(
                     message.chat.id,
                     ("Saved for application generation.\n\n" if confirmed else "") + answer,
-                    reply_markup=self._discussion_markup(match_id),
+                    reply_markup=self._discussion_markup(),
                 )
             except ValueError as error:
-                await message.reply(str(error), reply_markup=self._discussion_markup(match_id))
+                await message.reply(str(error), reply_markup=self._discussion_markup())
             except Exception:
                 self.logger.exception("Discussion request failed for match %s", match_id)
                 await message.reply(
                     "Could not get an AI response. Please try again.",
-                    reply_markup=self._discussion_markup(match_id),
+                    reply_markup=self._discussion_markup(),
                 )
 
-    async def cmd_start(self, message: Message) -> None:
-        user_id = message.from_user.id if message.from_user else "unknown"
-        self.logger.info(f"Start command received from user {user_id}, chat {message.chat.id}")
-        await message.answer(
-            text="""
-                Hi, its Dorker - open-source engine that handles scraping and application.
-                """,
+    async def _handle_menu_command(self, message: Message, command: str) -> None:
+        chat_id = message.chat.id
+        if command in {"/start", "/menu"}:
+            await self._send_menu(chat_id)
+            return
+        if command == "/cancel":
+            if chat_id in self.active_discussion:
+                self.discussion_input.pop(chat_id, None)
+                await self._bot.send_message(
+                    chat_id,
+                    "Send any message to continue chatting.",
+                    reply_markup=self._discussion_markup(),
+                )
+                return
+            cancelled = self.active_assessment.pop(chat_id, None)
+            await self._bot.send_message(
+                chat_id,
+                "Assessment cancelled." if cancelled else "No assessment is active.",
+                reply_markup=self._get_start_markup(),
+            )
+            return
+        if chat_id in self.active_discussion:
+            await self._bot.send_message(chat_id, "Finish the current discussion first.")
+            return
+        if chat_id in self.active_question_prompt:
+            await self._bot.send_message(chat_id, "Finish entering application questions first.")
+            return
+        if chat_id in self.active_assessment:
+            await self._bot.send_message(chat_id, "Send your assessment or use /cancel first.")
+            return
+        if command == "/assessment":
+            match_id = self.current_match.get(chat_id)
+            if match_id is None:
+                await self._bot.send_message(chat_id, "Use /matches to display a job first.")
+                return
+            await self._bot.send_message(
+                chat_id, "What is incorrect with the classification?\n\nUse /cancel to exit."
+            )
+            self.active_assessment[chat_id] = match_id
+            return
+        counts = await self.matching_engine.get_matching_count()
+        await self._bot.send_message(
+            chat_id,
+            "Your matches:\n"
+            + "\n".join(
+                f"{tier}: {counts.get(tier, 0)}" for tier in ("SUITABLE", "STRETCH", "RUNWAY")
+            ),
+            reply_markup=self._get_start_markup(),
+        )
+        await self._show_next_job()
+
+    async def _send_menu(self, chat_id: int) -> None:
+        if chat_id in self.active_discussion:
+            await self._bot.send_message(
+                chat_id,
+                "Send any message to chat. Choose an action below when needed.\n\n"
+                "/context <text> — attach context\n"
+                "/use <text> — confirm a detail for generation\n"
+                "/materials [filter] — find profile paths\n"
+                "/material <path> — include a profile block\n\n"
+                "Use /cancel to leave an action prompt and return to chatting.",
+                reply_markup=self._discussion_markup(),
+            )
+            return
+        await self._bot.send_message(
+            chat_id,
+            "Dorker\n\n"
+            "🔎 Matches — current counts and the next pending job\n"
+            "✍️ Assessment — feedback on the last displayed job\n"
+            "🏠 Menu — show these options\n\n"
+            "Use /cancel to exit assessment entry.",
             reply_markup=self._get_start_markup(),
         )
 
@@ -274,6 +420,7 @@ class TelegramBot:
             [SuitabilityTier.RUNWAY, SuitabilityTier.SUITABLE, SuitabilityTier.STRETCH], offset=0
         )
         if not job:
+            self.current_match.pop(self.chat_id, None)
             await self._bot.send_message(
                 chat_id=self.chat_id,
                 text="No more pending matched jobs found.",
@@ -339,6 +486,8 @@ class TelegramBot:
             text=text,
             reply_markup=markup,
         )
+        if job.match:
+            self.current_match[self.chat_id] = job.match.id
 
     async def _clear_reply_markup(self, message: Any) -> None:
         if isinstance(message, Message):
@@ -415,7 +564,6 @@ class TelegramBot:
             markup = InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
-                        InlineKeyboardButton(text="Next", callback_data=f"/gen_q:next:{match_id}"),
                         InlineKeyboardButton(text="Done", callback_data=f"/gen_q:done:{match_id}"),
                     ]
                 ]
@@ -424,7 +572,7 @@ class TelegramBot:
                 chat_id=chat_id,
                 text=(
                     "📝 Please enter question #1 for this application as a text message.\n\n"
-                    "You can click Next after each question to continue, or Done when finished."
+                    "Send each question as a message. Click Done when finished."
                 ),
                 reply_markup=markup,
             )
@@ -449,7 +597,6 @@ class TelegramBot:
             markup = InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
-                        InlineKeyboardButton(text="Next", callback_data=f"/gen_q:next:{match_id}"),
                         InlineKeyboardButton(text="Done", callback_data=f"/gen_q:done:{match_id}"),
                     ]
                 ]
@@ -458,7 +605,7 @@ class TelegramBot:
                 text=(
                     f"✅ Saved question #{current_count}:\n"
                     f"_{question_text}_\n\n"
-                    f"Send question #{current_count + 1} as a message, click Next to prompt next, or click Done to begin generation."
+                    f"Send question #{current_count + 1} as a message, or click Done to begin generation."
                 ),
                 reply_markup=markup,
             )
@@ -466,42 +613,19 @@ class TelegramBot:
             self.logger.exception(f"Failed to append question for match {match_id}: {e}")
             await message.reply(f"⚠️ Failed to save question: {e}")
 
-    async def handle_question_next(self, callback: CallbackQuery) -> None:
-        await callback.answer()
-        if not callback.data or not isinstance(callback.message, Message):
-            return
-        chat_id = callback.message.chat.id
-        if chat_id not in self.active_question_prompt:
-            await callback.answer("No active question prompt.", show_alert=True)
-            return
-
-        state = self.active_question_prompt[chat_id]
-        match_id = state["match_id"]
-        next_num = state["count"] + 1
-
-        markup = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="Done", callback_data=f"/gen_q:done:{match_id}")]
-            ]
-        )
-        await self._bot.send_message(
-            chat_id=chat_id,
-            text=f"📝 Ready for question #{next_num}. Please send the question as a text message, or click Done:",
-            reply_markup=markup,
-        )
-
     async def handle_question_done(self, callback: CallbackQuery) -> None:
         await callback.answer()
         if not callback.data or not isinstance(callback.message, Message):
             return
         chat_id = callback.message.chat.id
-        await self._clear_reply_markup(callback.message)
-
         match_id = callback.data.split(":")[2]
-        gen_type = "questions"
-        if chat_id in self.active_question_prompt:
-            gen_type = self.active_question_prompt[chat_id].get("gen_type", "questions")
-            del self.active_question_prompt[chat_id]
+        state = self.active_question_prompt.get(chat_id)
+        if state is None or state["match_id"] != match_id:
+            await self._bot.send_message(chat_id, "This question prompt is no longer active.")
+            return
+        await self._clear_reply_markup(callback.message)
+        gen_type = state["gen_type"]
+        del self.active_question_prompt[chat_id]
 
         await self._execute_generation(chat_id=chat_id, match_id=match_id, gen_type=gen_type)
 
@@ -656,61 +780,37 @@ class TelegramBot:
 
     async def run(self) -> None:
         self.logger.info("Starting bot polling...")
-        await self._bot.delete_webhook(drop_pending_updates=True)
-
-        monitor_task = asyncio.create_task(self._monitor_matches())
-        polling_task = asyncio.create_task(self._dp.start_polling(self._bot))
-
         try:
-            # Wait until polling stops (e.g. via SIGINT intercepted by aiogram)
-            await polling_task
-        finally:
-            monitor_task.cancel()
+            await self._bot.delete_webhook(drop_pending_updates=True)
+            await self._bot.set_my_commands(
+                [
+                    BotCommand(
+                        command="matches", description="Show matches and the next pending job"
+                    ),
+                    BotCommand(command="assessment", description="Assess the last displayed job"),
+                    BotCommand(command="menu", description="Show the main menu"),
+                    BotCommand(command="cancel", description="Cancel assessment entry"),
+                ]
+            )
             try:
-                await monitor_task
-            except asyncio.CancelledError:
-                pass
+                await self._send_menu(self.chat_id)
+                await self._show_next_job()
+            except Exception:
+                self.logger.exception("Could not display the startup match")
+            await self._dp.start_polling(self._bot)
+        finally:
             await self.stop()
-
-    async def _monitor_matches(self) -> None:
-        try:
-            while True:
-                res = await self.matching_engine.get_matching_count()
-                await self._bot.send_message(
-                    chat_id=self.chat_id,
-                    text=(
-                        f"Your matches are ready:\n"
-                        f"SUITABLE: {res.get('SUITABLE', 0)}\n"
-                        f"STRETCH: {res.get('STRETCH', 0)}\n"
-                        f"RUNWAY: {res.get('RUNWAY', 0)}"
-                    ),
-                    reply_markup=InlineKeyboardMarkup(
-                        inline_keyboard=[
-                            [
-                                InlineKeyboardButton(
-                                    text="Show?",
-                                    callback_data="/next",
-                                ),
-                            ]
-                        ]
-                    ),
-                )
-                await asyncio.sleep(60000)
-        except asyncio.CancelledError:
-            self.logger.info("Match monitor background task cancelled.")
-            raise
 
     async def stop(self) -> None:
         await self._bot.session.close()
 
-    def _get_start_markup(self) -> InlineKeyboardMarkup:
-        return InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="Check the repository!",
-                        url="https://github.com/Developer-dreamer/dorker",
-                    ),
-                ]
-            ]
+    def _get_start_markup(self) -> ReplyKeyboardMarkup:
+        return ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text=MATCHES_BUTTON), KeyboardButton(text=ASSESSMENT_BUTTON)],
+                [KeyboardButton(text=MENU_BUTTON)],
+            ],
+            resize_keyboard=True,
+            is_persistent=True,
+            input_field_placeholder="Choose an action or type a message",
         )
