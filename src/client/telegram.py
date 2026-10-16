@@ -26,7 +26,7 @@ from src.shared.models import RequestedGeneration
 
 CHAT_ID = 975840884
 MATCHES_BUTTON = "🔎 Matches"
-ASSESSMENT_BUTTON = "✍️ Assessment"
+REPORT_BUTTON = "✍️ Report"
 MENU_BUTTON = "🏠 Menu"
 DISCUSSION_BUTTONS = {
     "📎 Context": "/context",
@@ -53,7 +53,7 @@ class TelegramBot:
         self.discussion = discussion
         self.chat_id = chat_id
         self.current_match: dict[int, uuid.UUID] = {}
-        self.active_assessment: dict[int, uuid.UUID] = {}
+        self.active_report: dict[int, tuple[uuid.UUID, str]] = {}
         self.discussion_input: dict[int, str] = {}
         self.active_discussion: dict[int, uuid.UUID] = {}
         self._chat_locks: dict[int, asyncio.Lock] = {}
@@ -82,11 +82,14 @@ class TelegramBot:
             "/next": self.handle_next,
             "/apply": self.handle_apply,
             "/ignore": self.handle_ignore,
+            "/skip": self.handle_skip,
             "/gen_q:done": self.handle_question_done,
             "/gen": self.handle_generate,
             "/applied": self.handle_did_apply,
             "/discuss": self.handle_discuss,
             "/finish": self.handle_discussion_finish,
+            "/report": self.handle_report,
+            "/report_cancel": self.handle_report_cancel,
         }
         prefix = callback.data.rsplit(":", 1)[0]
         if prefix.startswith("/applied:") or prefix.startswith("/gen:"):
@@ -98,18 +101,22 @@ class TelegramBot:
             await callback.answer("Please wait for the current request to finish.")
             return
         async with self._chat_lock(chat_id):
-            if chat_id in self.active_discussion and prefix != "/finish":
+            if chat_id in self.active_discussion and prefix not in {
+                "/finish",
+                "/report",
+                "/report_cancel",
+            }:
                 await callback.answer("Finish the current discussion first.", show_alert=True)
                 return
-            if chat_id in self.active_assessment:
-                await callback.answer("Send your assessment or use /cancel first.", show_alert=True)
+            if chat_id in self.active_report and prefix != "/report_cancel":
+                await callback.answer("Send your report or use /cancel first.", show_alert=True)
                 return
             try:
                 await handler(callback)
                 if (
                     self.discussion
                     and ":" in callback.data
-                    and prefix not in {"/discuss", "/finish"}
+                    and prefix not in {"/discuss", "/finish", "/report", "/report_cancel"}
                 ):
                     await self.discussion.record_action(
                         uuid.UUID(callback.data.rsplit(":", 1)[1]),
@@ -124,6 +131,57 @@ class TelegramBot:
                 await self._bot.send_message(
                     chat_id, "Could not complete this action. Please try again."
                 )
+
+    async def _start_report(self, chat_id: int, match_id: uuid.UUID | None = None) -> None:
+        current = self.current_match.get(chat_id)
+        if current is None or (match_id is not None and match_id != current):
+            raise ValueError("Display a current job with /matches before reporting it.")
+        job = await self.matching_engine.get_job_by_match_id(current)
+        if job is None:
+            raise ValueError("Job no longer exists.")
+        token = uuid.uuid4().hex
+        await self._bot.send_message(
+            chat_id,
+            f"Report: {job.title} ({job.company or 'Unknown company'})\n\n"
+            "What do you feel is wrong about this match?\n\n"
+            "Submitting replaces any previous report. Use Cancel or /cancel to return.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="Cancel", callback_data=f"/report_cancel:{token}")]
+                ]
+            ),
+        )
+        self.active_report[chat_id] = (current, token)
+
+    async def handle_report(self, callback: CallbackQuery) -> None:
+        await callback.answer()
+        if isinstance(callback.message, Message) and callback.data:
+            await self._start_report(
+                callback.message.chat.id, uuid.UUID(callback.data.rsplit(":", 1)[1])
+            )
+
+    async def handle_report_cancel(self, callback: CallbackQuery) -> None:
+        await callback.answer()
+        if not isinstance(callback.message, Message) or not callback.data:
+            return
+        chat_id = callback.message.chat.id
+        pending = self.active_report.get(chat_id)
+        if pending is None or pending[1] != callback.data.rsplit(":", 1)[1]:
+            return  # A stale Cancel button must not cancel a newer prompt.
+        self.active_report.pop(chat_id)
+        await self._clear_reply_markup(callback.message)
+        await self._resume_after_report(chat_id, "Report cancelled.")
+
+    async def _resume_after_report(self, chat_id: int, text: str) -> None:
+        if chat_id in self.active_discussion:
+            pending = self.discussion_input.get(chat_id)
+            text += f" Continue entering {pending}." if pending else " Continue chatting."
+            markup = self._discussion_markup()
+        else:
+            if chat_id in self.active_question_prompt:
+                text += " Continue entering application questions; use the existing Done button when finished."
+            markup = self._get_start_markup()
+        await self._bot.send_message(chat_id, text, reply_markup=markup)
 
     async def handle_discuss(self, callback: CallbackQuery) -> None:
         await callback.answer()
@@ -159,6 +217,7 @@ class TelegramBot:
                 [KeyboardButton(text=buttons[0]), KeyboardButton(text=buttons[1])],
                 [KeyboardButton(text=buttons[2]), KeyboardButton(text=buttons[3])],
                 [KeyboardButton(text=buttons[4]), KeyboardButton(text=MENU_BUTTON)],
+                [KeyboardButton(text=REPORT_BUTTON)],
             ],
             resize_keyboard=True,
             is_persistent=False,
@@ -197,7 +256,8 @@ class TelegramBot:
                             text="Prepare application", callback_data=f"/apply:{match_id}"
                         ),
                         InlineKeyboardButton(text="Ignore", callback_data=f"/ignore:{match_id}"),
-                    ]
+                    ],
+                    [InlineKeyboardButton(text="Report", callback_data=f"/report:{match_id}")],
                 ]
             ),
         )
@@ -213,37 +273,43 @@ class TelegramBot:
             text = (message.text or "").strip()
             menu_command = {
                 MATCHES_BUTTON: "/matches",
-                ASSESSMENT_BUTTON: "/assessment",
+                REPORT_BUTTON: "/report",
                 MENU_BUTTON: "/menu",
             }.get(text, text.split(maxsplit=1)[0].split("@")[0] if text else "")
-            if menu_command in {"/start", "/menu", "/matches", "/assessment", "/cancel"}:
+            if menu_command in {"/start", "/menu", "/matches", "/report", "/cancel"}:
                 try:
                     await self._handle_menu_command(message, menu_command)
+                except ValueError as error:
+                    await self._bot.send_message(message.chat.id, str(error))
                 except Exception:
                     self.logger.exception("Menu request failed")
                     await self._bot.send_message(
                         message.chat.id, "Could not complete this request. Please try again."
                     )
                 return
-            if message.chat.id in self.active_assessment:
-                if not text or text.startswith("/"):
+            if message.chat.id in self.active_report:
+                if not text or text.startswith("/") or text in DISCUSSION_BUTTONS:
                     await self._bot.send_message(
-                        message.chat.id, "Send your assessment as text, or use /cancel."
+                        message.chat.id, "Send your report as text, or use /cancel."
                     )
                     return
-                assessment_match = self.active_assessment.pop(message.chat.id)
-                self.logger.info(
-                    "Classification assessment: match=%s user=%s chat=%s text=%s",
-                    assessment_match,
-                    message.from_user.id,
-                    message.chat.id,
-                    text,
-                )
-                await self._bot.send_message(
-                    message.chat.id,
-                    "Assessment received and logged.",
-                    reply_markup=self._get_start_markup(),
-                )
+                report_match_id, _ = self.active_report[message.chat.id]
+                if self.current_match.get(message.chat.id) != report_match_id:
+                    self.active_report.pop(message.chat.id, None)
+                    await self._resume_after_report(
+                        message.chat.id, "That job is no longer current."
+                    )
+                    return
+                try:
+                    await self.matching_engine.report_match(report_match_id, text)
+                except Exception:
+                    self.logger.exception("Could not save report for match %s", report_match_id)
+                    await self._bot.send_message(
+                        message.chat.id, "Could not save your report. Send it again or use /cancel."
+                    )
+                    return
+                self.active_report.pop(message.chat.id, None)
+                await self._resume_after_report(message.chat.id, "Report saved.")
                 return
             match_id = self.active_discussion.get(message.chat.id)
             if match_id is None or self.discussion is None:
@@ -339,6 +405,13 @@ class TelegramBot:
 
     async def _handle_menu_command(self, message: Message, command: str) -> None:
         chat_id = message.chat.id
+        if command == "/cancel" and chat_id in self.active_report:
+            self.active_report.pop(chat_id)
+            await self._resume_after_report(chat_id, "Report cancelled.")
+            return
+        if chat_id in self.active_report:
+            await self._bot.send_message(chat_id, "Send your report or use /cancel first.")
+            return
         if command in {"/start", "/menu"}:
             await self._send_menu(chat_id)
             return
@@ -351,31 +424,16 @@ class TelegramBot:
                     reply_markup=self._discussion_markup(),
                 )
                 return
-            cancelled = self.active_assessment.pop(chat_id, None)
-            await self._bot.send_message(
-                chat_id,
-                "Assessment cancelled." if cancelled else "No assessment is active.",
-                reply_markup=self._get_start_markup(),
-            )
+            await self._resume_after_report(chat_id, "No report is active.")
+            return
+        if command == "/report":
+            await self._start_report(chat_id)
             return
         if chat_id in self.active_discussion:
             await self._bot.send_message(chat_id, "Finish the current discussion first.")
             return
         if chat_id in self.active_question_prompt:
             await self._bot.send_message(chat_id, "Finish entering application questions first.")
-            return
-        if chat_id in self.active_assessment:
-            await self._bot.send_message(chat_id, "Send your assessment or use /cancel first.")
-            return
-        if command == "/assessment":
-            match_id = self.current_match.get(chat_id)
-            if match_id is None:
-                await self._bot.send_message(chat_id, "Use /matches to display a job first.")
-                return
-            await self._bot.send_message(
-                chat_id, "What is incorrect with the classification?\n\nUse /cancel to exit."
-            )
-            self.active_assessment[chat_id] = match_id
             return
         counts = await self.matching_engine.get_matching_count()
         await self._bot.send_message(
@@ -396,7 +454,8 @@ class TelegramBot:
                 "/context <text> — attach context\n"
                 "/use <text> — confirm a detail for generation\n"
                 "/materials [filter] — find profile paths\n"
-                "/material <path> — include a profile block\n\n"
+                "/material <path> — include a profile block\n"
+                "/report — report the current match\n\n"
                 "Use /cancel to leave an action prompt and return to chatting.",
                 reply_markup=self._discussion_markup(),
             )
@@ -405,9 +464,9 @@ class TelegramBot:
             chat_id,
             "Dorker\n\n"
             "🔎 Matches — current counts and the next pending job\n"
-            "✍️ Assessment — feedback on the last displayed job\n"
+            "✍️ Report — flag something wrong with the current match\n"
             "🏠 Menu — show these options\n\n"
-            "Use /cancel to exit assessment entry.",
+            "Use /cancel to exit report entry.",
             reply_markup=self._get_start_markup(),
         )
 
@@ -463,6 +522,7 @@ class TelegramBot:
         markup = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
+                    InlineKeyboardButton(text="Skip", callback_data=f"/skip:{match_id}"),
                     InlineKeyboardButton(text="Ignore", callback_data=f"/ignore:{match_id}"),
                     InlineKeyboardButton(text="Apply", callback_data=f"/apply:{match_id}"),
                 ],
@@ -472,6 +532,9 @@ class TelegramBot:
                     ),
                 ],
             ]
+        )
+        markup.inline_keyboard.append(
+            [InlineKeyboardButton(text="Report", callback_data=f"/report:{match_id}")]
         )
         if self.discussion is not None:
             markup.inline_keyboard.append(
@@ -528,6 +591,19 @@ class TelegramBot:
         self.active_question_prompt.pop(callback.message.chat.id, None)
 
         await self.matching_engine.update_pipeline_status(uuid.UUID(match_id), "IGNORED")
+        self.current_match.pop(callback.message.chat.id, None)
+        await self._clear_reply_markup(callback.message)
+        await self._show_next_job()
+
+    async def handle_skip(self, callback: CallbackQuery) -> None:
+        await callback.answer()
+        if not callback.data or not isinstance(callback.message, Message):
+            return
+        match_id = callback.data.split(":")[1]
+        self.active_question_prompt.pop(callback.message.chat.id, None)
+
+        await self.matching_engine.update_pipeline_status(uuid.UUID(match_id), "SKIPPED")
+        self.current_match.pop(callback.message.chat.id, None)
         await self._clear_reply_markup(callback.message)
         await self._show_next_job()
 
@@ -774,6 +850,7 @@ class TelegramBot:
 
         status = "APPLIED" if answer == "yes" else "DECLINED"
         await self.matching_engine.update_pipeline_status(uuid.UUID(match_id), status)
+        self.current_match.pop(callback.message.chat.id, None)
 
         await self._clear_reply_markup(callback.message)
         await self._show_next_job()
@@ -787,9 +864,9 @@ class TelegramBot:
                     BotCommand(
                         command="matches", description="Show matches and the next pending job"
                     ),
-                    BotCommand(command="assessment", description="Assess the last displayed job"),
+                    BotCommand(command="report", description="Report the current match"),
                     BotCommand(command="menu", description="Show the main menu"),
-                    BotCommand(command="cancel", description="Cancel assessment entry"),
+                    BotCommand(command="cancel", description="Cancel report entry"),
                 ]
             )
             try:
@@ -807,7 +884,7 @@ class TelegramBot:
     def _get_start_markup(self) -> ReplyKeyboardMarkup:
         return ReplyKeyboardMarkup(
             keyboard=[
-                [KeyboardButton(text=MATCHES_BUTTON), KeyboardButton(text=ASSESSMENT_BUTTON)],
+                [KeyboardButton(text=MATCHES_BUTTON), KeyboardButton(text=REPORT_BUTTON)],
                 [KeyboardButton(text=MENU_BUTTON)],
             ],
             resize_keyboard=True,

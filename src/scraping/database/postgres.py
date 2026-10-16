@@ -9,7 +9,7 @@ from src.scraping.models import Job
 from src.shared.models.company import ATS, ATSCompany
 from src.shared.models.job import Job as JobDomain
 
-from .base import JobRepository, description_keys
+from .base import JobRepository, description_keys, CompanyRepository
 
 
 def _sanitize_record(record: Sequence[Any]) -> tuple[Any, ...]:
@@ -165,7 +165,7 @@ class JobRepositoryPostgres(JobRepository):
             return int(status.split()[-1]) if status else 0
 
 
-class CompanyRepositoryPostgres:
+class CompanyRepositoryPostgres(CompanyRepository):
     def __init__(self, logger: Logger, pool: Pool) -> None:
         self.logger = logger
         self.pool = pool
@@ -173,7 +173,8 @@ class CompanyRepositoryPostgres:
     async def get_tenants(self) -> List[ATS]:
         query = """
                 SELECT id, ats, tier, name, slug, url  FROM companies
-                    WHERE is_active = TRUE;
+                    WHERE is_active = TRUE
+                        AND ats = 'join_com';
                 """
 
         async with self.pool.acquire() as conn:

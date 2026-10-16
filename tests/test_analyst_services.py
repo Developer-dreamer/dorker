@@ -45,7 +45,7 @@ class AnalystServicesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(engine.classify_background.await_count, 2)
         logger.exception.assert_called_once()
 
-    async def test_telegram_runs_while_classification_is_busy_and_stop_cancels_it(self):
+    async def test_http_server_runs_while_classification_is_busy_and_stop_cancels_it(self):
         started, cancelled = asyncio.Event(), asyncio.Event()
 
         async def classify():
@@ -55,16 +55,16 @@ class AnalystServicesTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 cancelled.set()
 
-        async def telegram():
+        async def http_server():
             await started.wait()
             self.assertFalse(cancelled.is_set())
 
         engine = SimpleNamespace(classify_background=classify)
-        bot = SimpleNamespace(run=telegram)
-        await run_services(engine, bot, self.worker())
+        server = SimpleNamespace(serve=http_server)
+        await run_services(engine, server, self.worker())
         self.assertTrue(cancelled.is_set())
 
-    async def test_bot_failure_cancels_classification_and_propagates(self):
+    async def test_server_failure_cancels_classification_and_propagates(self):
         started, cancelled = asyncio.Event(), asyncio.Event()
 
         async def classify():
@@ -74,14 +74,14 @@ class AnalystServicesTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 cancelled.set()
 
-        async def telegram():
+        async def http_server():
             await started.wait()
-            raise RuntimeError("Telegram failed")
+            raise RuntimeError("HTTP server failed")
 
-        with self.assertRaisesRegex(RuntimeError, "Telegram failed"):
+        with self.assertRaisesRegex(RuntimeError, "HTTP server failed"):
             await run_services(
                 SimpleNamespace(classify_background=classify),
-                SimpleNamespace(run=telegram),
+                SimpleNamespace(serve=http_server),
                 self.worker(),
             )
         self.assertTrue(cancelled.is_set())
@@ -94,11 +94,11 @@ class AnalystServicesTests(unittest.IsolatedAsyncioTestCase):
             waiting.set()
             await asyncio.Event().wait()
 
-        async def telegram():
+        async def http_server():
             await waiting.wait()
 
         with patch("orchestration.analyst.asyncio.sleep", side_effect=interval):
-            await run_services(engine, SimpleNamespace(run=telegram), self.worker())
+            await run_services(engine, SimpleNamespace(serve=http_server), self.worker())
         engine.classify_background.assert_awaited_once()
 
     async def test_shutdown_cancels_summary_api_call_too(self):
@@ -111,12 +111,12 @@ class AnalystServicesTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 cancelled.set()
 
-        async def telegram():
+        async def http_server():
             await started.wait()
 
         await run_services(
             SimpleNamespace(classify_background=AsyncMock()),
-            SimpleNamespace(run=telegram),
+            SimpleNamespace(serve=http_server),
             SimpleNamespace(run=summaries),
         )
         self.assertTrue(cancelled.is_set())

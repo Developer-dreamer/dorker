@@ -59,6 +59,21 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
             rows = await conn.fetch(query, version_filter, limit)
         return [row["id"] for row in rows]
 
+    async def report_match(self, match_id: UUID, message: str) -> None:
+        message = message.strip()
+        if not message:
+            raise ValueError("Report message cannot be empty.")
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(
+                """UPDATE matches
+                   SET reported = TRUE, report_message = $1, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = $2""",
+                message,
+                match_id,
+            )
+        if result == "UPDATE 0":
+            raise ValueError("Match no longer exists.")
+
     async def update_summary(self, match_id: UUID, summary: str) -> None:
         async with self.pool.acquire() as conn:
             await conn.execute(
@@ -86,6 +101,14 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
                 match_id,
             )
 
+    async def get_match_debug(self, match_id: UUID) -> str | None:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT debug FROM matches WHERE id = $1", match_id)
+        if row is None:
+            raise ValueError("Match not found.")
+        debug: str | None = row["debug"]
+        return debug
+
     async def get_job_by_match_id(self, match_id: UUID) -> JobForAnalytics | None:
         query = """
                 SELECT j.id AS id,
@@ -103,6 +126,7 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
                        m.technical_capability_score,
                        m.strategic_value_score,
                        m.suitability_tier,
+                       m.pipeline_status,
                        m.job_summary,
                        m.debug,
                        m.rejection_reason
@@ -123,6 +147,7 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
                 "technical_capability_score": data["technical_capability_score"],
                 "strategic_value_score": data["strategic_value_score"],
                 "suitability_tier": data["suitability_tier"],
+                "pipeline_status": data["pipeline_status"],
                 "job_summary": data["job_summary"],
                 "debug": data["debug"],
                 "rejection_reason": data["rejection_reason"],
@@ -149,6 +174,7 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
                        m.technical_capability_score,
                        m.strategic_value_score,
                        m.suitability_tier,
+                       m.pipeline_status,
                        m.job_summary
                 FROM matches m
                          JOIN jobs j ON j.id = m.job_id
@@ -188,6 +214,7 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
                 "technical_capability_score": data["technical_capability_score"],
                 "strategic_value_score": data["strategic_value_score"],
                 "suitability_tier": data["suitability_tier"],
+                "pipeline_status": data["pipeline_status"],
                 "job_summary": data["job_summary"],
             }
             job.match = MatchedJob.model_validate(match_data)
@@ -219,6 +246,7 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
                        rm.technical_capability_score,
                        rm.strategic_value_score,
                        rm.suitability_tier,
+                       rm.pipeline_status,
                        rm.job_summary
                 FROM RankedMatches rm
                 JOIN jobs j ON j.id = rm.job_id
@@ -248,6 +276,7 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
                     "technical_capability_score": data["technical_capability_score"],
                     "strategic_value_score": data["strategic_value_score"],
                     "suitability_tier": data["suitability_tier"],
+                    "pipeline_status": data["pipeline_status"],
                     "job_summary": data["job_summary"],
                 }
                 job.match = MatchedJob.model_validate(match_data)

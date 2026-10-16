@@ -1,5 +1,8 @@
 import asyncio
 import json
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -15,7 +18,16 @@ class DiscussionRepository(Protocol):
     ) -> list[DiscussionMessage]: ...
 
 
+@dataclass
+class ReplyEvent:
+    delta: str = ""
+    answer: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
 class DiscussionModel(Protocol):
+    def stream_reply(self, messages: list[dict[str, Any]]) -> AsyncGenerator[ReplyEvent, None]: ...
+
     async def reply(self, messages: list[dict[str, Any]]) -> tuple[str, dict[str, Any]]: ...
 
 
@@ -186,6 +198,42 @@ class DiscussionService:
                 )
             )
             return answer
+
+    async def stream_send(
+        self, match_id: UUID, user_id: int, chat_id: int, text: str
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Save the user first, forward deltas, and persist only a completed answer."""
+        text = text.strip()
+        if not text or len(text) > 16000:
+            raise ValueError("Send between 1 and 16,000 characters.")
+        async with self._lock(match_id, user_id, chat_id):
+            history = await self.repository.history(match_id, user_id, chat_id)
+            self._require_open(history)
+            message = DiscussionMessage(
+                match_id=match_id, user_id=user_id, chat_id=chat_id, role="user", content=text
+            )
+            await self.repository.save(message)
+            history.append(message)
+            yield {"type": "accepted", "message_id": str(message.id)}
+            completed: ReplyEvent | None = None
+            async with aclosing(self.model.stream_reply(self._input(history))) as events:
+                async for event in events:
+                    if event.delta:
+                        yield {"type": "delta", "text": event.delta}
+                    if event.answer is not None:
+                        completed = event
+            if completed is None or not completed.answer or not completed.answer.strip():
+                raise ValueError("The reply did not complete. Your message was saved.")
+            answer = DiscussionMessage(
+                match_id=match_id,
+                user_id=user_id,
+                chat_id=chat_id,
+                role="assistant",
+                content=completed.answer,
+                metadata=completed.metadata,
+            )
+            await self.repository.save(answer)
+            yield {"type": "done", "message_id": str(answer.id), "text": answer.content}
 
     async def finish(self, match_id: UUID, user_id: int, chat_id: int) -> None:
         async with self._lock(match_id, user_id, chat_id):

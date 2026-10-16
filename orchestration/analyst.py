@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import asyncpg
-import torch
+import uvicorn
 from asyncpg import Pool
 from typesafe_sdk import AsyncTypeSafeClient
 
@@ -18,7 +18,7 @@ from src.analytics.generation.discussion_openai import OpenAIDiscussionModel
 from src.analytics.generation.summary_openai import OpenAISummaryGenerator
 from src.analytics.profile_repository_xml import ProfileRepositoryXML
 from src.analytics.summary_worker import SummaryWorker
-from src.client import TelegramBot
+from src.api import create_app
 from src.database.postgres import (
     ApplicationPacketRepositoryPostgres,
     JobFactSheetRepositoryPostgres,
@@ -41,8 +41,6 @@ PG_DSN = os.environ.get("PG_DSN", "postgresql://postgres:password@localhost:5432
 MODEL = "jev-1.13.0"
 PIPELINE_VERSION = "0.3.1"
 MIN_ACCEPTED_PIPELINE_VERSION = "0.3.0"
-
-device = "mps" if torch.backends.mps.is_available() else "cpu"
 
 
 async def define_iteration(pool: Pool) -> int:
@@ -69,14 +67,14 @@ async def classify_periodically(engine: MatchingEngine, interval_seconds: float 
 
 
 async def run_services(
-    engine: MatchingEngine, bot: TelegramBot, summary_worker: SummaryWorker
+    engine: MatchingEngine, server: uvicorn.Server, summary_worker: SummaryWorker
 ) -> None:
     tasks = [
         asyncio.create_task(classify_periodically(engine), name="classification"),
         asyncio.create_task(summary_worker.run(), name="summaries"),
     ]
     try:
-        await bot.run()
+        await server.serve()
     finally:
         for task in tasks:
             task.cancel()
@@ -124,9 +122,6 @@ async def run() -> None:
                 summary_available=summary_available,
             )
 
-            telegram_api_key = os.getenv("TELEGRAM_API_KEY")
-            if not telegram_api_key:
-                raise ValueError("TELEGRAM_API_KEY environment variable is not set")
             discussion_model = OpenAIDiscussionModel(
                 model=os.getenv("OPENAI_DISCUSSION_MODEL", "gpt-6-luna")
             )
@@ -137,24 +132,27 @@ async def run() -> None:
                 profile,
                 profile_clf,
             )
-            bot = TelegramBot(
-                logger,
-                telegram_api_key,
-                engine=engine,
-                discussion=discussion,
-                chat_id=int(os.getenv("TELEGRAM_CHAT_ID", "975840884")),
+            identity = int(os.getenv("TELEGRAM_CHAT_ID", "975840884"))
+            app = create_app(engine, discussion, user_id=identity, chat_id=identity)
+            server = uvicorn.Server(
+                uvicorn.Config(
+                    app,
+                    host="127.0.0.1",
+                    port=int(os.getenv("API_PORT", "8000")),
+                )
             )
             summary_generator = OpenAISummaryGenerator()
             summary_worker = SummaryWorker(match_repo, summary_generator, summary_available, logger)
             try:
-                await run_services(engine, bot, summary_worker)
+                await run_services(engine, server, summary_worker)
             finally:
-                await bot.stop()
+                await generator.close()
                 await discussion_model.close()
                 await summary_generator.close()
 
 
 if __name__ == "__main__":
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         format="%(asctime)s | %(levelname)-8s | %(message)s",
         level=logging.INFO,

@@ -52,6 +52,9 @@ class OpenAIClient(ApplicationGenerator[OpenAIBaseResponse]):
         with open(self.prompt_path, "r") as f:
             self.master_prompt = f.read()
 
+    async def close(self) -> None:
+        await self._client.close()
+
     async def generate_sync(
         self, request: RequestedGeneration, job: JobForAnalytics
     ) -> OpenAIBaseResponse:

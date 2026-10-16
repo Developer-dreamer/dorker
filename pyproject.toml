@@ -4,6 +4,7 @@ version = "0.2.2"
 description = "Engine to scrape and match jobs to a candidate"
 
 [project.optional-dependencies]
+api = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1"]
 dev = [
     "ruff>=0.16.0",
     "mypy>=2.3.0",

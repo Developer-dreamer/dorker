@@ -333,6 +333,7 @@ class TelegramTests(unittest.IsolatedAsyncioTestCase):
             get_matching_count=AsyncMock(return_value={"SUITABLE": 2, "STRETCH": 1}),
             append_question=AsyncMock(),
             update_pipeline_status=AsyncMock(),
+            report_match=AsyncMock(),
             generate_application_for_match=AsyncMock(return_value=ApplicationGeneratedResponse()),
         )
         self.bot = TelegramBot(
@@ -464,70 +465,143 @@ class TelegramTests(unittest.IsolatedAsyncioTestCase):
         await self.bot.handle_text(self.message("/matches"))
         self.assertNotIn(42, self.bot.current_match)
 
-    async def test_assessment_logs_once_without_saving_or_ai(self):
+    async def test_report_saves_once_without_ai_or_advancing(self):
         self.bot.current_match[42] = self.job.match.id
-        self.bot.logger = Mock()
-        await self.bot.handle_text(self.message("✍️ Assessment"))
-        self.assertIn(
-            "What is incorrect with the classification?",
-            self.bot._bot.send_message.call_args.args[1],
-        )
+        await self.bot.handle_text(self.message("✍️ Report"))
+        self.assertIn("What do you feel is wrong", self.bot._bot.send_message.call_args.args[1])
+        self.engine.report_match.assert_not_awaited()
         await self.bot.handle_text(self.message("This role requires local residency."))
-        self.bot.logger.info.assert_called_once_with(
-            "Classification assessment: match=%s user=%s chat=%s text=%s",
-            self.job.match.id,
-            42,
-            42,
-            "This role requires local residency.",
+        self.engine.report_match.assert_awaited_once_with(
+            self.job.match.id, "This role requires local residency."
         )
-        await self.bot.handle_text(self.message("Another unrelated message"))
-        self.assertEqual(self.bot.logger.info.call_count, 1)
-        self.assertNotIn(42, self.bot.active_assessment)
-        self.engine.append_question.assert_not_awaited()
+        self.assertNotIn(42, self.bot.active_report)
+        self.assertEqual(self.bot.current_match[42], self.job.match.id)
+        self.engine.get_matched_job.assert_not_awaited()
         self.engine.update_pipeline_status.assert_not_awaited()
-        self.assertEqual(self.repo.messages, [])
         self.service.model.reply.assert_not_awaited()
+        self.assertEqual(self.repo.messages, [])
 
-    async def test_assessment_requires_job_can_cancel_and_blocks_navigation(self):
-        await self.bot.handle_text(self.message("/assessment"))
-        self.assertNotIn(42, self.bot.active_assessment)
+    async def test_report_requires_current_job_and_blocks_navigation(self):
+        await self.bot.handle_text(self.message("/report"))
+        self.assertNotIn(42, self.bot.active_report)
         self.bot.current_match[42] = self.job.match.id
-        await self.bot.handle_text(self.message("/assessment"))
-        await self.bot.handle_text(self.message("/matches"))
+        await self.bot.handle_text(self.message("/report"))
+        for text in ("/matches", "/menu", "/report", "✓ Finish discussion", "/unknown", " "):
+            await self.bot.handle_text(self.message(text))
         await self.call_action(f"/ignore:{self.job.match.id}")
         self.engine.get_matching_count.assert_not_awaited()
         self.engine.update_pipeline_status.assert_not_awaited()
+        self.engine.report_match.assert_not_awaited()
         await self.bot.handle_text(self.message("/cancel"))
-        self.assertNotIn(42, self.bot.active_assessment)
+        self.assertNotIn(42, self.bot.active_report)
 
-    async def test_menu_commands_respect_active_flows_and_authorized_user(self):
-        for text in ("/start", "/matches", "/assessment", "🔎 Matches"):
-            await self.bot.handle_text(self.message(text, user_id=99))
-        self.bot._bot.send_message.assert_not_awaited()
-        self.bot.active_question_prompt[42] = {
-            "match_id": str(self.job.match.id),
-            "gen_type": "questions",
-            "count": 0,
-        }
-        for text in ("/matches", "/assessment", "🔎 Matches", "✍️ Assessment"):
-            await self.bot.handle_text(self.message(text))
-        self.engine.get_matching_count.assert_not_awaited()
+    async def test_report_failure_keeps_pending_and_retry_can_save(self):
+        self.bot.current_match[42] = self.job.match.id
+        await self.bot.handle_text(self.message("/report"))
+        self.engine.report_match.side_effect = RuntimeError("DB unavailable")
+        self.bot.logger = Mock()
+        await self.bot.handle_text(self.message("Wrong tier"))
+        self.assertIn(42, self.bot.active_report)
+        self.engine.report_match.side_effect = None
+        await self.bot.handle_text(self.message("Wrong tier"))
+        self.assertNotIn(42, self.bot.active_report)
+        self.assertEqual(self.engine.report_match.await_count, 2)
+
+    async def test_stale_report_and_cancel_buttons_do_not_change_current_report(self):
+        self.bot.current_match[42] = self.job.match.id
+        await self.call_action(f"/report:{uuid4()}")
+        self.assertNotIn(42, self.bot.active_report)
+        await self.call_action(f"/report:{self.job.match.id}")
+        _, first_token = self.bot.active_report[42]
+        await self.call_action(f"/report_cancel:{first_token}")
+        self.assertNotIn(42, self.bot.active_report)
+        await self.bot.handle_text(self.message("/report"))
+        await self.call_action(f"/report_cancel:{first_token}")
+        self.assertIn(42, self.bot.active_report)
+        self.engine.report_match.assert_not_awaited()
+
+    async def test_report_during_discussion_preserves_pending_material_input(self):
+        match_id = self.job.match.id
+        self.bot.current_match[42] = match_id
+        await self.call_action(f"/discuss:{match_id}")
+        self.bot.discussion_input[42] = "/use"
+        self.service.send = AsyncMock()
+        await self.bot.handle_text(self.message("/report"))
+        await self.bot.handle_text(self.message("Technical score too low"))
+        self.service.send.assert_not_awaited()
+        self.assertEqual(self.bot.active_discussion[42], match_id)
+        self.assertEqual(self.bot.discussion_input[42], "/use")
+        await self.bot.handle_text(self.message("/report"))
+        await self.bot.handle_text(self.message("/cancel"))
+        self.assertEqual(self.bot.discussion_input[42], "/use")
+        await self.bot.handle_text(self.message("I built distributed systems"))
+        self.assertTrue(self.service.send.call_args.kwargs["confirmed"])
+        self.assertEqual(self.engine.report_match.await_count, 1)
+
+    async def test_report_during_questions_resumes_question_entry(self):
+        match_id = self.job.match.id
+        self.bot.current_match[42] = match_id
+        state = {"match_id": str(match_id), "gen_type": "questions", "count": 0}
+        self.bot.active_question_prompt[42] = state.copy()
+        await self.bot.handle_text(self.message("/report"))
+        await self.bot.handle_text(self.message("Wrong tier"))
         self.engine.append_question.assert_not_awaited()
-        self.assertNotIn(42, self.bot.active_assessment)
-        self.bot.active_question_prompt.clear()
+        self.assertEqual(self.bot.active_question_prompt[42], state)
+        with patch.object(Message, "reply", new_callable=AsyncMock):
+            await self.bot.handle_text(self.message("Why this company?"))
+        self.engine.append_question.assert_awaited_once_with(match_id, "Why this company?")
+
+    async def test_report_cannot_save_if_current_match_changed(self):
+        self.bot.current_match[42] = self.job.match.id
+        await self.bot.handle_text(self.message("/report"))
+        self.bot.current_match[42] = uuid4()
+        await self.bot.handle_text(self.message("Wrong tier"))
+        self.engine.report_match.assert_not_awaited()
+        self.assertNotIn(42, self.bot.active_report)
+
+    async def test_other_user_cannot_report_or_cancel(self):
+        self.bot.current_match[42] = self.job.match.id
+        await self.bot.handle_text(self.message("/report", user_id=99))
+        await self.call_action(f"/report:{self.job.match.id}", user_id=99)
+        self.assertNotIn(42, self.bot.active_report)
+        await self.bot.handle_text(self.message("/report"))
+        _, token = self.bot.active_report[42]
+        await self.call_action(f"/report_cancel:{token}", user_id=99)
+        self.assertIn(42, self.bot.active_report)
+        self.engine.report_match.assert_not_awaited()
+
+    async def test_report_after_discussion_and_cancelled_edit_preserves_saved_report(self):
+        match_id = self.job.match.id
+        self.bot.current_match[42] = match_id
+        await self.call_action(f"/discuss:{match_id}")
+        await self.call_action(f"/finish:{match_id}")
+        await self.call_action(f"/report:{match_id}")
+        await self.bot.handle_text(self.message("Wrong strategic assessment"))
+        await self.bot.handle_text(self.message("/report"))
+        await self.bot.handle_text(self.message("/cancel"))
+        self.engine.report_match.assert_awaited_once_with(match_id, "Wrong strategic assessment")
+        self.assertNotIn(42, self.bot.active_discussion)
+        self.assertEqual(self.bot.current_match[42], match_id)
+        await self.bot.handle_text(self.message("/report"))
+        await self.bot.handle_text(self.message("Updated feedback"))
+        self.engine.report_match.assert_awaited_with(match_id, "Updated feedback")
+
+    async def test_completed_match_is_not_reportable_when_next_card_fails(self):
+        match_id = self.job.match.id
+        self.bot.current_match[42] = match_id
+        self.engine.get_matched_job.side_effect = RuntimeError("DB unavailable")
+        self.bot.logger = Mock()
+        await self.call_action(f"/applied:yes:{match_id}")
+        self.assertNotIn(42, self.bot.current_match)
+        await self.bot.handle_text(self.message("/report"))
+        self.assertNotIn(42, self.bot.active_report)
+        self.engine.report_match.assert_not_awaited()
+
+    async def test_discussion_menu_has_report_button(self):
         self.bot.active_discussion[42] = self.job.match.id
-        await self.bot.handle_text(self.message("/assessment"))
-        self.assertNotIn(42, self.bot.active_assessment)
         await self.bot.handle_text(self.message("🏠 Menu"))
         markup = self.bot._bot.send_message.call_args.kwargs["reply_markup"]
-        self.assertEqual(
-            [[b.text for b in row] for row in markup.keyboard],
-            [
-                ["📎 Context", "✅ Use in application"],
-                ["📚 Materials", "➕ Include material"],
-                ["✓ Finish discussion", "🏠 Menu"],
-            ],
-        )
+        self.assertIn("✍️ Report", [b.text for row in markup.keyboard for b in row])
 
     async def test_startup_shows_first_match_without_counts_or_monitor(self):
         self.engine.get_matched_job.return_value = self.job
@@ -541,7 +615,7 @@ class TelegramTests(unittest.IsolatedAsyncioTestCase):
         self.bot._dp.start_polling.assert_awaited_once()
         self.bot._bot.session.close.assert_awaited_once()
         commands = self.bot._bot.set_my_commands.call_args.args[0]
-        self.assertEqual([c.command for c in commands], ["matches", "assessment", "menu", "cancel"])
+        self.assertEqual([c.command for c in commands], ["matches", "report", "menu", "cancel"])
 
     async def test_startup_match_failure_still_starts_polling(self):
         self.engine.get_matched_job.side_effect = RuntimeError("Database unavailable")
@@ -603,7 +677,7 @@ class TelegramTests(unittest.IsolatedAsyncioTestCase):
         restored_menu = self.bot._bot.send_message.call_args_list[-2].kwargs["reply_markup"]
         self.assertEqual(
             [[b.text for b in row] for row in restored_menu.keyboard],
-            [["🔎 Matches", "✍️ Assessment"], ["🏠 Menu"]],
+            [["🔎 Matches", "✍️ Report"], ["🏠 Menu"]],
         )
 
     async def test_explicit_discussion_command_overrides_pending_button(self):

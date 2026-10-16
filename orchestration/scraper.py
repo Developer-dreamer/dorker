@@ -178,12 +178,15 @@ async def get_active_ats_platforms(
     a lot of non technical jobs: nurses, drives, etc.)
     """
     db_ats = await company_repo.get_tenants()
+    print(db_ats)
     cfg_ats = cfg.keys()
 
     seen: set[ATS] = set()
     result: list[ATS] = []
 
     for ats in db_ats:
+        if ats.name == 'join_com':
+            print ("FUCKING NIGGER")
         if ats not in seen and (ats.name in cfg_ats or cfg[ats.name].get("singleton")):
             seen.add(ats)
             result.append(ats)

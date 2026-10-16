@@ -37,6 +37,8 @@ class MatchedJob(BaseModel):
                     """,
     )
 
+    pipeline_status: str = Field(default="PENDING")
+
     job_summary: Optional[str] = Field(default=None, description="Short overview of the position.")
     rejection_reason: Optional[str] = Field(
         default=None, description="Reason why a job was rejected. Omitted when NOT REJECTED."

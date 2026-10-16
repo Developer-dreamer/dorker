@@ -14,21 +14,63 @@ This app is an application engine, which is responsible for scraping public ATS 
 ## Run
 Run `docker compose -f deployment/docker-compose.yml up --build -d`. Apply migrations within `migrations/postgres` folder and run `fill_ats.py` script, to populate **companies** table. Then run command from root: `python -m orchestration.scraper`.
 
+## Local application API
+
+Accepted: `python -m orchestration.analyst` now serves FastAPI instead of Telegram polling,
+while retaining classification and summary workers. This reuses existing analytics services
+and permits explicit match-ID actions without a current-chat navigation state.
+Install API dependencies with `python -m pip install '.[api]'` (also declared in `environment.yml`).
+The server binds to `127.0.0.1:8000`; `API_PORT` overrides the port. Interactive endpoint docs:
+[Swagger UI](http://127.0.0.1:8000/docs). This is a local single-user API without authentication.
+Vite origins `http://localhost:5173` and `http://127.0.0.1:5173` are allowed.
+
+Configure the existing database and provider credentials (`PG_DSN`, `OPENAI_API_KEY`, and
+TypeSafe SDK credentials). `TELEGRAM_CHAT_ID` still identifies the owner of saved discussions;
+no Telegram token is required. Requests cannot override that identity. Existing database
+migrations remain required, including `011_extend_pipeline_status.sql` for skipping matches.
+Starting the analyst immediately runs classification and can incur provider calls.
+
+Endpoints under `/api`: match counts, next pending match (tier/offset query), match by ID,
+status updates, reports, questions, generation, profile materials, and discussion history,
+start, messages, material selection, and finish. Consult `/docs` for typed request bodies.
+Generation returns saved application outputs as JSON rather than sending Telegram files.
+Discussion history includes the selected packet and confirmed materials. Generation and
+model replies complete within the HTTP request; there is no durable task queue or retry
+idempotency. API mutations serialize per match within this process. Finished discussions
+cannot be reopened. No schema changes or employer submission were added.
+Saved generated drafts are not yet loaded by the match-detail endpoint.
+
+The frontend chat uses `POST /api/matches/{id}/discussion/stream` with `{"text": "..."}`.
+Accepted behavior: the first message automatically starts a discussion and selects profile
+materials if none exists; finished discussions remain read-only. The response is NDJSON:
+`thinking`, `evidence` (read-only material IDs), `accepted` (user message persisted),
+`delta` (text increment), then `done` (assistant message persisted), or `error` with a
+`saved` flag. The stream retains final provider output/continuation metadata. Connection
+loss cancels the provider stream; completed replies are persisted, partial replies are not.
+Reload history before retrying after an uncertain delivery. The original non-streaming
+message and material endpoints remain available to the legacy client.
+
+
+The Telegram interaction instructions below describe the retained legacy client; it is no
+longer started by the analyst entry point.
+
 ## Application discussions
 
 Apply `migrations/postgres/sql/009_discussion_messages.sql` before running the analyst bot.
 It adds one table and indexes; it does not alter existing tables or relationships.
-Configure `OPENAI_API_KEY`, `TELEGRAM_API_KEY`, and `TELEGRAM_CHAT_ID` (your private
+Apply `migrations/postgres/sql/010_match_reports.sql` before using match reports;
+it adds only the `reported` and `report_message` columns to `matches`.
+The legacy Telegram client uses `OPENAI_API_KEY`, `TELEGRAM_API_KEY`, and `TELEGRAM_CHAT_ID` (your private
 Telegram user/chat ID; defaults to the existing configured ID). `OPENAI_DISCUSSION_MODEL`
 defaults to the same `gpt-6-luna` model already used for application generation.
-Start the bot with `python -m orchestration.analyst`.
+The analyst command now starts the local API described above.
 The same process runs job classification immediately on startup and repeats it one hour
-after each cycle finishes, alongside Telegram polling. Each cycle uses the existing
+after each cycle finishes, alongside HTTP serving. Each cycle uses the existing
 eligible/unmatched-job query and processes up to 1,000 jobs. A failed cycle is logged
-and retried at the next interval; stopping the bot cancels the classification loop.
+and retried at the next interval; stopping the server cancels the classification loop.
 
 Accepted matches are saved immediately. A separate summary worker calls OpenAI
-`gpt-6-luna`, keeping Jev classification and Telegram responsive. PostgreSQL is the
+`gpt-6-luna`, keeping Jev classification and HTTP serving responsive. PostgreSQL is the
 summary queue: non-rejected matches with a NULL or blank summary at or above the
 minimum accepted pipeline version are processed on startup, on match notifications,
 and every 60 seconds. Failed or interrupted summaries remain pending for retry.
@@ -71,6 +113,24 @@ additional debug information with `/context`.
 Run the discussion tests without API calls: `python -m unittest discover -s tests`.
 
 ---
+
+
+### Match reports
+
+Use **Report** on the current job card, the main/discussion menu, or `/report`.
+The prompt identifies the job. Sending non-empty text atomically sets
+`matches.reported = TRUE` and `report_message`; a later report replaces that message.
+**Cancel** or `/cancel` abandons the pending input without changing saved feedback.
+Reporting preserves classification and application status and resumes any paused
+discussion or application-question entry. Feedback is not sent to the AI or used as
+application material. Navigation is blocked while a report is pending; old Report
+buttons cannot target a different current job, and old Cancel buttons cannot cancel
+a newer prompt. Unsubmitted prompts are discarded on restart; submitted reports persist.
+
+These are accepted behaviors for the first report implementation. Review suspected
+classification errors with `SELECT * FROM matches WHERE reported`, adding the desired
+pipeline-version filter. Unreported matches are unreviewed, not verified correct.
+
 
 ## License
 

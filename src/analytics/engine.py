@@ -82,8 +82,14 @@ class MatchingEngine(MatchingProvider):
     async def get_job_by_match_id(self, match_id: UUID) -> JobForAnalytics | None:
         return await self.match_repo.get_job_by_match_id(match_id)
 
+    async def get_match_debug(self, match_id: UUID) -> str | None:
+        return await self.match_repo.get_match_debug(match_id)
+
     async def update_pipeline_status(self, match_id: UUID, status: str) -> None:
         return await self.match_repo.update_pipeline_status(match_id, status)
+
+    async def report_match(self, match_id: UUID, message: str) -> None:
+        await self.match_repo.report_match(match_id, message)
 
     async def append_question(self, match_id: UUID, question: str) -> None:
         return await self.match_repo.append_question(match_id, question)
