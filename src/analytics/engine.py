@@ -72,7 +72,8 @@ class MatchingEngine(MatchingProvider):
         await self._classify_jobs_jev()
 
     async def get_matching_count(self) -> dict[str, int]:
-        return await self.match_repo.get_matches_stats()
+        counts = await self.match_repo.get_matches_stats(pipeline_statuses=["PENDING"])
+        return {tier.value: counts.for_tier(tier) for tier in SuitabilityTier}
 
     async def get_matched_job(
         self, tiers: List[SuitabilityTier], offset: int = 0
@@ -180,7 +181,12 @@ class MatchingEngine(MatchingProvider):
             )
 
     async def _classify_profile_jev(self) -> None:
-        jobs = await self.match_repo.get_matches(SuitabilityTier.RUNWAY)
+        jobs, _ = await self.match_repo.get_matches(
+            tiers=[SuitabilityTier.SUITABLE, SuitabilityTier.RUNWAY, SuitabilityTier.STRETCH],
+            statuses=["PENDING"],
+            limit=1000,
+            offset=0,
+        )
         self.logger.info(f"Retrieved {len(jobs)} jobs for profile classification.")
 
         for idx, job in enumerate(jobs, start=1):

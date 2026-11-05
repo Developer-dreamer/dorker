@@ -16,40 +16,62 @@ Run `docker compose -f deployment/docker-compose.yml up --build -d`. Apply migra
 
 ## Local application API
 
-Accepted: `python -m orchestration.analyst` now serves FastAPI instead of Telegram polling,
-while retaining classification and summary workers. This reuses existing analytics services
-and permits explicit match-ID actions without a current-chat navigation state.
-Install API dependencies with `python -m pip install '.[api]'` (also declared in `environment.yml`).
-The server binds to `127.0.0.1:8000`; `API_PORT` overrides the port. Interactive endpoint docs:
-[Swagger UI](http://127.0.0.1:8000/docs). This is a local single-user API without authentication.
+`python -m orchestration.analyst` serves a Litestar ASGI application through Uvicorn,
+alongside the matching and summary workers. Install API dependencies with
+`python -m pip install '.[api]'` (also declared in `environment.yml`).
+The server binds to `127.0.0.1:8000`; `API_PORT` overrides the port.
+[Swagger UI](http://127.0.0.1:8000/docs) and
+[OpenAPI JSON](http://127.0.0.1:8000/openapi.json) describe the exposed contracts.
 Vite origins `http://localhost:5173` and `http://127.0.0.1:5173` are allowed.
+CORS preflight succeeds with Litestar's native 204 response.
+This is a local single-user API without authentication.
 
-Configure the existing database and provider credentials (`PG_DSN`, `OPENAI_API_KEY`, and
-TypeSafe SDK credentials). `TELEGRAM_CHAT_ID` still identifies the owner of saved discussions;
-no Telegram token is required. Requests cannot override that identity. Existing database
-migrations remain required, including `011_extend_pipeline_status.sql` for skipping matches.
-Starting the analyst immediately runs classification and can incur provider calls.
+`src/api/app.py` registers four Litestar controller classes: Job, Match, Discussion,
+and Application. Litestar replaces FastAPI to give these classes native controller
+semantics and shared domain configuration without registration in constructors.
+Controllers declare routes on their methods; the app injects service
+protocol implementations through named dependencies. Python attributes and JSON fields
+use snake_case. The analyst constructs the persisted services in `src/api/services/`
+and injects all four into `create_app`. The existing PostgreSQL repositories provide
+pagination and domain models. Database JSON decoding/encoding stays in repositories. Match browsing
+and counts use the configured model/minimum version and latest eligible match per job;
+soft-deleted jobs/drafts are excluded. Joined company identity avoids per-job lookups.
+Calling `create_app()` directly without services still returns 503 for valid requests.
+Invalid inputs return 422. Tests use synthetic repositories and providers.
+No endpoint directly constructs analytics providers or accesses repositories.
+Routes match raw ID segments and then validate UUID/integer parameters, preserving
+422 responses for malformed IDs rather than rejecting them as route-level 404s.
 
-Endpoints under `/api`: match counts, next pending match (tier/offset query), match by ID,
-status updates, reports, questions, generation, profile materials, and discussion history,
-start, messages, material selection, and finish. Consult `/docs` for typed request bodies.
-Generation returns saved application outputs as JSON rather than sending Telegram files.
-Discussion history includes the selected packet and confirmed materials. Generation and
-model replies complete within the HTTP request; there is no durable task queue or retry
-idempotency. API mutations serialize per match within this process. Finished discussions
-cannot be reopened. No schema changes or employer submission were added.
-Saved generated drafts are not yet loaded by the match-detail endpoint.
+The defined routes provide paginated job and match browsing, match counts/debug/reports/status,
+conversation history/start/messages/stream/finish, and application draft creation,
+listing, retrieval, editing, and selective regeneration. Applications have integer IDs;
+matches have UUIDs. Generation completes within the request; there is no background
+operation or employer submission endpoint. Draft PATCH requests preserve omitted fields;
+regeneration replaces only selected sections, using the draft's saved candidate materials.
+Generation finishes before a new draft is inserted or existing sections are updated, so
+provider failures preserve saved drafts. Edits and regeneration of one application are
+serialized within this server process. Run one API worker; these locks do not coordinate
+multiple processes. Attachments and confirmed evidence are deferred.
 
-The frontend chat uses `POST /api/matches/{id}/discussion/stream` with `{"text": "..."}`.
-Accepted behavior: the first message automatically starts a discussion and selects profile
-materials if none exists; finished discussions remain read-only. The response is NDJSON:
-`thinking`, `evidence` (read-only material IDs), `accepted` (user message persisted),
-`delta` (text increment), then `done` (assistant message persisted), or `error` with a
-`saved` flag. The stream retains final provider output/continuation metadata. Connection
-loss cancels the provider stream; completed replies are persisted, partial replies are not.
-Reload history before retrying after an uncertain delivery. The original non-streaming
-message and material endpoints remain available to the legacy client.
+Discussion requires explicit start and cannot reopen after finish. The app wraps an
+injected discussion service once with `SerializedDiscussionService`: mutations of the
+same discussion wait for the current turn to complete, fail, or be cancelled. Other
+discussions and reads proceed independently. The stream owns its turn lock from
+preflight through closure, including disconnect cleanup. This coordinates requests
+in one process; it is not a database or cross-worker lock. Streaming replies use
+NDJSON: `accepted` carries the persisted user message, `delta` carries provisional text,
+and `done` carries the complete persisted assistant message. An `error` event includes
+`saved`, indicating whether the user message was persisted. Before streaming headers,
+missing matches and lifecycle conflicts return normal HTTP errors. On disconnect the
+stream iterator is closed. Reload history before retrying uncertain deliveries. History
+DTOs exclude internal initialization context, provider metadata, and identity fields.
 
+Configure existing database and provider credentials (`PG_DSN`, `OPENAI_API_KEY`, and
+TypeSafe SDK credentials) for the analyst workers and generation endpoints. Discussion
+uses `TELEGRAM_CHAT_ID` (default `975840884`) as the local user/chat identity to retain
+existing history; HTTP requests cannot override it. Existing database migrations remain
+required. Inspect the analyst entry point before running it: workers can access databases
+and external providers. The HTTP adapter tests run offline without starting those workers.
 
 The Telegram interaction instructions below describe the retained legacy client; it is no
 longer started by the analyst entry point.

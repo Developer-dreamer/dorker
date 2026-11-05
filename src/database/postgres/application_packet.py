@@ -1,18 +1,54 @@
 import json
-from typing import List
+from collections.abc import Mapping
+from typing import Any
+from uuid import UUID
 
 from asyncpg import Pool
 
+from src.database.postgres.match import _MATCH_COLUMNS, debug_from_storage, matched_job_from_join
 from src.database.protocols import ApplicationPacketRepository
 from src.shared.models import (
     ApplicationGeneratedResponse,
     ApplicationPacket,
     JobForAnalytics,
-    MatchedJob,
     Material,
     Question,
     RuntimeVersion,
 )
+
+
+def packet_from_record(row: Mapping[str, Any]) -> ApplicationPacket:
+    """Decode JSON at the storage boundary, including unanswered legacy string questions."""
+    data = {name: row[name] for name in ApplicationPacket.model_fields if name in row}
+    questions = data.get("questions") or []
+    materials = data.get("materials") or []
+    if isinstance(questions, str):
+        questions = json.loads(questions)
+    if isinstance(materials, str):
+        materials = json.loads(materials)
+    parsed = []
+    for question in questions:
+        if isinstance(question, str):
+            try:
+                decoded = json.loads(question)
+            except json.JSONDecodeError:
+                decoded = None
+            question = (
+                decoded
+                if isinstance(decoded, dict)
+                else {
+                    "question": question,
+                    "answer": None,
+                }
+            )
+        parsed.append(Question.model_validate(question))
+    data["questions"] = parsed
+    data["materials"] = [
+        Material.model_validate_json(m) if isinstance(m, str) else Material.model_validate(m)
+        for m in materials
+    ]
+    data["debug"] = debug_from_storage(data.get("debug"))
+    return ApplicationPacket.model_validate(data)
 
 
 class ApplicationPacketRepositoryPostgres(ApplicationPacketRepository):
@@ -20,160 +56,119 @@ class ApplicationPacketRepositoryPostgres(ApplicationPacketRepository):
         self.runtime_version = runtime_ver
         self.pool = pool
 
-    async def save_packet(self, packet: ApplicationPacket) -> None:
-        columns = (
-            "job_id",
-            "match_id",
-            "materials",
-            "summary",
-            "questions",
-            "debug",
-            "version",
-            "iteration",
-        )
-
-        query = f"""
-                    INSERT INTO applications ({", ".join(columns)})
-                    VALUES ({", ".join(f"${i + 1}" for i in range(len(columns)))})
-                    RETURNING id;
-                """
-
-        dumped = packet.model_dump(exclude_none=True)
-
-        if packet.summary is None:
-            dumped["summary"] = None
-        # Serialize list to JSON string for Postgres JSON/JSONB/TEXT column
-        if "materials" in dumped:
-            dumped["materials"] = json.dumps(dumped["materials"])
-        if "questions" in dumped:
-            dumped["questions"] = json.dumps(dumped["questions"])
-
-        # Optional: ensure match_id is a UUID or str if the DB driver complains
-        if "match_id" in dumped:
-            dumped["match_id"] = str(dumped["match_id"])
-
-        payload = {
-            **dumped,
-            "version": self.runtime_version.version,
-            "iteration": self.runtime_version.iteration,
-        }
-
+    async def save_packet(self, packet: ApplicationPacket) -> ApplicationPacket:
         async with self.pool.acquire() as conn:
-            row = await conn.fetchrow(query, *(payload.get(col) for col in columns))
-            if row:
-                packet.id = row["id"]
-
-    async def get_pending_packets(self, limit: int = 1) -> List[JobForAnalytics]:
-        query = """
-                SELECT j.id AS id,
-                       j.title,
-                       j.location,
-                       j.description,
-                       j.questions,
-                       j.salary_min,
-                       j.salary_max,
-                       j.salary_currency,
-
-                       m.id AS match_id,
-                       m.job_id AS match_job_id,
-                       m.technical_capability_score,
-                       m.strategic_value_score,
-                       m.suitability_tier,
-
-                       pa.id AS application_id,
-                       pa.materials
-                FROM applications pa
-                         JOIN jobs j ON j.id = pa.job_id
-                         JOIN matches m ON m.id = pa.match_id
-                WHERE pa.updated_at IS NULL
-                  AND j.deleted_at IS NULL
-                    LIMIT $1;
-                """
-
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch(query, limit)
-            jobs: List[JobForAnalytics] = []
-
-            for row in rows:
-                data = dict(row)
-
-                job = JobForAnalytics.model_validate(data)
-
-                job.match = MatchedJob(
-                    id=data["match_id"],
-                    job_id=data["match_job_id"],
-                    technical_capability_score=data["technical_capability_score"],
-                    strategic_value_score=data["strategic_value_score"],
-                    suitability_tier=data["suitability_tier"],
-                )
-
-                # Handle both JSON-parsed dicts and raw JSON strings safely
-                raw_materials = data["materials"] or []
-                if isinstance(raw_materials, str):
-                    try:
-                        raw_materials = json.loads(raw_materials)
-                    except json.JSONDecodeError:
-                        raw_materials = []
-
-                raw_questions = data["questions"] or []
-                if isinstance(raw_questions, str):
-                    try:
-                        raw_questions = json.loads(raw_questions)
-                    except json.JSONDecodeError:
-                        raw_questions = []
-
-                parsed_materials = [
-                    Material.model_validate_json(m)
-                    if isinstance(m, str)
-                    else Material.model_validate(m)
-                    for m in (raw_materials if isinstance(raw_materials, list) else [raw_materials])
-                ]
-
-                parsed_questions: list[Question] = []
-                for q in raw_questions if isinstance(raw_questions, list) else [raw_questions]:
-                    if isinstance(q, str):
-                        try:
-                            parsed_questions.append(Question.model_validate_json(q))
-                        except Exception:
-                            parsed_questions.append(Question(question=q, answer=None))
-                    elif isinstance(q, dict):
-                        parsed_questions.append(Question.model_validate(q))
-                    elif isinstance(q, Question):
-                        parsed_questions.append(q)
-
-                job.application = ApplicationPacket(
-                    id=data["application_id"],
-                    job_id=job.id,
-                    match_id=data["match_id"],
-                    materials=parsed_materials,
-                    questions=parsed_questions,
-                )
-                jobs.append(job)
-
-            return jobs
-
-    async def update_packet(self, packet_id: int, resp: ApplicationGeneratedResponse) -> None:
-        query = """
-                UPDATE applications
-                SET 
-                    cover_letter = $2,
-                    questions = $3,
-                    debug = COALESCE(debug, '{}'::jsonb) || COALESCE($4::jsonb, '{}'::jsonb),
-                    updated_at = NOW()
-                WHERE id = $1
-                """
-
-        serialized_questions = (
-            json.dumps([q.model_dump() for q in resp.questions])
-            if resp.questions is not None
-            else None
-        )
-
-        async with self.pool.acquire() as conn:
-            await conn.execute(
-                query,
-                packet_id,
-                resp.cover_letter,
-                serialized_questions,
-                resp.debug,
+            row = await conn.fetchrow(
+                """INSERT INTO applications
+                   (job_id,match_id,materials_snapshot,summary,cover_letter,questions,debug,version,iteration)
+                   SELECT $1,$2,$3::jsonb,$4,$5,$6::jsonb,$7::jsonb,$8,$9
+                   WHERE EXISTS(SELECT 1 FROM matches m JOIN jobs j ON j.id=m.job_id
+                                WHERE m.id=$2 AND j.id=$1 AND j.deleted_at IS NULL)
+                   RETURNING *""",
+                packet.job_id,
+                packet.match_id,
+                json.dumps([m.model_dump() for m in packet.materials]),
+                packet.summary,
+                packet.cover_letter,
+                json.dumps([q.model_dump() for q in packet.questions]),
+                packet.debug,
+                self.runtime_version.version,
+                self.runtime_version.iteration,
             )
+        if row is None:
+            raise LookupError("Match not found.")
+        saved = packet_from_record(row)
+        # Older generation callers use the supplied packet's assigned ID for a later update.
+        packet.id = saved.id
+        packet.created_at = saved.created_at
+        packet.updated_at = saved.updated_at
+        return saved
+
+    async def get_packet_by_id(self, packet_id: int) -> ApplicationPacket | None:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT a.* FROM applications a JOIN jobs j ON j.id=a.job_id
+                   WHERE a.id=$1 AND a.deleted_at IS NULL AND j.deleted_at IS NULL""",
+                packet_id,
+            )
+        return packet_from_record(row) if row is not None else None
+
+    async def list_packets(
+        self, match_id: UUID, limit: int, offset: int = 0
+    ) -> tuple[list[ApplicationPacket], int]:
+        async with self.pool.acquire() as conn:
+            async with conn.transaction(isolation="repeatable_read", readonly=True):
+                exists = await conn.fetchval(
+                    """SELECT EXISTS(SELECT 1 FROM matches m JOIN jobs j ON j.id=m.job_id
+                       WHERE m.id=$1 AND j.deleted_at IS NULL)""",
+                    match_id,
+                )
+                if not exists:
+                    raise LookupError("Match not found.")
+                total = await conn.fetchval(
+                    "SELECT count(*) FROM applications WHERE match_id=$1 AND deleted_at IS NULL",
+                    match_id,
+                )
+                rows = await conn.fetch(
+                    """SELECT * FROM applications WHERE match_id=$1 AND deleted_at IS NULL
+                       ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3""",
+                    match_id,
+                    limit,
+                    offset,
+                )
+        return [packet_from_record(row) for row in rows], int(total)
+
+    async def get_pending_packets(self, limit: int = 1) -> list[JobForAnalytics]:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT "
+                + _MATCH_COLUMNS
+                + """, to_jsonb(pa) AS application_packet
+                FROM applications pa JOIN jobs j ON j.id=pa.job_id
+                JOIN matches m ON m.id=pa.match_id LEFT JOIN companies c ON c.id=j.company_id
+                WHERE pa.updated_at IS NULL AND j.deleted_at IS NULL AND pa.deleted_at IS NULL
+                LIMIT $1""",
+                limit,
+            )
+        jobs = []
+        for row in rows:
+            job = matched_job_from_join(row)
+            raw = row["application_packet"]
+            job.application = packet_from_record(json.loads(raw) if isinstance(raw, str) else raw)
+            jobs.append(job)
+        return jobs
+
+    async def update_packet(
+        self, packet_id: int, resp: ApplicationGeneratedResponse
+    ) -> ApplicationPacket:
+        fields = resp.model_fields_set
+        if not fields:
+            raise ValueError("No application changes supplied.")
+        setters = []
+        args: list[Any] = [packet_id]
+        if "cover_letter" in fields:
+            args.append(resp.cover_letter)
+            setters.append(f"cover_letter=${len(args)}::text")
+        if "questions" in fields:
+            if resp.questions is None:
+                raise ValueError("Questions cannot be null.")
+            args.append(json.dumps([q.model_dump() for q in resp.questions]))
+            setters.append(f"questions=${len(args)}::jsonb")
+        if "debug" in fields:
+            args.append(resp.debug)
+            setters.append(
+                "debug=COALESCE(debug, '{}'::jsonb) || "
+                f"COALESCE(${len(args)}::jsonb, '{{}}'::jsonb)"
+            )
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "UPDATE applications a SET "
+                + ", ".join(setters)
+                + """, updated_at=CURRENT_TIMESTAMP WHERE a.id=$1 AND a.deleted_at IS NULL
+                AND EXISTS(SELECT 1 FROM jobs j WHERE j.id=a.job_id AND j.deleted_at IS NULL)
+                RETURNING a.*""",
+                *args,
+            )
+        if row is None:
+            raise LookupError("Application not found.")
+        return packet_from_record(row)

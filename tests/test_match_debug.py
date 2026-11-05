@@ -19,13 +19,14 @@ class MatchDebugTests(unittest.IsolatedAsyncioTestCase):
         repository = MatchRepositoryPostgres(SimpleNamespace(acquire=acquire), None)
         match_id = uuid4()
         self.assertEqual(await repository.get_match_debug(match_id), '{"raw": 1}')
-        connection.fetchrow.assert_awaited_once_with(
-            "SELECT debug FROM matches WHERE id = $1", match_id
-        )
+        query, saved_id = connection.fetchrow.call_args.args
+        self.assertEqual(saved_id, match_id)
+        self.assertIn("SELECT m.debug", query)
+        self.assertIn("j.deleted_at IS NULL", query)
         connection.fetchrow.return_value = {"debug": None}
         self.assertIsNone(await repository.get_match_debug(match_id))
         connection.fetchrow.return_value = None
-        with self.assertRaisesRegex(ValueError, "Match not found"):
+        with self.assertRaisesRegex(LookupError, "Match not found"):
             await repository.get_match_debug(match_id)
 
     async def test_engine_returns_repository_value(self):

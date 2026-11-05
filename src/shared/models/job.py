@@ -5,6 +5,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 from .application_packet import ApplicationPacket
+from .company import Company
 from .match import MatchedJob
 
 EmploymentType = Literal["FULL_TIME", "PART_TIME", "CONTRACT", "INTERN", "TEMPORARY"]
@@ -105,8 +106,13 @@ class JobForAnalytics(BaseModel):
 
     title: str
     location: str | None
-    company: str | None = None
+    company: Company | None = None
     url: str | None = None
+    apply_url: str | None = None
+    ats_type: str | None = None
+    employment_type: str | None = None
+    posted_at: datetime | None = None
+    fetched_at: datetime | None = None
 
     description: str
     questions: list[str] = Field(default_factory=list)

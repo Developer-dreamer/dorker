@@ -1,187 +1,203 @@
-"""HTTP adapter tests: no database, provider, or Telegram calls."""
+"""Job HTTP contracts with synthetic services; no database or provider calls."""
 
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, Mock
-from uuid import uuid4
 
-from fastapi.testclient import TestClient
+from litestar.testing import TestClient
 
-from src.analytics.discussion import DiscussionService
-from src.analytics.protocols import MatchingProvider
-from src.api import create_app
-from src.shared.models import (
-    ApplicationGeneratedResponse,
-    ApplicationPacket,
-    JobForAnalytics,
-    Material,
-)
+from src.api import JobResponse, JobService, JobsResponse, NotFoundException, create_app
 
 
 class ApiTests(unittest.TestCase):
-    def setUp(self):
-        self.match_id = uuid4()
-        self.job = JobForAnalytics(
-            id="synthetic:job",
+    def setUp(self) -> None:
+        self.job = JobResponse(
+            id="synthetic:job-123",
             title="Engineer",
-            location="Remote",
+            company="Synthetic Company",
+            location=None,
             description="Synthetic job",
+            url="https://example.com/jobs/123",
+            apply_url=None,
+            ats_type="custom",
+            employment_type=None,
+            questions=["Why this role?"],
             salary_min=None,
             salary_max=None,
             salary_currency=None,
+            posted_at=datetime(2026, 10, 23, 12, tzinfo=timezone.utc),
+            fetched_at=None,
         )
-        self.engine = Mock(spec=MatchingProvider)
-        self.engine.get_job_by_match_id = AsyncMock(return_value=self.job)
-        self.engine.get_matching_count = AsyncMock(return_value={"SUITABLE": 2})
-        self.engine.get_matched_job = AsyncMock(return_value=None)
-        self.engine.report_match = AsyncMock()
-        self.engine.append_question = AsyncMock()
-        self.engine.update_pipeline_status = AsyncMock()
-        self.engine.generate_application_for_match = AsyncMock(
-            return_value=ApplicationGeneratedResponse(cover_letter="Synthetic letter")
+        self.service = Mock(spec=JobService)
+        self.service.list_jobs = AsyncMock(
+            return_value=JobsResponse(jobs=[self.job], total=123, limit=50, offset=0)
         )
-        self.discussion = Mock(spec=DiscussionService)
-        self.discussion.repository = Mock(history=AsyncMock(return_value=[]))
-        self.discussion.profile = Mock()
-        self.material = Material(id="experience.example", text="Synthetic experience")
-        self.discussion.profile.get_materials.return_value = [self.material]
-        self.discussion.profile.get_material.return_value = self.material
-        self.packet = ApplicationPacket(job_id=self.job.id, match_id=self.match_id)
-        self.discussion.confirmed_materials = AsyncMock(return_value=[self.material])
-        self.discussion.selected_packet = AsyncMock(return_value=self.packet)
-        self.discussion.record_action = AsyncMock()
-        self.discussion.start = AsyncMock()
-        self.discussion.finish = AsyncMock()
-        self.discussion.send = AsyncMock(return_value="Synthetic answer")
-        self.client = TestClient(create_app(self.engine, self.discussion, user_id=123, chat_id=123))
-        self.url = f"/api/matches/{self.match_id}"
+        self.service.get_job_by_id = AsyncMock(return_value=self.job)
+        self.app = create_app(self.service)
+        self.client = TestClient(self.app, raise_server_exceptions=False)
 
-    def test_stream_auto_starts_and_returns_deltas_and_errors(self):
-        async def stream(*args):
-            yield {"type": "accepted", "message_id": "user-id"}
-            yield {"type": "delta", "text": "Hello"}
-            yield {"type": "done", "message_id": "answer-id", "text": "Hello"}
-
-        self.discussion.stream_send = stream
-        response = self.client.post(self.url + "/discussion/stream", json={"text": "Hi"})
+    def test_list_defaults_and_total(self) -> None:
+        response = self.client.get("/api/jobs")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("application/x-ndjson", response.headers["content-type"])
-        import json
+        body = response.json()
+        self.assertEqual(set(body), {"jobs", "total", "limit", "offset"})
+        self.assertEqual((body["total"], body["limit"], body["offset"]), (123, 50, 0))
+        self.assertEqual(body["jobs"], [self.client.get("/api/jobs/synthetic:job-123").json()])
+        self.service.list_jobs.assert_awaited_once_with(limit=50, offset=0)
 
-        events = [json.loads(line) for line in response.text.splitlines()]
+    def test_explicit_pagination_and_empty_page(self) -> None:
+        for limit, offset in [(1, 0), (75, 10), (250, 1000)]:
+            with self.subTest(limit=limit, offset=offset):
+                self.service.list_jobs.return_value = JobsResponse(
+                    jobs=[], total=123, limit=limit, offset=offset
+                )
+                response = self.client.get(f"/api/jobs?limit={limit}&offset={offset}")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    response.json(),
+                    {"jobs": [], "total": 123, "limit": limit, "offset": offset},
+                )
+                self.service.list_jobs.assert_awaited_with(limit=limit, offset=offset)
+
+    def test_invalid_pagination_never_calls_service(self) -> None:
+        for query in ["limit=0", "limit=-1", "limit=251", "limit=no", "offset=-1", "offset=1.5"]:
+            with self.subTest(query=query):
+                self.assertEqual(self.client.get(f"/api/jobs?{query}").status_code, 422)
+        self.service.list_jobs.assert_not_awaited()
+
+    def test_detail_uses_opaque_string_id_and_snake_case(self) -> None:
+        response = self.client.get("/api/jobs/synthetic:job-123")
+        self.assertEqual(response.status_code, 200)
+        self.service.get_job_by_id.assert_awaited_once_with("synthetic:job-123")
+        body = response.json()
         self.assertEqual(
-            [event["type"] for event in events],
-            ["thinking", "evidence", "accepted", "delta", "done"],
+            set(body),
+            {
+                "id",
+                "title",
+                "company",
+                "location",
+                "description",
+                "url",
+                "apply_url",
+                "ats_type",
+                "employment_type",
+                "questions",
+                "salary_min",
+                "salary_max",
+                "salary_currency",
+                "posted_at",
+                "fetched_at",
+            },
         )
-        self.discussion.start.assert_awaited_once_with(self.job, 123, 123)
-
-        async def failed(*args):
-            yield {"type": "accepted", "message_id": "user-id"}
-            raise ValueError("Reply incomplete")
-
-        self.discussion.stream_send = failed
-        response = self.client.post(self.url + "/discussion/stream", json={"text": "Hi"})
-        error = json.loads(response.text.splitlines()[-1])
-        self.assertEqual(error, {"type": "error", "detail": "Reply incomplete", "saved": True})
-
-    def test_debug_is_loaded_separately_by_match_id(self):
-        self.engine.get_match_debug = AsyncMock(return_value='{"scores": {"technical": 3}}')
-        response = self.client.get(self.url + "/debug")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"debug": '{"scores": {"technical": 3}}'})
-        self.engine.get_match_debug.assert_awaited_once_with(self.match_id)
-        self.engine.get_job_by_match_id.assert_not_awaited()
-        self.engine.get_match_debug.return_value = None
-        self.assertEqual(self.client.get(self.url + "/debug").json(), {"debug": None})
-        self.engine.get_match_debug.side_effect = ValueError("Match not found.")
-        self.assertEqual(self.client.get(self.url + "/debug").status_code, 404)
-
-    def test_navigation_and_missing_match(self):
-        self.assertEqual(self.client.get("/api/matches/counts").json(), {"SUITABLE": 2})
-        self.assertIsNone(self.client.get("/api/matches/next?offset=3&tiers=STRETCH").json())
-        self.assertEqual(self.client.get(self.url).json()["id"], self.job.id)
-        self.engine.get_job_by_match_id.return_value = None
-        self.assertEqual(self.client.get(self.url).status_code, 404)
-        self.assertEqual(self.client.post(self.url + "/generation", json={}).status_code, 404)
-        self.engine.generate_application_for_match.assert_not_awaited()
-
-    def test_validation_prevents_mutations(self):
-        for suffix, body in [
-            ("/reports", {"text": "  "}),
-            ("/questions", {"text": "x" * 16001}),
-            ("/generation", {"cover_letter": False, "questions": False}),
-            ("/discussion/messages", {"text": "hi", "user_id": 999}),
+        self.assertEqual(body["id"], self.job.id)
+        self.assertEqual(body["questions"], ["Why this role?"])
+        self.assertEqual(body["posted_at"], "2026-10-23T12:00:00Z")
+        for field in [
+            "location",
+            "apply_url",
+            "employment_type",
+            "salary_min",
+            "salary_max",
+            "salary_currency",
+            "fetched_at",
         ]:
-            self.assertEqual(self.client.post(self.url + suffix, json=body).status_code, 422)
-        self.assertEqual(
-            self.client.patch(self.url + "/status", json={"status": "BOGUS"}).status_code, 422
+            self.assertIsNone(body[field])
+        self.service.get_job_by_id.return_value = self.job.model_copy(
+            update={"company": None, "posted_at": None}
         )
-        self.assertEqual(self.client.get("/api/matches/next?offset=-1").status_code, 422)
-        self.assertEqual(self.client.get("/api/matches/not-a-uuid").status_code, 422)
-        self.engine.report_match.assert_not_awaited()
+        nullable = self.client.get("/api/jobs/synthetic:job-123").json()
+        self.assertIsNone(nullable["company"])
+        self.assertIsNone(nullable["posted_at"])
 
-    def test_generation_reuses_discussion_selection(self):
-        response = self.client.post(self.url + "/generation", json={"questions": False})
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["cover_letter"], "Synthetic letter")
-        args, kwargs = self.engine.generate_application_for_match.call_args
-        self.assertFalse(args[0].questions)
-        self.assertEqual(kwargs, {"materials": [self.material], "selected_packet": self.packet})
-        self.discussion.confirmed_materials.assert_awaited_once_with(self.match_id, 123, 123)
+    def test_missing_job(self) -> None:
+        self.service.get_job_by_id.side_effect = NotFoundException("Internal record details")
+        response = self.client.get("/api/jobs/missing")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json(), {"detail": "Job not found."})
 
-    def test_report_question_and_status(self):
-        self.assertEqual(
-            self.client.post(self.url + "/reports", json={"text": " report "}).status_code, 204
-        )
-        self.engine.report_match.assert_awaited_once_with(self.match_id, "report")
-        self.assertEqual(
-            self.client.post(self.url + "/questions", json={"text": "Why?"}).status_code, 204
-        )
-        self.engine.append_question.assert_awaited_once_with(self.match_id, "Why?")
-        self.assertEqual(
-            self.client.patch(self.url + "/status", json={"status": "APPLIED"}).status_code, 200
-        )
-        self.engine.update_pipeline_status.assert_awaited_once_with(self.match_id, "APPLIED")
+    def test_unconfigured_service(self) -> None:
+        client = TestClient(create_app())
+        for url in ["/api/jobs", "/api/jobs/synthetic:job-123"]:
+            with self.subTest(url=url):
+                response = client.get(url)
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(response.json(), {"detail": "Job service is not configured."})
+        self.assertEqual(client.get("/api/jobs?limit=251").status_code, 422)
 
-    def test_discussion_identity_history_and_conflicts(self):
-        self.assertEqual(self.client.get(self.url + "/discussion").status_code, 200)
-        self.assertEqual(self.client.post(self.url + "/discussion/start").status_code, 204)
-        self.discussion.start.assert_awaited_once_with(self.job, 123, 123)
+    def test_unexpected_errors_are_logged_and_hidden(self) -> None:
+        self.service.list_jobs.side_effect = RuntimeError("Private database details")
+        self.service.get_job_by_id.side_effect = RuntimeError("Private database details")
+        for url in ["/api/jobs", "/api/jobs/synthetic:job-123"]:
+            with self.subTest(url=url), self.assertLogs("src.api.app", level="ERROR"):
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, 500)
+                self.assertEqual(response.json(), {"detail": "Request failed. Check server logs."})
+
+    def test_openapi_routes_models_and_pagination(self) -> None:
+        schema = self.client.get("/openapi.json").json()
         self.assertEqual(
-            self.client.post(
-                self.url + "/discussion/messages", json={"text": "Hi", "confirmed": True}
-            ).status_code,
-            200,
+            set(schema["paths"]),
+            {
+                "/api/jobs",
+                "/api/jobs/scrape",
+                "/api/jobs/{id}",
+                "/api/matches",
+                "/api/matches/by-job/{job_id}",
+                "/api/matches/counts",
+                "/api/matches/{id}",
+                "/api/matches/{id}/debug",
+                "/api/matches/{id}/reports",
+                "/api/matches/{id}/status",
+                "/api/matches/{id}/discussion",
+                "/api/matches/{id}/discussion/start",
+                "/api/matches/{id}/discussion/messages",
+                "/api/matches/{id}/discussion/stream",
+                "/api/matches/{id}/discussion/finish",
+                "/api/matches/{id}/applications",
+                "/api/applications/{id}",
+                "/api/applications/{id}/generation",
+            },
         )
-        self.discussion.send.assert_awaited_with(self.match_id, 123, 123, "Hi", confirmed=True)
-        self.assertEqual(
-            self.client.post(
-                self.url + "/discussion/materials", json={"material_path": self.material.id}
-            ).status_code,
-            200,
-        )
-        self.discussion.send.assert_awaited_with(
-            self.match_id,
-            123,
-            123,
-            self.material.text,
-            confirmed=True,
-            material_path=self.material.id,
-        )
-        self.assertEqual(self.client.post(self.url + "/discussion/finish").status_code, 204)
-        self.discussion.start.side_effect = ValueError("Reopening is not supported.")
-        response = self.client.post(self.url + "/discussion/start")
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("Reopening", response.json()["detail"])
+        properties = schema["components"]["schemas"]["JobResponse"]["properties"]
+        self.assertIn("salary_min", properties)
+        self.assertIn("posted_at", properties)
+        self.assertFalse(any("-" in name for name in properties))
+        parameters = {
+            p["name"]: p["schema"] for p in schema["paths"]["/api/jobs"]["get"]["parameters"]
+        }
+        self.assertEqual(set(parameters), {"limit", "offset"})
+        self.assertEqual(parameters["limit"]["default"], 50)
+        self.assertEqual(parameters["limit"]["minimum"], 1)
+        self.assertEqual(parameters["limit"]["maximum"], 250)
+        self.assertEqual(parameters["offset"]["minimum"], 0)
+        for path in schema["paths"].values():
+            for operation in path.values():
+                self.assertIn("503", operation["responses"])
+        self.assertIn("404", schema["paths"]["/api/jobs/{id}"]["get"]["responses"])
 
-    def test_material_filter_and_cors(self):
-        self.assertEqual(len(self.client.get("/api/materials?q=EXAMPLE").json()), 1)
-        self.assertEqual(self.client.get("/api/materials?q=missing").json(), [])
-        response = self.client.options(
-            self.url,
-            headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "GET"},
-        )
-        self.assertEqual(response.headers["access-control-allow-origin"], "http://localhost:5173")
+    def test_old_routes_are_removed(self) -> None:
+        match = "/api/matches/00000000-0000-0000-0000-000000000001"
+        routes = [
+            ("POST", match + "/questions"),
+            ("POST", match + "/generation"),
+            ("GET", "/api/materials"),
+            ("POST", match + "/discussion/materials"),
+        ]
+        for method, url in routes:
+            with self.subTest(method=method, url=url):
+                self.assertEqual(self.client.request(method, url).status_code, 404)
 
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_cors_default_and_custom_origins(self) -> None:
+        for origins, origin in [
+            (None, "http://localhost:5173"),
+            (["https://example.com"], "https://example.com"),
+        ]:
+            with self.subTest(origin=origin):
+                client = TestClient(create_app(allowed_origins=origins))
+                response = client.options(
+                    "/api/jobs",
+                    headers={"Origin": origin, "Access-Control-Request-Method": "GET"},
+                )
+                self.assertEqual(response.status_code, 204)
+                self.assertEqual(response.headers["access-control-allow-origin"], origin)

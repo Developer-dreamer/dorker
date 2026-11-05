@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import json
 import os
 import uuid
 from logging import Logger
@@ -142,7 +141,7 @@ class TelegramBot:
         token = uuid.uuid4().hex
         await self._bot.send_message(
             chat_id,
-            f"Report: {job.title} ({job.company or 'Unknown company'})\n\n"
+            f"Report: {job.title} ({job.company.name if job.company else 'Unknown company'})\n\n"
             "What do you feel is wrong about this match?\n\n"
             "Submitting replaces any previous report. Use Cancel or /cancel to return.",
             reply_markup=InlineKeyboardMarkup(
@@ -495,23 +494,18 @@ class TelegramBot:
             if job.match and job.match.suitability_tier
             else "unknown"
         )
-        summary = job.match.job_summary if job.match and job.match.job_summary else ""
-        formatted_summary = summary
-        if summary.strip().startswith("{"):
-            with contextlib.suppress(Exception):
-                parsed = json.loads(summary)
-                if isinstance(parsed, dict) and "summary" in parsed:
-                    formatted_summary = (
-                        f"📝 {parsed.get('summary', '')}\n\n"
-                        f"👍 Pros:\n{parsed.get('pros', '')}\n\n"
-                        f"⚠️ Cons:\n{parsed.get('cons', '')}"
-                    )
+        analytics = job.match.job_summary if job.match else None
+        formatted_summary = (
+            f"📝 {analytics.summary}\n\n👍 Pros:\n{analytics.pros}\n\n⚠️ Cons:\n{analytics.cons}"
+            if analytics
+            else ""
+        )
 
         match_id = job.match.id if job.match else ""
 
         text = (
             f"Title: {job.title}\n"
-            f"Company: {job.company or 'Unknown'}\n"
+            f"Company: {job.company.name if job.company else 'Unknown'}\n"
             f"Location: {job.location}\n"
             f"Salary: {salary}\n"
             f"URL: {job.url}\n\n"
@@ -781,7 +775,7 @@ class TelegramBot:
     async def _send_cover_letter(self, chat_id: int, job: Any, cover_letter: str) -> None:
         from src.shared.scripts.cover_letter_file_create import generate_cover_letter
 
-        company_name = job.company or "Company"
+        company_name = job.company.name if job.company else "Company"
         safe_name = "".join(c for c in company_name if c.isalnum() or c in ("-", "_")) or "Company"
         pdf_path = os.path.join("/tmp", f"CoverLetter_{safe_name}.pdf")
 

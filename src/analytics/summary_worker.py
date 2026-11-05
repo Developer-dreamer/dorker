@@ -51,7 +51,7 @@ class SummaryWorker:
                     job is None
                     or job.match is None
                     or job.match.suitability_tier == SuitabilityTier.REJECTED
-                    or (job.match.job_summary and job.match.job_summary.strip())
+                    or (job.match.job_summary and job.match.job_summary.summary.strip())
                 ):
                     continue
                 summary = await self.generator.generate(job)

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock
 
 from src.analytics.engine import MatchingEngine
 from src.analytics.summary_worker import SummaryWorker
-from src.shared.models import MatchedJob, SuitabilityTier
+from src.shared.models import JobAnalytics, MatchedJob, SuitabilityTier
 
 
 def job(match):
@@ -21,7 +21,9 @@ class SummaryWorkerTests(unittest.IsolatedAsyncioTestCase):
             get_job_by_match_id=AsyncMock(return_value=job(self.match)),
             update_summary=AsyncMock(),
         )
-        self.generator = SimpleNamespace(generate=AsyncMock(return_value='{"summary":"Scope"}'))
+        self.generator = SimpleNamespace(
+            generate=AsyncMock(return_value=JobAnalytics(summary="Scope"))
+        )
         self.available = asyncio.Event()
         self.worker = SummaryWorker(
             self.repository, self.generator, self.available, Mock(), poll_seconds=0.01
@@ -34,7 +36,7 @@ class SummaryWorkerTests(unittest.IsolatedAsyncioTestCase):
         try:
             await asyncio.wait_for(saved.wait(), 1)
             self.repository.update_summary.assert_awaited_once_with(
-                self.match.id, '{"summary":"Scope"}'
+                self.match.id, JobAnalytics(summary="Scope")
             )
         finally:
             task.cancel()
@@ -49,17 +51,25 @@ class SummaryWorkerTests(unittest.IsolatedAsyncioTestCase):
             job(other),
             job(self.match),
         ]
-        self.generator.generate.side_effect = [RuntimeError("API down"), "second", "retried"]
+        self.generator.generate.side_effect = [
+            RuntimeError("API down"),
+            JobAnalytics(summary="second"),
+            JobAnalytics(summary="retried"),
+        ]
         self.assertFalse(await self.worker._process_pending())
-        self.repository.update_summary.assert_awaited_once_with(other.id, "second")
+        self.repository.update_summary.assert_awaited_once_with(
+            other.id, JobAnalytics(summary="second")
+        )
         self.repository.get_pending_summary_match_ids.return_value = [self.match.id]
         await self.worker._process_pending()
-        self.repository.update_summary.assert_awaited_with(self.match.id, "retried")
+        self.repository.update_summary.assert_awaited_with(
+            self.match.id, JobAnalytics(summary="retried")
+        )
 
     async def test_no_summary_for_rejected_or_already_summarized_match(self):
         for match in [
             MatchedJob(job_id="job", suitability_tier=SuitabilityTier.REJECTED),
-            MatchedJob(job_id="job", job_summary="Existing"),
+            MatchedJob(job_id="job", job_summary=JobAnalytics(summary="Existing")),
         ]:
             self.repository.get_job_by_match_id.return_value = job(match)
             await self.worker._process_pending()
@@ -105,7 +115,7 @@ class SummaryWorkerTests(unittest.IsolatedAsyncioTestCase):
         async def generate(_):
             api_started.set()
             await release_api.wait()
-            return "summary"
+            return JobAnalytics(summary="summary")
 
         async def classify(entry, _):
             if entry.id == "last":

@@ -214,7 +214,12 @@ class DiscussionService:
             )
             await self.repository.save(message)
             history.append(message)
-            yield {"type": "accepted", "message_id": str(message.id)}
+            # Include the saved record so adapters need no fallible reread before acceptance.
+            yield {
+                "type": "accepted",
+                "message_id": str(message.id),
+                "message": message,
+            }
             completed: ReplyEvent | None = None
             async with aclosing(self.model.stream_reply(self._input(history))) as events:
                 async for event in events:
@@ -233,7 +238,12 @@ class DiscussionService:
                 metadata=completed.metadata,
             )
             await self.repository.save(answer)
-            yield {"type": "done", "message_id": str(answer.id), "text": answer.content}
+            yield {
+                "type": "done",
+                "message_id": str(answer.id),
+                "text": answer.content,
+                "message": answer,
+            }
 
     async def finish(self, match_id: UUID, user_id: int, chat_id: int) -> None:
         async with self._lock(match_id, user_id, chat_id):

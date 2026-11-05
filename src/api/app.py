@@ -1,262 +1,99 @@
-"""Local single-user HTTP adapter; business rules remain in analytics services."""
+"""Compose Litestar controllers and inject services; business rules stay behind protocols."""
 
-import asyncio
-import json
 import logging
-from collections.abc import AsyncIterator
-from contextlib import aclosing, asynccontextmanager
-from typing import Annotated, Literal
-from uuid import UUID
+from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
+from litestar import Litestar, Request, Response
+from litestar.config.cors import CORSConfig
+from litestar.di import Provide
+from litestar.exceptions import HTTPException, SerializationException, ValidationException
+from litestar.openapi import OpenAPIConfig
+from litestar.openapi.plugins import SwaggerRenderPlugin
 
-from src.analytics.discussion import DiscussionService
-from src.analytics.protocols import MatchingProvider
-from src.shared.models import (
-    ApplicationGeneratedResponse,
-    ApplicationPacket,
-    JobForAnalytics,
-    Material,
-    RequestedGeneration,
-    SuitabilityTier,
+from src.api.exceptions import (
+    ApplicationGenerationException,
+    DiscussionConflictException,
+    DiscussionReplyException,
+    JobScrapeException,
 )
-from src.shared.models.discussion import DiscussionMessage
-
-Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=16000)]
-
-
-class Input(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class TextInput(Input):
-    text: Text
+from src.api.handlers.application import ApplicationHandler
+from src.api.handlers.discussion import DiscussionHandler
+from src.api.handlers.job import JobHandler
+from src.api.handlers.match import MatchHandler
+from src.api.schema import StrictModelSchemaPlugin
+from src.api.services import ApplicationService, DiscussionService, JobService, MatchService
+from src.api.services.discussion import SerializedDiscussionService
 
 
-class StatusInput(Input):
-    status: Literal["PENDING", "SKIPPED", "IGNORED", "APPLIED", "DECLINED"]
-
-
-class GenerationInput(Input):
-    cover_letter: bool = True
-    questions: bool = True
-
-    @model_validator(mode="after")
-    def require_output(self) -> "GenerationInput":
-        if not self.cover_letter and not self.questions:
-            raise ValueError("Select cover_letter, questions, or both.")
-        return self
-
-
-class MessageInput(TextInput):
-    confirmed: bool = False
-
-
-class MaterialInput(Input):
-    material_path: Text
-
-
-class DiscussionView(BaseModel):
-    messages: list[DiscussionMessage]
-    selected_packet: ApplicationPacket | None
-    confirmed_materials: list[Material]
+def api_error(request: Request[Any, Any, Any], error: Exception) -> Response[dict[str, Any]]:
+    """Keep public status/detail contracts independent of Litestar's default error envelope."""
+    if isinstance(error, ValidationException):
+        return Response({"detail": error.extra or error.detail}, status_code=422)
+    if isinstance(error, HTTPException) and isinstance(error.__cause__, SerializationException):
+        return Response({"detail": "Malformed request body."}, status_code=422)
+    if isinstance(error, HTTPException):
+        return Response(
+            {"detail": error.detail}, status_code=error.status_code, headers=error.headers
+        )
+    if isinstance(error, ApplicationGenerationException):
+        return Response({"detail": "Application generation failed."}, status_code=502)
+    if isinstance(error, JobScrapeException):
+        return Response({"detail": str(error) or "Job scraping failed."}, status_code=502)
+    if isinstance(error, DiscussionConflictException):
+        return Response({"detail": str(error)}, status_code=409)
+    if isinstance(error, DiscussionReplyException):
+        return Response({"detail": str(error), "saved": error.saved}, status_code=502)
+    logging.getLogger(__name__).error("API request failed", exc_info=error)
+    return Response({"detail": "Request failed. Check server logs."}, status_code=500)
 
 
 def create_app(
-    engine: MatchingProvider,
-    discussion: DiscussionService,
+    job_service: JobService | None = None,
     *,
-    user_id: int,
-    chat_id: int,
+    match_service: MatchService | None = None,
+    discussion_service: DiscussionService | None = None,
+    application_service: ApplicationService | None = None,
     allowed_origins: list[str] | None = None,
-) -> FastAPI:
-    """Identity is configured by the server, never supplied by HTTP clients."""
-    app = FastAPI(title="Dorker API", version="0.1.0")
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=allowed_origins or ["http://localhost:5173", "http://127.0.0.1:5173"],
-        allow_methods=["GET", "POST", "PATCH"],
-        allow_headers=["Content-Type"],
+) -> Litestar:
+    # A single decorator owns discussion locks for every request served by this app.
+    serialized_discussion = (
+        SerializedDiscussionService(discussion_service) if discussion_service is not None else None
     )
-    locks: dict[UUID, asyncio.Lock] = {}
 
-    @asynccontextmanager
-    async def mutation(match_id: UUID) -> AsyncIterator[JobForAnalytics]:
-        # Serialize API mutations per application, not per browser/chat.
-        async with locks.setdefault(match_id, asyncio.Lock()):
-            yield await get_job(match_id)
+    # Providers return already constructed services; they do not create or own their lifetimes.
+    async def provide_jobs() -> JobService | None:
+        return job_service
 
-    async def get_job(match_id: UUID) -> JobForAnalytics:
-        job = await engine.get_job_by_match_id(match_id)
-        if job is None:
-            raise HTTPException(404, "Match not found.")
-        return job
+    async def provide_matches() -> MatchService | None:
+        return match_service
 
-    @app.exception_handler(ValueError)
-    async def invalid_action(request: Request, error: ValueError) -> JSONResponse:
-        return JSONResponse(status_code=400, content={"detail": str(error)})
+    async def provide_discussion() -> DiscussionService | None:
+        return serialized_discussion
 
-    @app.exception_handler(Exception)
-    async def failed_action(request: Request, error: Exception) -> JSONResponse:
-        logging.getLogger(__name__).error("API request failed", exc_info=error)
-        return JSONResponse(
-            status_code=500, content={"detail": "Request failed. Check server logs."}
-        )
+    async def provide_applications() -> ApplicationService | None:
+        return application_service
 
-    @app.get("/api/matches/counts")
-    async def counts() -> dict[str, int]:
-        return await engine.get_matching_count()
-
-    @app.get("/api/matches/next")
-    async def next_match(
-        offset: Annotated[int, Query(ge=0)] = 0,
-        tiers: Annotated[list[SuitabilityTier] | None, Query()] = None,
-    ) -> JobForAnalytics | None:
-        return await engine.get_matched_job(
-            tiers or [SuitabilityTier.SUITABLE, SuitabilityTier.RUNWAY, SuitabilityTier.STRETCH],
-            offset,
-        )
-
-    @app.get("/api/matches/{match_id}")
-    async def match(match_id: UUID) -> JobForAnalytics:
-        return await get_job(match_id)
-
-    @app.get("/api/matches/{match_id}/debug")
-    async def debug(match_id: UUID) -> dict[str, str | None]:
-        try:
-            return {"debug": await engine.get_match_debug(match_id)}
-        except ValueError as error:
-            raise HTTPException(404, str(error)) from error
-
-    @app.patch("/api/matches/{match_id}/status")
-    async def status(match_id: UUID, body: StatusInput) -> StatusInput:
-        async with mutation(match_id):
-            await engine.update_pipeline_status(match_id, body.status)
-            await discussion.record_action(match_id, user_id, chat_id, f"status:{body.status}")
-        return body
-
-    @app.post("/api/matches/{match_id}/reports", status_code=204)
-    async def report(match_id: UUID, body: TextInput) -> None:
-        async with mutation(match_id):
-            await engine.report_match(match_id, body.text)
-
-    @app.post("/api/matches/{match_id}/questions", status_code=204)
-    async def question(match_id: UUID, body: TextInput) -> None:
-        async with mutation(match_id):
-            await engine.append_question(match_id, body.text)
-
-    @app.post("/api/matches/{match_id}/generation")
-    async def generate(match_id: UUID, body: GenerationInput) -> ApplicationGeneratedResponse:
-        async with mutation(match_id) as job:
-            materials = await discussion.confirmed_materials(match_id, user_id, chat_id)
-            packet = await discussion.selected_packet(match_id, user_id, chat_id)
-            result = await engine.generate_application_for_match(
-                RequestedGeneration(**body.model_dump()),
-                job,
-                materials=materials or None,
-                selected_packet=packet,
-            )
-            await discussion.record_action(match_id, user_id, chat_id, "generation")
-            return result
-
-    @app.get("/api/materials")
-    async def materials(q: str = "") -> list[Material]:
-        return [m for m in discussion.profile.get_materials() if q.casefold() in m.id.casefold()]
-
-    @app.get("/api/matches/{match_id}/discussion")
-    async def history(match_id: UUID) -> DiscussionView:
-        await get_job(match_id)
-        return DiscussionView(
-            messages=await discussion.repository.history(match_id, user_id, chat_id),
-            selected_packet=await discussion.selected_packet(match_id, user_id, chat_id),
-            confirmed_materials=await discussion.confirmed_materials(match_id, user_id, chat_id),
-        )
-
-    @app.post("/api/matches/{match_id}/discussion/start", status_code=204)
-    async def start(match_id: UUID) -> None:
-        async with mutation(match_id) as job:
-            await discussion.start(job, user_id, chat_id)
-
-    @app.post("/api/matches/{match_id}/discussion/messages")
-    async def send(match_id: UUID, body: MessageInput) -> dict[str, str]:
-        async with mutation(match_id):
-            answer = await discussion.send(
-                match_id,
-                user_id,
-                chat_id,
-                body.text,
-                confirmed=body.confirmed,
-            )
-            return {"answer": answer}
-
-    @app.post("/api/matches/{match_id}/discussion/stream")
-    async def stream_message(match_id: UUID, body: TextInput) -> StreamingResponse:
-        await get_job(match_id)
-
-        async def events() -> AsyncIterator[str]:
-            saved = False
-            try:
-                yield json.dumps({"type": "thinking"}) + "\n"
-                async with mutation(match_id) as job:
-                    if not await discussion.repository.history(match_id, user_id, chat_id):
-                        await discussion.start(job, user_id, chat_id)
-                    packet = await discussion.selected_packet(match_id, user_id, chat_id)
-                    confirmed = await discussion.confirmed_materials(match_id, user_id, chat_id)
-                    material_ids = list(
-                        dict.fromkeys(
-                            material.id
-                            for material in [*(packet.materials if packet else []), *confirmed]
-                        )
-                    )
-                    yield json.dumps({"type": "evidence", "ids": material_ids}) + "\n"
-                    async with aclosing(
-                        discussion.stream_send(match_id, user_id, chat_id, body.text)
-                    ) as stream:
-                        async for event in stream:
-                            if event["type"] == "accepted":
-                                saved = True
-                            yield json.dumps(event) + "\n"
-            except ValueError as error:
-                yield json.dumps({"type": "error", "detail": str(error), "saved": saved}) + "\n"
-            except Exception:
-                logging.getLogger(__name__).exception("Discussion stream failed")
-                yield (
-                    json.dumps(
-                        {
-                            "type": "error",
-                            "detail": "Reply failed. Please reload the discussion before retrying.",
-                            "saved": saved,
-                        }
-                    )
-                    + "\n"
-                )
-
-        return StreamingResponse(
-            events(),
-            media_type="application/x-ndjson",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
-
-    @app.post("/api/matches/{match_id}/discussion/materials")
-    async def select_material(match_id: UUID, body: MaterialInput) -> dict[str, str]:
-        async with mutation(match_id):
-            material = discussion.profile.get_material(body.material_path)
-            answer = await discussion.send(
-                match_id,
-                user_id,
-                chat_id,
-                material.text,
-                confirmed=True,
-                material_path=material.id,
-            )
-            return {"answer": answer}
-
-    @app.post("/api/matches/{match_id}/discussion/finish", status_code=204)
-    async def finish(match_id: UUID) -> None:
-        async with mutation(match_id):
-            await discussion.finish(match_id, user_id, chat_id)
-
-    return app
+    return Litestar(
+        # Controllers declare their own paths; construction has no router-registration side effects.
+        route_handlers=[JobHandler, MatchHandler, DiscussionHandler, ApplicationHandler],
+        dependencies={
+            "job_service": Provide(provide_jobs),
+            "match_service": Provide(provide_matches),
+            "discussion_service": Provide(provide_discussion),
+            "application_service": Provide(provide_applications),
+        },
+        exception_handlers={Exception: api_error},
+        cors_config=CORSConfig(
+            allow_origins=allowed_origins or ["http://localhost:5173", "http://127.0.0.1:5173"],
+            allow_methods=["GET", "POST", "PATCH"],
+            allow_headers=["Content-Type"],
+        ),
+        openapi_config=OpenAPIConfig(
+            title="Dorker API",
+            version="0.1.0",
+            path="/",
+            render_plugins=[SwaggerRenderPlugin(path="/docs")],
+        ),
+        plugins=[StrictModelSchemaPlugin()],
+        logging_config=None,
+    )

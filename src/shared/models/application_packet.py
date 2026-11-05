@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
@@ -73,6 +74,9 @@ class ApplicationPacket(BaseModel):
     id: int = Field(default=0, description="The application ID.")
     job_id: str = Field(description="The id of the job.")
     match_id: UUID = Field(description="The id of the match.")
+
+    created_at: datetime | None = Field(default=None, description="Absent before persistence.")
+    updated_at: datetime | None = None
 
     summary: Optional[str] = Field(
         default=None, description="The summary of job description and application process."

@@ -35,7 +35,7 @@ class MatchReportTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await repository.report_match(uuid4(), "  ")
         connection.execute.assert_not_awaited()
-        with self.assertRaisesRegex(ValueError, "no longer exists"):
+        with self.assertRaisesRegex(LookupError, "Match not found"):
             await repository.report_match(uuid4(), "Wrong tier")
 
     async def test_engine_forwards_report_to_repository(self):

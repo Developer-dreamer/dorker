@@ -5,6 +5,7 @@ from uuid import UUID
 from src.shared.models import (
     ApplicationGeneratedResponse,
     ApplicationPacket,
+    JobAnalytics,
     JobForAnalytics,
     Material,
     RequestedGeneration,
@@ -98,4 +99,4 @@ class ApplicationGenerator[T](Protocol):
 
 
 class SummaryGenerator(Protocol):
-    async def generate(self, job: JobForAnalytics) -> str: ...
+    async def generate(self, job: JobForAnalytics) -> JobAnalytics: ...

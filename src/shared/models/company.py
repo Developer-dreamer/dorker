@@ -3,6 +3,13 @@ from typing import List
 from pydantic import BaseModel, Field
 
 
+class Company(BaseModel):
+    """Company identity hydrated together with a job; no separate lookup is required."""
+
+    id: int
+    name: str
+
+
 class ATSCompany(BaseModel):
     id: int
     name: str

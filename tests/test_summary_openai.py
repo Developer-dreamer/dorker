@@ -2,21 +2,21 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from src.analytics.generation.summary import JobSummaryOutput
 from src.analytics.generation.summary_openai import OpenAISummaryGenerator
+from src.shared.models import JobAnalytics
 
 
 class SummaryOpenAITests(unittest.IsolatedAsyncioTestCase):
     async def test_uses_luna_and_only_job_context_with_existing_json_shape(self):
-        result = JobSummaryOutput(summary="Scope", pros="Opportunities", cons="Risks")
+        result = JobAnalytics(summary="Scope", pros="Opportunities", cons="Risks")
         parse = AsyncMock(return_value=SimpleNamespace(status="completed", output_parsed=result))
         client = SimpleNamespace(responses=SimpleNamespace(parse=parse), close=AsyncMock())
         generator = OpenAISummaryGenerator(client)
         job = SimpleNamespace(title="Backend", location="Remote", description="Python systems")
-        self.assertEqual(await generator.generate(job), result.model_dump_json())
+        self.assertEqual(await generator.generate(job), result)
         kwargs = parse.call_args.kwargs
         self.assertEqual(kwargs["model"], "gpt-6-luna")
-        self.assertEqual(kwargs["text_format"], JobSummaryOutput)
+        self.assertEqual(kwargs["text_format"], JobAnalytics)
         self.assertIn("Python systems", kwargs["input"])
         self.assertFalse(kwargs["store"])
         await generator.close()

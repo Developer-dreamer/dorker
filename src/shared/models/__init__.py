@@ -17,6 +17,7 @@ from src.shared.models.batch import (
 from src.shared.models.company import (
     ATS,
     ATSCompany,
+    Company,
 )
 from src.shared.models.job import (
     ATSType,
@@ -34,16 +35,16 @@ from src.shared.models.job_fact_sheet import (
     Region,
     WorkplaceType,
 )
-from src.shared.models.match import (
-    MatchedJob,
-    SuitabilityTier,
-)
+from src.shared.models.match import JobAnalytics, MatchCounts, MatchedJob, SuitabilityTier
 from src.shared.models.version import (
     RuntimeVersion,
 )
 
 __all__ = [
     "ATS",
+    "JobAnalytics",
+    "MatchCounts",
+    "Company",
     "ATSCompany",
     "ATSType",
     "ApplicationGeneratedResponse",

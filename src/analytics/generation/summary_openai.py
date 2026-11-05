@@ -1,8 +1,6 @@
 from openai import AsyncOpenAI
 
-from src.shared.models import JobForAnalytics
-
-from .summary import JobSummaryOutput
+from src.shared.models import JobAnalytics, JobForAnalytics
 
 SUMMARY_INSTRUCTIONS = """Analyze the supplied engineering job posting objectively.
 Return summary, pros, and cons, each with 2–3 substantive sentences.
@@ -19,18 +17,18 @@ class OpenAISummaryGenerator:
     def __init__(self, client: AsyncOpenAI | None = None) -> None:
         self.client = client or AsyncOpenAI(timeout=90.0, max_retries=1)
 
-    async def generate(self, job: JobForAnalytics) -> str:
+    async def generate(self, job: JobForAnalytics) -> JobAnalytics:
         response = await self.client.responses.parse(
             model="gpt-6-luna",
             instructions=SUMMARY_INSTRUCTIONS,
             input=f"Title: {job.title}\nLocation: {job.location}\nDescription:\n{job.description}",
-            text_format=JobSummaryOutput,
+            text_format=JobAnalytics,
             store=False,
             max_output_tokens=3000,
         )
         if response.status != "completed" or response.output_parsed is None:
             raise ValueError("Summary generation did not return a complete structured response.")
-        return response.output_parsed.model_dump_json()
+        return response.output_parsed
 
     async def close(self) -> None:
         await self.client.close()

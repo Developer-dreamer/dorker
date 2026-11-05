@@ -11,8 +11,6 @@ from pydantic import BaseModel
 from src.analytics.protocols import SLM
 from src.shared.models import JobForAnalytics
 
-from .summary import JobSummaryOutput as JobSummaryOutput
-
 SYSTEM_PROMPT = (
     "You are an expert technical career and engineering role analyst. "
     "Your objective is to dissect job postings for engineers and provide an objective, "
