@@ -71,12 +71,12 @@ _LATEST = """WITH ranked AS (
         PARTITION BY m.job_id ORDER BY m.iteration DESC, m.created_at DESC, m.id DESC
     ) AS rn
     FROM matches m JOIN jobs j ON j.id=m.job_id
-    WHERE m.model=$1 AND ltrim(m.version, 'v')::semver >= $2::semver
+    WHERE ltrim(m.version, 'v')::semver >= $1::semver
       AND j.deleted_at IS NULL
 ), latest AS (SELECT * FROM ranked WHERE rn=1)
 """
-_FILTERS = """WHERE ($3::text[] IS NULL OR m.suitability_tier=ANY($3))
-    AND ($4::text[] IS NULL OR m.pipeline_status::text=ANY($4))"""
+_FILTERS = """WHERE ($2::text[] IS NULL OR m.suitability_tier=ANY($2))
+    AND ($3::text[] IS NULL OR m.pipeline_status::text=ANY($3))"""
 
 
 class MatchRepositoryPostgres(MatchRepositoryProtocol):
@@ -148,9 +148,8 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
             rows = await conn.fetch(
                 _LATEST
                 + """SELECT m.suitability_tier, count(*) AS total FROM latest m
-                    WHERE ($3::text[] IS NULL OR m.pipeline_status::text=ANY($3))
+                    WHERE ($2::text[] IS NULL OR m.pipeline_status::text=ANY($2))
                     GROUP BY m.suitability_tier""",
-                self.runtime_version.model,
                 self._version,
                 pipeline_statuses,
             )
@@ -239,7 +238,6 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
         offset: int = 0,
     ) -> tuple[list[JobForAnalytics], int]:
         args = (
-            self.runtime_version.model,
             self._version,
             [t.value for t in tiers] if tiers is not None else None,
             statuses,
@@ -257,7 +255,7 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
                     JOIN jobs j ON j.id=m.job_id LEFT JOIN companies c ON c.id=j.company_id
                     """
                     + _FILTERS
-                    + " ORDER BY m.created_at DESC, m.id DESC LIMIT $5 OFFSET $6",
+                    + " ORDER BY m.created_at DESC, m.id DESC LIMIT $4 OFFSET $5",
                     *args,
                     limit,
                     offset,

@@ -1,6 +1,7 @@
 """Offline repository contracts: driver rows and stored JSON stop at this boundary."""
 
 import json
+import re
 import unittest
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -213,12 +214,18 @@ class MatchDomainRepositoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(jobs[0].company.id, 7)
         query, *args = conn.fetch.call_args.args
         count_query, *count_args = conn.fetchval.call_args.args
-        self.assertEqual(args, ["synthetic", "0.3.0", ["SUITABLE"], ["PENDING"], 10, 2])
-        self.assertEqual(args[:4], count_args)
-        for sql in [query, count_query]:
-            self.assertLess(sql.index("rn=1"), sql.index("$3::text[]"))
-            self.assertIn("m.model=$1", sql)
+        self.assertEqual(args, ["0.3.0", ["SUITABLE"], ["PENDING"], 10, 2])
+        self.assertEqual(args[:3], count_args)
+        for sql, parameters in [(query, args), (count_query, count_args)]:
+            self.assertLess(sql.index("rn=1"), sql.index("$2::text[]"))
+            self.assertNotIn("m.model=", sql)
+            self.assertIn("ltrim(m.version, 'v')::semver >= $1::semver", sql)
+            self.assertEqual(
+                {int(index) for index in re.findall(r"\$(\d+)", sql)},
+                set(range(1, len(parameters) + 1)),
+            )
             self.assertIn("m.id DESC", sql)
+        self.assertIn("LIMIT $4 OFFSET $5", query)
         conn.transaction.assert_called_once_with(isolation="repeatable_read", readonly=True)
         conn.fetch.return_value = []
         self.assertEqual(await repo.get_matches(None, None, offset=100), ([], 8))
@@ -230,8 +237,12 @@ class MatchDomainRepositoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(counts, MatchCounts(runway=3))
         self.assertEqual(counts.for_tier(SuitabilityTier.REJECTED), 0)
         query, *args = conn.fetch.call_args.args
-        self.assertLess(query.index("rn=1"), query.index("$3::text[]"))
-        self.assertEqual(args, ["synthetic", "0.3.0", ["PENDING"]])
+        self.assertLess(query.index("rn=1"), query.index("$2::text[]"))
+        self.assertEqual(args, ["0.3.0", ["PENDING"]])
+        self.assertEqual(
+            {int(index) for index in re.findall(r"\$(\d+)", query)},
+            set(range(1, len(args) + 1)),
+        )
         await repo.get_matches_stats(None)
         self.assertIsNone(conn.fetch.call_args.args[-1])
 

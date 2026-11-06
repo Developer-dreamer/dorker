@@ -10,7 +10,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import httpx
-
 from scripts import probe_openai_decisions as probe
 
 
@@ -21,9 +20,9 @@ class DecisionsProbeTests(unittest.TestCase):
         def handler(request: httpx.Request) -> httpx.Response:
             credentials.append(request.headers["Authorization"])
             if request.url.path == "/v1/models":
-                return httpx.Response(200, json={
-                    "models": [{"slug": "control-model", "visibility": "list"}]
-                })
+                return httpx.Response(
+                    200, json={"models": [{"slug": "control-model", "visibility": "list"}]}
+                )
             if request.url.path == "/v1/responses":
                 body = json.loads(request.content)
                 self.assertFalse(body["store"])
@@ -31,9 +30,11 @@ class DecisionsProbeTests(unittest.TestCase):
                 return httpx.Response(200, text='data: {"type":"response.completed"}\n\n')
             self.assertEqual(request.url.path, "/v1/decisions")
             self.assertEqual(json.loads(request.content)["input"], probe.SAMPLE)
-            body = {"answers": [{"type": "predicate", "probability": 1}]} if (
-                decisions_status == 200
-            ) else {"error": {"code": "subscription_sharing_route_not_supported"}}
+            body = (
+                {"answers": [{"type": "predicate", "probability": 1}]}
+                if (decisions_status == 200)
+                else {"error": {"code": "subscription_sharing_route_not_supported"}}
+            )
             return httpx.Response(decisions_status, json=body)
 
         client = httpx.Client(transport=httpx.MockTransport(handler))

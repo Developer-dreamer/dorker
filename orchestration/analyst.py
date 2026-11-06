@@ -47,7 +47,7 @@ LOG_PATH = ROOT / "logs" / f"analyst_{datetime.now(timezone.utc).isoformat()}.lo
 logger = logging.getLogger("analyst")
 
 PG_DSN = os.environ.get("PG_DSN", "postgresql://postgres:password@localhost:5432/dorker_db")
-MODEL = "jev-1.13.0"
+MODEL = "jev-1.14.0"
 PIPELINE_VERSION = "0.3.1"
 MIN_ACCEPTED_PIPELINE_VERSION = "0.3.0"
 
@@ -139,7 +139,7 @@ async def _run() -> None:
     profile = ProfileRepositoryXML(ROOT / "artifacts/data/prompts/profile.xml")
 
     async with asyncpg.create_pool(dsn=PG_DSN) as pool:
-        async with AsyncTypeSafeClient() as client, AsyncExitStack() as resources:
+        async with AsyncTypeSafeClient(model=MODEL) as client, AsyncExitStack() as resources:
             iteration = await define_iteration(pool) + 1
 
             runtime_version = RuntimeVersion(
