@@ -10,7 +10,10 @@ from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 from src.analytics.engine import MatchingEngine
-from src.database.postgres.application_packet import ApplicationPacketRepositoryPostgres
+from src.database.postgres.application_packet import (
+    ApplicationPacketRepositoryPostgres,
+    packet_from_record,
+)
 from src.database.postgres.job import JobRepositoryPostgres
 from src.database.postgres.match import MatchRepositoryPostgres, analytics_from_storage
 from src.shared.models import (
@@ -78,7 +81,8 @@ def packet_row():
         summary=None,
         cover_letter=" Authored ",
         questions='["Legacy question", {"question":"Modern question","answer":" Exact "}]',
-        materials='[{"id":"synthetic","text":"Candidate material"}]',
+        materials=[str(uuid4())],
+        materials_snapshot='[{"id":"synthetic","text":"Candidate material"}]',
         debug={"provider": "synthetic"},
         created_at=NOW,
         updated_at=None,
@@ -230,6 +234,26 @@ class MatchDomainRepositoryTests(unittest.IsolatedAsyncioTestCase):
         conn.fetch.return_value = []
         self.assertEqual(await repo.get_matches(None, None, offset=100), ([], 8))
 
+    async def test_application_matches_require_packet_for_pending_or_active_pipeline_status(self):
+        conn = connection(rows=[joined_row()], scalar=4)
+        repo = MatchRepositoryPostgres(pool(conn), RUNTIME)
+        jobs, total = await repo.get_application_matches(
+            [SuitabilityTier.SUITABLE], ["PENDING", "APPLIED"], limit=20, offset=0
+        )
+        self.assertEqual(total, 4)
+        self.assertEqual(len(jobs), 1)
+        query, *args = conn.fetch.call_args.args
+        count_query, *count_args = conn.fetchval.call_args.args
+        self.assertEqual(args, ["0.3.0", ["SUITABLE"], ["PENDING", "APPLIED"], 20, 0])
+        self.assertEqual(args[:3], count_args)
+        for sql in (query, count_query):
+            self.assertLess(sql.index("rn=1"), sql.index("$2::text[]"))
+            self.assertIn("FROM applications a WHERE a.match_id=m.id AND a.deleted_at IS NULL", sql)
+            self.assertIn("m.pipeline_status='PENDING' AND EXISTS", sql)
+            self.assertIn("'APPLIED', 'INTERVIEWING', 'OFFER'", sql)
+            self.assertNotIn("'SKIPPED'", sql)
+            self.assertNotIn("'IGNORED'", sql)
+
     async def test_counts_reuse_latest_selection_and_return_zero_tiers(self):
         conn = connection(rows=[dict(suitability_tier="RUNWAY", total=3)])
         repo = MatchRepositoryPostgres(pool(conn), RUNTIME)
@@ -283,6 +307,18 @@ class MatchDomainRepositoryTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ApplicationDomainRepositoryTests(unittest.IsolatedAsyncioTestCase):
+    def test_snapshot_is_authoritative_for_string_and_decoded_json(self):
+        row = packet_row()
+        row["materials"] = [uuid4()]
+        expected = [Material(id="synthetic", text="Candidate material")]
+        self.assertEqual(packet_from_record(row).materials, expected)
+        row["materials_snapshot"] = json.loads(row["materials_snapshot"])
+        self.assertEqual(packet_from_record(row).materials, expected)
+        row["materials_snapshot"] = [json.dumps(row["materials_snapshot"][0])]
+        self.assertEqual(packet_from_record(row).materials, expected)
+        row["materials_snapshot"] = []
+        self.assertEqual(packet_from_record(row).materials, [])
+
     async def test_lookup_decodes_materials_questions_and_timestamps(self):
         conn = connection(row=packet_row())
         repo = ApplicationPacketRepositoryPostgres(pool(conn), RUNTIME)
@@ -315,7 +351,9 @@ class ApplicationDomainRepositoryTests(unittest.IsolatedAsyncioTestCase):
         saved = await repo.save_packet(packet)
         self.assertEqual(packet.id, saved.id)
         self.assertEqual(saved.created_at, NOW)
+        self.assertEqual(saved.materials, [Material(id="synthetic", text="Candidate material")])
         query, *args = conn.fetchrow.call_args.args
+        self.assertIn("materials_snapshot", query)
         self.assertIn("cover_letter", query)
         self.assertIn("RETURNING *", query)
         self.assertEqual(args[4], " Completed ")

@@ -18,11 +18,15 @@ from src.api.exceptions import (
 )
 from src.api.handlers.application import ApplicationHandler
 from src.api.handlers.discussion import DiscussionHandler
+from src.api.handlers.evidence import EvidenceHandler
 from src.api.handlers.job import JobHandler
 from src.api.handlers.match import MatchHandler
+from src.api.handlers.profile import ProfileHandler
 from src.api.schema import StrictModelSchemaPlugin
 from src.api.services import ApplicationService, DiscussionService, JobService, MatchService
 from src.api.services.discussion import SerializedDiscussionService
+from src.api.services.evidence import EvidenceServiceProtocol
+from src.api.services.profile import ProfileServiceProtocol
 
 
 def api_error(request: Request[Any, Any, Any], error: Exception) -> Response[dict[str, Any]]:
@@ -53,6 +57,8 @@ def create_app(
     match_service: MatchService | None = None,
     discussion_service: DiscussionService | None = None,
     application_service: ApplicationService | None = None,
+    evidence_service: EvidenceServiceProtocol | None = None,
+    profile_service: ProfileServiceProtocol | None = None,
     allowed_origins: list[str] | None = None,
 ) -> Litestar:
     # A single decorator owns discussion locks for every request served by this app.
@@ -73,19 +79,34 @@ def create_app(
     async def provide_applications() -> ApplicationService | None:
         return application_service
 
+    async def provide_evidence() -> EvidenceServiceProtocol | None:
+        return evidence_service
+
+    async def provide_profile() -> ProfileServiceProtocol | None:
+        return profile_service
+
     return Litestar(
         # Controllers declare their own paths; construction has no router-registration side effects.
-        route_handlers=[JobHandler, MatchHandler, DiscussionHandler, ApplicationHandler],
+        route_handlers=[
+            JobHandler,
+            MatchHandler,
+            DiscussionHandler,
+            ApplicationHandler,
+            EvidenceHandler,
+            ProfileHandler,
+        ],
         dependencies={
             "job_service": Provide(provide_jobs),
             "match_service": Provide(provide_matches),
             "discussion_service": Provide(provide_discussion),
             "application_service": Provide(provide_applications),
+            "evidence_service": Provide(provide_evidence),
+            "profile_service": Provide(provide_profile),
         },
         exception_handlers={Exception: api_error},
         cors_config=CORSConfig(
             allow_origins=allowed_origins or ["http://localhost:5173", "http://127.0.0.1:5173"],
-            allow_methods=["GET", "POST", "PATCH"],
+            allow_methods=["GET", "POST", "PATCH", "DELETE"],
             allow_headers=["Content-Type"],
         ),
         openapi_config=OpenAPIConfig(

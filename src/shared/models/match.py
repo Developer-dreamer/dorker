@@ -58,6 +58,10 @@ class MatchedJob(BaseModel):
     created_at: datetime | None = Field(
         default=None, description="Database creation time; absent on unsaved classifier results."
     )
+    updated_at: datetime | None = Field(
+        default=None,
+        description="Database modification time; absent on unsaved classifier results.",
+    )
 
     job_summary: Optional[JobAnalytics] = Field(
         default=None, description="Short overview of the position."

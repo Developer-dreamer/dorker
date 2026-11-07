@@ -76,6 +76,24 @@ and external providers. The HTTP adapter tests run offline without starting thos
 The Telegram interaction instructions below describe the retained legacy client; it is no
 longer started by the analyst entry point.
 
+## Application profile
+
+Profile provides four independently editable sections backed by `/api/profile`: contact,
+work preferences, career records, and labeled resume links. Career records can attach
+Dossier evidence or create it atomically. See [the profile contract](docs/profile-backend.md).
+Migration 012 has been expanded for review and has not been applied. No XML or browser-local
+profile import runs automatically, and existing application storage remains on snapshots.
+
+## Evidence library backend
+
+The analyst injects an owner-scoped evidence service into the API. It provides profile
+read/edit, path-based folder creation/deletion, evidence CRUD, matching-checkbox
+configuration, and per-match evidence selection. See [the backend contract](docs/evidence-backend.md)
+for routes and request bodies, and [database preparation](docs/evidence-database-migration.md)
+for the required migration/cleanup. No migration runs on startup. The library API is
+persisted, but XML import and switching matching/discussion/generation to these selections
+remain the next integration slice.
+
 ## Application discussions
 
 Apply `migrations/postgres/sql/009_discussion_messages.sql` before running the analyst bot.

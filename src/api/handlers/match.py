@@ -44,6 +44,20 @@ class MatchHandler(Controller):
             limit=limit, offset=offset, tiers=tiers, pipeline_status=pipeline_status
         )
 
+    @get("/applications", responses=responses)
+    async def list_application_matches(
+        self,
+        match_service: NamedDependency[SkipValidation[MatchService | None]],
+        limit: Annotated[int, QueryParameter(ge=1, le=250)] = 50,
+        offset: Annotated[int, QueryParameter(ge=0)] = 0,
+        tiers: FromQuery[list[SuitabilityTier] | None] = None,
+        pipeline_status: FromQuery[list[PipelineStatus] | None] = None,
+    ) -> MatchesResponse:
+        match_service = require_service(match_service, "Match")
+        return await match_service.list_application_matches(
+            limit=limit, offset=offset, tiers=tiers, pipeline_status=pipeline_status
+        )
+
     @get("/counts", responses=responses)
     async def get_counts(
         self,

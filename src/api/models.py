@@ -64,6 +64,7 @@ class MatchResponse(BaseModel):
     analytics: MatchAnalytics | None
     rejection_reason: str | None
     created_at: datetime
+    updated_at: datetime | None = None
 
 
 class MatchesResponse(BaseModel):

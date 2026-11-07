@@ -151,7 +151,7 @@ Here are top practices ordered from the most to the least preferable. They are b
 | Location                      | Responsibility                                                                      |
 |-------------------------------|-------------------------------------------------------------------------------------|
 | `orchestration/scraper.py`    | Configures and runs scraping, persistence, CLI progress, and telemetry              |
-| `orchestration/normalizer.py` | Normalizes stored job descriptions in PostgreSQL                                    |
+| `shared/scripts/normalizer.py` | Normalizes stored job descriptions in PostgreSQL                                    |
 | `orchestration/analyst.py`    | Wires analytics, model providers, discussion, repositories, and Telegram            |
 | `src/scraping/`               | ATS adapters, fetching, scraping pipeline, configuration, and scraping repositories |
 | `src/analytics/`              | Matching, classification, profile materials, generation, and discussion             |

@@ -19,6 +19,15 @@ from src.shared.models.company import (
     ATSCompany,
     Company,
 )
+from src.shared.models.evidence import (
+    Evidence,
+    EvidenceDraft,
+    EvidenceFolder,
+    EvidenceUpdate,
+    MatchEvidence,
+    MatchEvidenceUpdate,
+    NewEvidence,
+)
 from src.shared.models.job import (
     ATSType,
     EmploymentType,
@@ -36,6 +45,21 @@ from src.shared.models.job_fact_sheet import (
     WorkplaceType,
 )
 from src.shared.models.match import JobAnalytics, MatchCounts, MatchedJob, SuitabilityTier
+from src.shared.models.profile import (
+    CareerCollection,
+    CareerRecordReference,
+    CompensationExpectation,
+    EducationEntry,
+    EmploymentEntry,
+    EvidenceLinks,
+    LanguageEntry,
+    ProfileDetails,
+    ProfileOptions,
+    ProfileUpdate,
+    ResumeEntry,
+    UserProfile,
+    WorkAuthorization,
+)
 from src.shared.models.version import (
     RuntimeVersion,
 )
@@ -73,4 +97,24 @@ __all__ = [
     "RuntimeVersion",
     "SuitabilityTier",
     "WorkplaceType",
+    "Evidence",
+    "EvidenceDraft",
+    "EvidenceFolder",
+    "EvidenceUpdate",
+    "MatchEvidence",
+    "MatchEvidenceUpdate",
+    "NewEvidence",
+    "CareerCollection",
+    "CareerRecordReference",
+    "CompensationExpectation",
+    "EducationEntry",
+    "EmploymentEntry",
+    "EvidenceLinks",
+    "LanguageEntry",
+    "ProfileDetails",
+    "ProfileOptions",
+    "ProfileUpdate",
+    "ResumeEntry",
+    "UserProfile",
+    "WorkAuthorization",
 ]

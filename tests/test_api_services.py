@@ -136,6 +136,30 @@ class MemoryStore:
         )
         return jobs[offset : offset + limit], len(jobs)
 
+    async def get_application_matches(self, tiers, statuses, limit=50, offset=0):
+        self.last_filters = (tiers, statuses)
+        has_app = any(p.match_id == self.match_id for p in self.applications.values())
+        qualifies = (self.match.pipeline_status == "PENDING" and has_app) or (
+            self.match.pipeline_status
+            in {
+                "APPLIED",
+                "INTERVIEWING",
+                "OFFER",
+                "GHOSTED",
+                "REJECTED_EARLY",
+                "REJECTED_LATE",
+                "DECLINED",
+            }
+        )
+        jobs = (
+            [await self.get_job_by_match_id(self.match_id)]
+            if qualifies
+            and (tiers is None or self.match.suitability_tier in tiers)
+            and (statuses is None or self.match.pipeline_status in statuses)
+            else []
+        )
+        return jobs[offset : offset + limit], len(jobs)
+
     async def get_matches_stats(self, pipeline_statuses):
         return MatchCounts(
             suitable=int(
@@ -334,6 +358,8 @@ class ServiceIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(page["total"], 0)
         self.assertEqual(self.store.last_filters, (["RUNWAY"], ["APPLIED"]))
         self.assertEqual((await self.client.get("/api/matches")).json()["total"], 1)
+        # Pending match without an application packet does not qualify as an application yet:
+        self.assertEqual((await self.client.get("/api/matches/applications")).json()["total"], 0)
         counts = (await self.client.get("/api/matches/counts")).json()
         self.assertEqual(len(counts), 4)
         self.assertEqual(counts["SUITABLE"], 1)
@@ -351,6 +377,8 @@ class ServiceIntegrationTests(unittest.IsolatedAsyncioTestCase):
             ).status_code,
             200,
         )
+        # Once status is APPLIED, it qualifies as an application even without an application packet:
+        self.assertEqual((await self.client.get("/api/matches/applications")).json()["total"], 1)
         counts = (await self.client.get("/api/matches/counts?pipeline_status=PENDING")).json()
         self.assertEqual(sum(counts.values()), 0)
         self.assertEqual((await self.client.get(f"/api/matches/{uuid4()}")).status_code, 404)
@@ -493,6 +521,8 @@ class ServiceIntegrationTests(unittest.IsolatedAsyncioTestCase):
         first = await self.create(
             generate_cover_letter=True, generate_answers=True, questions=[" Why? "]
         )
+        # Once an application packet exists, the PENDING match appears in /api/matches/applications:
+        self.assertEqual((await self.client.get("/api/matches/applications")).json()["total"], 1)
         second = await self.create()
         self.assertNotEqual(first["id"], second["id"])
         self.assertEqual(first["questions"], [{"question": "Why?", "answer": " Answer "}])

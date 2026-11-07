@@ -50,6 +50,7 @@ def matched_job_from_record(row: Mapping[str, Any]) -> MatchedJob:
         rejection_reason=row["rejection_reason"],
         debug=debug_from_storage(row["match_debug"]),
         created_at=row["match_created_at"],
+        updated_at=row.get("match_updated_at") or row["match_created_at"],
     )
 
 
@@ -63,7 +64,8 @@ def matched_job_from_join(row: Mapping[str, Any]) -> JobForAnalytics:
 _MATCH_COLUMNS = """j.*, c.name AS company_name,
     m.id AS match_id, m.job_id AS match_job_id, m.technical_capability_score,
     m.strategic_value_score, m.suitability_tier, m.pipeline_status, m.job_summary,
-    m.rejection_reason, m.debug AS match_debug, m.created_at AS match_created_at"""
+    m.rejection_reason, m.debug AS match_debug, m.created_at AS match_created_at,
+    m.updated_at AS match_updated_at"""
 
 # Rank before applying user filters: older matches must never replace a filtered-out latest one.
 _LATEST = """WITH ranked AS (
@@ -77,6 +79,19 @@ _LATEST = """WITH ranked AS (
 """
 _FILTERS = """WHERE ($2::text[] IS NULL OR m.suitability_tier=ANY($2))
     AND ($3::text[] IS NULL OR m.pipeline_status::text=ANY($3))"""
+_APPLICATION_FILTERS = (
+    _FILTERS
+    + """
+    AND (
+        (m.pipeline_status='PENDING' AND EXISTS (
+            SELECT 1 FROM applications a WHERE a.match_id=m.id AND a.deleted_at IS NULL
+        ))
+        OR m.pipeline_status IN (
+            'APPLIED', 'INTERVIEWING', 'OFFER',
+            'GHOSTED', 'REJECTED_EARLY', 'REJECTED_LATE', 'DECLINED'
+        )
+    )"""
+)
 
 
 class MatchRepositoryPostgres(MatchRepositoryProtocol):
@@ -256,6 +271,38 @@ class MatchRepositoryPostgres(MatchRepositoryProtocol):
                     """
                     + _FILTERS
                     + " ORDER BY m.created_at DESC, m.id DESC LIMIT $4 OFFSET $5",
+                    *args,
+                    limit,
+                    offset,
+                )
+        return [matched_job_from_join(row) for row in rows], int(total)
+
+    async def get_application_matches(
+        self,
+        tiers: list[SuitabilityTier] | None,
+        statuses: list[str] | None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[JobForAnalytics], int]:
+        args = (
+            self._version,
+            [t.value for t in tiers] if tiers is not None else None,
+            statuses,
+        )
+        async with self.pool.acquire() as conn:
+            async with conn.transaction(isolation="repeatable_read", readonly=True):
+                total = await conn.fetchval(
+                    _LATEST + "SELECT count(*) FROM latest m " + _APPLICATION_FILTERS, *args
+                )
+                rows = await conn.fetch(
+                    _LATEST
+                    + "SELECT "
+                    + _MATCH_COLUMNS
+                    + """ FROM latest m
+                    JOIN jobs j ON j.id=m.job_id LEFT JOIN companies c ON c.id=j.company_id
+                    """
+                    + _APPLICATION_FILTERS
+                    + " ORDER BY m.updated_at DESC, m.created_at DESC, m.id DESC LIMIT $4 OFFSET $5",
                     *args,
                     limit,
                     offset,

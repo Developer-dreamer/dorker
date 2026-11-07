@@ -18,10 +18,14 @@ from src.shared.models import (
 
 
 def packet_from_record(row: Mapping[str, Any]) -> ApplicationPacket:
-    """Decode JSON at the storage boundary, including unanswered legacy string questions."""
-    data = {name: row[name] for name in ApplicationPacket.model_fields if name in row}
+    """Map the production JSON snapshot to materials; ignore trial UUID references."""
+    data = {
+        name: row[name]
+        for name in ApplicationPacket.model_fields
+        if name in row and name != "materials"
+    }
     questions = data.get("questions") or []
-    materials = data.get("materials") or []
+    materials = row["materials_snapshot"] or []
     if isinstance(questions, str):
         questions = json.loads(questions)
     if isinstance(materials, str):

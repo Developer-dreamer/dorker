@@ -34,6 +34,7 @@ def match_response(job: JobForAnalytics) -> MatchResponse:
         else None,
         rejection_reason=match.rejection_reason,
         created_at=match.created_at,
+        updated_at=match.updated_at or match.created_at,
     )
 
 
@@ -50,6 +51,24 @@ class MatchService(MatchServiceProtocol):
         pipeline_status: list[PipelineStatus] | None,
     ) -> MatchesResponse:
         jobs, total = await self.repository.get_matches(
+            tiers,
+            [s.value for s in pipeline_status] if pipeline_status is not None else None,
+            limit=limit,
+            offset=offset,
+        )
+        return MatchesResponse(
+            matches=[match_response(job) for job in jobs], total=total, limit=limit, offset=offset
+        )
+
+    async def list_application_matches(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        tiers: list[SuitabilityTier] | None,
+        pipeline_status: list[PipelineStatus] | None,
+    ) -> MatchesResponse:
+        jobs, total = await self.repository.get_application_matches(
             tiers,
             [s.value for s in pipeline_status] if pipeline_status is not None else None,
             limit=limit,

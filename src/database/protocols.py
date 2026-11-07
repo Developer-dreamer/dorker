@@ -47,6 +47,16 @@ class MatchRepository(Protocol):
         """Return a page and filtered total; None filters allow all latest eligible matches."""
         ...
 
+    async def get_application_matches(
+        self,
+        tiers: list[SuitabilityTier] | None,
+        statuses: list[str] | None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[JobForAnalytics], int]:
+        """Return a page and filtered total of matches that qualify as applications."""
+        ...
+
     async def update_summary(self, match_id: UUID, summary: JobAnalytics) -> None: ...
     async def get_pending_summary_match_ids(self, limit: int = 100) -> list[UUID]: ...
     async def update_pipeline_status(self, match_id: UUID, status: str) -> None: ...

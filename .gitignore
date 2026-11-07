@@ -16,6 +16,7 @@ artifacts/data/prompts/**
 # Re-include files containing "example" anywhere in their name
 !artifacts/data/prompts/**/*example*
 
+*.DS_Store*
 # AI tools
 .codex/
 

@@ -37,6 +37,9 @@ class MatchApiTests(unittest.TestCase):
         self.service.list_matches = AsyncMock(
             return_value=MatchesResponse(matches=[self.match], total=123, limit=50, offset=0)
         )
+        self.service.list_application_matches = AsyncMock(
+            return_value=MatchesResponse(matches=[self.match], total=42, limit=50, offset=0)
+        )
         self.service.get_match_by_id = AsyncMock(return_value=self.match)
         self.service.get_counts = AsyncMock(return_value={SuitabilityTier.SUITABLE: 5})
         self.service.get_debug = AsyncMock(return_value='{"synthetic": true}')
@@ -80,6 +83,7 @@ class MatchApiTests(unittest.TestCase):
                 "analytics": {"summary": "Synthetic summary", "pros": ["Opportunity"], "cons": []},
                 "rejection_reason": None,
                 "created_at": "2026-10-23T12:00:00Z",
+                "updated_at": None,
             },
         )
 
@@ -109,6 +113,24 @@ class MatchApiTests(unittest.TestCase):
                     tiers=[SuitabilityTier.SUITABLE, SuitabilityTier.REJECTED],
                     pipeline_status=[PipelineStatus.PENDING, PipelineStatus.OFFER],
                 )
+
+    def test_application_matches_list_contract_and_filters(self) -> None:
+        response = self.client.get("/api/matches/applications")
+        self.assertEqual(response.status_code, 200)
+        self.service.list_application_matches.assert_awaited_once_with(
+            limit=50, offset=0, tiers=None, pipeline_status=None
+        )
+        self.assertEqual(response.json()["total"], 42)
+        self.service.get_match_by_id.assert_not_awaited()
+        self.client.get(
+            "/api/matches/applications?limit=25&offset=10&tiers=SUITABLE&pipeline_status=PENDING"
+        )
+        self.service.list_application_matches.assert_awaited_with(
+            limit=25,
+            offset=10,
+            tiers=[SuitabilityTier.SUITABLE],
+            pipeline_status=[PipelineStatus.PENDING],
+        )
 
     def test_nullable_analytics(self) -> None:
         self.service.get_match_by_id.return_value = self.match.model_copy(
@@ -190,6 +212,9 @@ class MatchApiTests(unittest.TestCase):
         ]:
             with self.subTest(query=query):
                 self.assertEqual(self.client.get(f"/api/matches?{query}").status_code, 422)
+                self.assertEqual(
+                    self.client.get(f"/api/matches/applications?{query}").status_code, 422
+                )
         self.assertEqual(
             self.client.get("/api/matches/counts?pipeline_status=UNKNOWN").status_code, 422
         )
@@ -206,6 +231,7 @@ class MatchApiTests(unittest.TestCase):
             self.assertEqual(self.client.patch(self.url + "/status", json=body).status_code, 422)
         for name in [
             "list_matches",
+            "list_application_matches",
             "get_counts",
             "get_match_by_id",
             "get_debug",
@@ -228,6 +254,7 @@ class MatchApiTests(unittest.TestCase):
         client = TestClient(create_app())
         requests = [
             ("GET", "/api/matches", None, "list_matches"),
+            ("GET", "/api/matches/applications", None, "list_application_matches"),
             ("GET", "/api/matches/counts", None, "get_counts"),
             *self.record_requests(),
         ]
@@ -240,6 +267,7 @@ class MatchApiTests(unittest.TestCase):
     def test_unexpected_errors_are_logged_and_hidden(self) -> None:
         requests = [
             ("GET", "/api/matches", None, "list_matches"),
+            ("GET", "/api/matches/applications", None, "list_application_matches"),
             ("GET", "/api/matches/counts", None, "get_counts"),
             *self.record_requests(),
         ]
@@ -257,6 +285,7 @@ class MatchApiTests(unittest.TestCase):
         schema = self.client.get("/openapi.json").json()
         paths = schema["paths"]
         self.assertNotIn("/api/matches/next", paths)
+        self.assertIn("/api/matches/applications", paths)
         self.assertEqual(set(paths["/api/matches/{id}/reports"]), {"post"})
         self.assertEqual(set(paths["/api/matches/{id}/status"]), {"patch"})
         models = schema["components"]["schemas"]
@@ -268,6 +297,10 @@ class MatchApiTests(unittest.TestCase):
         parameters = paths["/api/matches"]["get"]["parameters"]
         self.assertEqual(
             {p["name"] for p in parameters}, {"limit", "offset", "tiers", "pipeline_status"}
+        )
+        app_parameters = paths["/api/matches/applications"]["get"]["parameters"]
+        self.assertEqual(
+            {p["name"] for p in app_parameters}, {"limit", "offset", "tiers", "pipeline_status"}
         )
         counts_parameters = paths["/api/matches/counts"]["get"]["parameters"]
         self.assertEqual([p["name"] for p in counts_parameters], ["pipeline_status"])

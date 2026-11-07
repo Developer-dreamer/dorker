@@ -25,8 +25,10 @@ from src.analytics.summary_worker import SummaryWorker
 from src.api import create_app
 from src.api.services.application import ApplicationService
 from src.api.services.discussion_adapter import DiscussionService, SafeDiscussionModel
+from src.api.services.evidence import EvidenceService
 from src.api.services.job import JobService
 from src.api.services.match import MatchService
+from src.api.services.profile import ProfileService
 from src.database.postgres import (
     ApplicationPacketRepositoryPostgres,
     JobFactSheetRepositoryPostgres,
@@ -34,6 +36,8 @@ from src.database.postgres import (
     MatchRepositoryPostgres,
 )
 from src.database.postgres.discussion import DiscussionRepositoryPostgres
+from src.database.postgres.evidence import EvidenceRepositoryPostgres
+from src.database.postgres.profile import ProfileRepositoryPostgres
 from src.shared.models import RuntimeVersion
 from src.shared.scripts.bu import LiveJobScraper
 
@@ -192,6 +196,10 @@ async def _run() -> None:
                     profile=profile,
                     scraper=scraper,
                     summary_available=summary_available,
+                ),
+                profile_service=ProfileService(ProfileRepositoryPostgres(pool), user_id=owner_id),
+                evidence_service=EvidenceService(
+                    EvidenceRepositoryPostgres(pool), user_id=owner_id
                 ),
                 match_service=MatchService(match_repo),
                 application_service=ApplicationService(

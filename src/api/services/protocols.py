@@ -58,6 +58,17 @@ class MatchService(Protocol):
         """
         ...
 
+    async def list_application_matches(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        tiers: list[SuitabilityTier] | None,
+        pipeline_status: list[PipelineStatus] | None,
+    ) -> MatchesResponse:
+        """Return matches qualifying as applications and their filtered total."""
+        ...
+
     async def get_match_by_id(self, match_id: UUID) -> MatchResponse: ...
 
     async def get_match_by_job_id(self, job_id: str) -> MatchResponse: ...
