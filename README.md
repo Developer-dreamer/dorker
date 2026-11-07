@@ -174,18 +174,44 @@ pipeline-version filter. Unreported matches are unreviewed, not verified correct
 
 ## License
 
-This project is licensed under the **GNU Affero General Public License v3.0 (AGPLv3)** - see the [LICENSE](LICENSE) file for details.
+This version of Dorker is source-available under the **PolyForm Noncommercial License
+1.0.0** - see [LICENSE](LICENSE) for the full terms. It is not released under an
+open-source license that permits unrestricted commercial use.
+
+### Personal self-hosting and redistribution
+
+For code owned by the Dorker maintainer, the maintainer additionally permits individuals
+to run and modify Dorker for their own job search, including searching for paid employment
+or freelance work, without a license fee. You are responsible for setup, hosting,
+maintenance, and any infrastructure or API costs. This additional permission does not
+authorize providing Dorker-based services to other people or organizations.
+
+PolyForm's permissions for noncommercial use, modifications, redistribution, and the
+organizations specified in the license remain available under its terms. When sharing
+copies or permitted forks, preserve the license and required notices. Renaming a fork
+does not remove its licensing obligations.
 
 ### Commercial Licensing
-If you wish to use this software in a proprietary or closed-source environment without adhering to the AGPLv3 requirements, commercial licenses and enterprise support options are available.
+
+Commercial use outside the permissions above requires a separate agreement with the
+relevant rights holders. For maintainer-owned code, this includes selling access to a
+hosted Dorker instance, offering a rebranded paid derivative, or using Dorker to provide
+paid recruitment or application services to clients. Publishing the source does not
+grant permission for those uses.
 
 Contact us at: `podolancukserafim@gmail.com`
+
+This license change does not revoke permissions granted for versions previously
+released under AGPLv3 or other licenses. Third-party code, including inherited scraper
+code, remains subject to its applicable licenses and notices. This section summarizes
+the licensing policy and grants the additional personal-use permission stated above;
+otherwise, [LICENSE](LICENSE) governs this version.
 
 ---
 
 ## ⚠️ Legal Disclaimer
 
-**This software is provided for educational and research purposes only.**
+**Use of this software is subject to the licensing terms and personal-use permission above.**
 
 ### No Warranty
 
