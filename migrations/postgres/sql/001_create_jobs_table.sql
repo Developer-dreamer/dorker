@@ -56,10 +56,12 @@ CREATE TABLE IF NOT EXISTS jobs (
     region TEXT,
     employment_type TEXT DEFAULT 'FULL_TIME',
     description TEXT NOT NULL,
+    questions TEXT[] NOT NULL DEFAULT '{}',
 
     salary_min DOUBLE PRECISION,
     salary_max DOUBLE PRECISION,
     salary_currency VARCHAR(3),
+
 
     is_normalized BOOLEAN NOT NULL DEFAULT FALSE,
 

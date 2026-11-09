@@ -4,6 +4,7 @@ version = "0.2.2"
 description = "Engine to scrape and match jobs to a candidate"
 
 [project.optional-dependencies]
+api = ["litestar>=2.25,<3", "uvicorn>=0.34,<1"]
 dev = [
     "ruff>=0.16.0",
     "mypy>=2.3.0",
@@ -42,6 +43,9 @@ max-complexity = 20
 
 [tool.mypy]
 files = ["src", "orchestration"]
+mypy_path = "$MYPY_CONFIG_FILE_DIR/src/shared/types"
+# Load these as third-party stubs via mypy_path, rather than as src.* modules.
+exclude = ["^src/shared/types/logging_loki/"]
 
 strict = true
 warn_return_any = true

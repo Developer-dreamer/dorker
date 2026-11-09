@@ -1,0 +1,3 @@
+ALTER TABLE matches
+    ADD COLUMN reported BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN report_message TEXT;

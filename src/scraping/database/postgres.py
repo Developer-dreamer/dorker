@@ -9,7 +9,7 @@ from src.scraping.models import Job
 from src.shared.models.company import ATS, ATSCompany
 from src.shared.models.job import Job as JobDomain
 
-from .base import JobRepository, description_keys
+from .base import CompanyRepository, JobRepository, description_keys
 
 
 def _sanitize_record(record: Sequence[Any]) -> tuple[Any, ...]:
@@ -25,12 +25,12 @@ class JobRepositoryPostgres(JobRepository):
         query = """
                     INSERT INTO jobs (
                         id, ats_type, ats_id, url, apply_url, title, company_id, location,
-                        country_iso, region, employment_type, description, salary_min,
+                        country_iso, region, employment_type, description, questions, salary_min,
                         salary_max, salary_currency, is_normalized, posted_at, fetched_at
                     ) VALUES (
                         $1, $2, $3, $4, $5, $6, $7, $8,
                         $9, $10, $11, $12, $13, $14, $15, $16,
-                        $17, $18
+                        $17, $18, $19
                     )
                     ON CONFLICT (id) DO UPDATE SET
                         deleted_at = NULL,
@@ -87,6 +87,7 @@ class JobRepositoryPostgres(JobRepository):
             job.region,
             job.employment_type or "FULL_TIME",
             job.description or "",
+            job.questions,
             job.salary_min,
             job.salary_max,
             job.salary_currency,
@@ -164,7 +165,7 @@ class JobRepositoryPostgres(JobRepository):
             return int(status.split()[-1]) if status else 0
 
 
-class CompanyRepositoryPostgres:
+class CompanyRepositoryPostgres(CompanyRepository):
     def __init__(self, logger: Logger, pool: Pool) -> None:
         self.logger = logger
         self.pool = pool
@@ -172,7 +173,7 @@ class CompanyRepositoryPostgres:
     async def get_tenants(self) -> List[ATS]:
         query = """
                 SELECT id, ats, tier, name, slug, url  FROM companies
-                    WHERE is_active = TRUE;
+                    WHERE is_active = TRUE AND tier > 0;
                 """
 
         async with self.pool.acquire() as conn:

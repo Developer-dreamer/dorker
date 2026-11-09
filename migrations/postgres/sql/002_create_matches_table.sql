@@ -37,3 +37,4 @@ CREATE TABLE matches
 
 CREATE INDEX idx_matches_job_id ON matches (job_id);
 CREATE INDEX idx_matches_pipeline_status ON matches (pipeline_status);
+

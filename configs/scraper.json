@@ -17,7 +17,7 @@
     "kwargs_extractor": "none"
   },
   "workable": {
-    "enabled": true,
+    "enabled": false,
     "max_concurrency": 2,
     "tenant_delay_seconds": 0.5,
     "description_concurrency": 2,
@@ -248,7 +248,7 @@
   "bundesagentur": { "enabled": true, "singleton": true, "paused": false },
   "arbetsformedlingen": { "enabled": true, "singleton": true, "paused": false },
   "eures": {
-    "enabled": true,
+    "enabled": false,
     "singleton": true,
     "skip_description_cache_if_max_len_lte": 500,
     "paused": false

@@ -25,6 +25,9 @@ from src.analytics.utils import (
     log_guidance_step,
 )
 
+from .profile_repository_xml import ProfileRepositoryXML
+from .protocols import ProfileRepository
+
 __all__ = [
     "ALIAS_MAP",
     "ApplicationGenerator",
@@ -38,4 +41,6 @@ __all__ = [
     "SLM",
     "SLMQwenThinking",
     "log_guidance_step",
+    "ProfileRepository",
+    "ProfileRepositoryXML",
 ]

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Tuple, cast
 
 from llama_cpp import Llama
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from src.analytics.protocols import SLM
 from src.shared.models import JobForAnalytics
@@ -47,18 +47,6 @@ CRITICAL QUALITY RULES:
 3. Write in third-person objective tone analyzing the position (e.g., "This role falls under the backend engineering family...", "Engineers will benefit from...", "Potential risks include...").
 4. The output outside <think> must be strictly valid JSON.
 """
-
-
-class JobSummaryOutput(BaseModel):
-    summary: str = Field(
-        description="2-3 detailed sentences defining the job family and concrete role scope based on requirements and responsibilities."
-    )
-    pros: str = Field(
-        description="2-3 detailed sentences detailing personal development, task complexity, and engineering opportunities."
-    )
-    cons: str = Field(
-        description="2-3 detailed sentences detailing operational risks, negative cues, on-call burdens, or career limitations."
-    )
 
 
 class SummarySLM(SLM):

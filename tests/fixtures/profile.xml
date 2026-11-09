@@ -1,0 +1,19 @@
+<profile>
+  <search_parameters><preferences>Remote work only.</preferences></search_parameters>
+  <cv>
+    <summary>Candidate in Ukraine</summary>
+    <hard_skills><skill>Python</skill><skill>Go</skill></hard_skills>
+    <education>Software engineering studies</education>
+    <experience><job company="selected">Relevant Python experience</job></experience>
+  </cv>
+  <projects><project name="python">Python experience</project></projects>
+  <cover_letters>
+    <letter id="backend">Backend letter example</letter>
+    <letter id="infra">Infrastructure letter example</letter>
+  </cover_letters>
+  <dossier><section question_id="1">An example of solving a difficult problem</section></dossier>
+  <coursework>
+    <academic_course code="UNSELECTED">Irrelevant academic course</academic_course>
+    <academic_course id="SYSTEMS">Systems engineering course</academic_course>
+  </coursework>
+</profile>

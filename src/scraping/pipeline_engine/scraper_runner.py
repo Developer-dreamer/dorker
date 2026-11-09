@@ -135,10 +135,16 @@ class ScraperRunner:
         return requested
 
     async def run(self) -> None:
-        if self.uses_streaming:
-            await self._run_streaming()
-        else:
-            await self._run_default()
+        try:
+            if self.uses_streaming:
+                await self._run_streaming()
+            else:
+                await self._run_default()
+        finally:
+            for task in self.pending_descriptions:
+                task.cancel()
+            await asyncio.gather(*self.pending_descriptions, return_exceptions=True)
+            self.pending_descriptions.clear()
 
         self._log_summary()
 
@@ -225,6 +231,11 @@ class ScraperRunner:
 
         try:
             async for job in self.scraper.fetch_stream():
+                if await self._check_yield_or_exit(
+                    self.counts.jobs_queued, context="streamed jobs"
+                ):
+                    return
+
                 if job.global_id:
                     seen_stream_ids.append(job.global_id)
                 cached = await self.description_cache.get(job)
@@ -314,10 +325,11 @@ class ScraperRunner:
                 f"(dupes dropped: {self.counts.jobs_deduped:,})"
             )
 
-    async def _check_yield_or_exit(self, i: int) -> bool:
+    async def _check_yield_or_exit(self, i: int, context: str = "tenants") -> bool:
+        total_str = f"/{len(self.ats.companies)}" if context == "tenants" else ""
         if self.cfg.is_paused(self.ats.name):
             self.logger.info(
-                f"[{self.ats.name}] Paused via config at tenant {i}/{len(self.ats.companies)}. "
+                f"[{self.ats.name}] Paused via config at {i}{total_str} {context}. "
                 f"Releasing semaphore slot..."
             )
             self.priority_semaphore.release()
@@ -336,8 +348,8 @@ class ScraperRunner:
         elif self.cfg.is_yielded(self.ats.name):
             current_tier = self.cfg.get(self.ats.name).get("tier", 99)
             self.logger.info(
-                f"[{self.ats.name}] Yielding semaphore slot at tenant "
-                f"{i}/{len(self.ats.companies)} to re-queue at Tier {current_tier}..."
+                f"[{self.ats.name}] Yielding semaphore slot at {i}{total_str} {context} "
+                f"to re-queue at Tier {current_tier}..."
             )
             self.priority_semaphore.release()
 
@@ -350,8 +362,7 @@ class ScraperRunner:
         # 3. LIVE DISABLE CHECK
         if not self.cfg.is_enabled(self.ats.name):
             self.logger.warning(
-                f"[{self.ats.name}] Scraper disabled mid-run. "
-                f"Aborting at tenant {i}/{len(self.ats.companies)}."
+                f"[{self.ats.name}] Scraper disabled mid-run. Aborting at {i}{total_str} {context}."
             )
             return True
 
@@ -471,11 +482,13 @@ class ScraperRunner:
                     "skip_description_enrichment"
                 ):
                     if await self.description_cache.get(job) or job.description:
-                        await self._ensure_description(job, tenant_desc_stats)
+                        await self._ensure_description(job, tenant_desc_stats, scraper=scraper)
                     else:
                         async with self.description_sem:
                             try:
-                                await self._ensure_description(job, tenant_desc_stats)
+                                await self._ensure_description(
+                                    job, tenant_desc_stats, scraper=scraper
+                                )
                             finally:
                                 if self.description_delay:
                                     await asyncio.sleep(self.description_delay)
@@ -493,10 +506,10 @@ class ScraperRunner:
                     "current": self.tenants_completed,
                     "total": len(self.ats.companies),
                     "slug": slug,
-                    "found": self.counts.jobs_scraped,
-                    "queued": self.counts.jobs_queued,
-                    "dupes": self.counts.jobs_deduped,
-                    "deleted": self.counts.jobs_deleted,
+                    "found": len(jobs),
+                    "queued": tenant_queued,
+                    "dupes": tenant_deduped,
+                    "deleted": tenant_deleted,
                 }
             )
 
@@ -521,13 +534,10 @@ class ScraperRunner:
     ) -> tuple[str, BaseScraper | None, list[Job], str | None]:
         extra = kwargs or {}
 
-        def _run() -> tuple[BaseScraper, list[Job]]:
+        try:
             scraper = scraper_cls(slug, timeout=timeout, **extra)
             scraper.include_descriptions = include_descriptions
-            return scraper, scraper.fetch()
-
-        try:
-            scraper, jobs = await asyncio.to_thread(_run)
+            jobs = await scraper.afetch()
             return slug, scraper, jobs, None
         except CompanyNotFoundError:
             return slug, None, [], "not_found"
@@ -578,7 +588,10 @@ class ScraperRunner:
         self.pending_descriptions.difference_update(done)
 
     async def _ensure_description(
-        self, job: Job, tenant_desc_counts: DescCounts | None = None
+        self,
+        job: Job,
+        tenant_desc_counts: DescCounts | None = None,
+        scraper: Any | None = None,
     ) -> None:
         cached = await self.description_cache.get(job)
         fresh = job.description
@@ -607,8 +620,19 @@ class ScraperRunner:
                     tenant_desc_counts.present += 1
                 return
 
+        target_scraper = scraper or self.scraper
+        if target_scraper is None:
+            self.logger.warning(
+                f"  [{self.ats.name}] No scraper instance available to fetch description for {job.url}"
+            )
+            async with self.incr_lock:
+                self.desc_counts.missing += 1
+                if tenant_desc_counts:
+                    tenant_desc_counts.missing += 1
+            return
+
         try:
-            description = await asyncio.to_thread(self.scraper.get_description, job)
+            description = await asyncio.to_thread(target_scraper.get_description, job)
         except Exception as exc:
             self.logger.error(
                 f"  description fetch failed for {job.url}: {type(exc).__name__}: {str(exc)[:200]}"

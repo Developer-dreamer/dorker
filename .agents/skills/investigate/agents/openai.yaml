@@ -1,0 +1,3 @@
+interface:
+  display_name: "Investigate"
+  short_description: "Trace code and research options without editing"

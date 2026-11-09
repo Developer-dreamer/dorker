@@ -1,0 +1,3 @@
+interface:
+  display_name: "Handoff"
+  short_description: "Complete an explicitly delegated, bounded change"

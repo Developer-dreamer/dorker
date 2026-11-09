@@ -1,0 +1,1 @@
+ALTER TYPE pipeline_status_enum ADD VALUE 'SKIPPED';

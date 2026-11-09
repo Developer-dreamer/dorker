@@ -9,7 +9,7 @@ ruff format .
 git update-index --again
 
 echo "Running Mypy..."
-mypy --no-incremental .
+mypy --no-incremental
 
 if [ -n "$CONDA_DEFAULT_ENV" ]; then
     conda env export -n dorker --no-builds | grep -v "^prefix: " > environment.yml

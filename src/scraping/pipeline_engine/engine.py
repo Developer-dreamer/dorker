@@ -46,10 +46,14 @@ class RunEngine:
         self.logger.info(f"[Engine] Starting cycle across {len(ats_list)} platforms.")
 
         db_worker_task = asyncio.create_task(self._db_writer_worker(batch_size=500))
+        workers = [asyncio.create_task(self._run_single_ats(ats)) for ats in ats_list]
 
         try:
-            await asyncio.gather(*(self._run_single_ats(ats) for ats in ats_list))
+            await asyncio.gather(*workers)
         finally:
+            for task in workers:
+                task.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
             await self.db_writer_queue.put(None)
             await db_worker_task
 

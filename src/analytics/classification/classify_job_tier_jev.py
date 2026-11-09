@@ -2,14 +2,13 @@ import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 from typesafe_sdk import AsyncTypeSafeClient, Noul, NoulCriteria, Score, SystemOneResponse
 
-from src.analytics.protocols import Classifier
+from src.analytics.protocols import Classifier, ProfileRepository
 from src.shared.models import JobForAnalytics, MatchedJob, SuitabilityTier
 
 
 class ClassifyJobTierJev(Classifier[MatchedJob]):
-    def __init__(self, client: AsyncTypeSafeClient, state: str) -> None:
+    def __init__(self, client: AsyncTypeSafeClient) -> None:
         self.client = client
-        self.state = state
 
     @retry(
         stop=stop_after_attempt(4),
@@ -17,9 +16,11 @@ class ClassifyJobTierJev(Classifier[MatchedJob]):
         retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError)),
         reraise=True,
     )
-    async def classify(self, job: JobForAnalytics) -> MatchedJob:
+    async def classify(self, job: JobForAnalytics, profile: ProfileRepository) -> MatchedJob:
         full_state = (
-            self.state
+            profile.get_cv().text
+            + "\n"
+            + profile.get_preferences().text
             + f"""\n
                     <job_payload>
                     {job.model_dump_json()}
@@ -80,6 +81,7 @@ class ClassifyJobTierJev(Classifier[MatchedJob]):
     @staticmethod
     def _classify_local(j_id: str, resp: SystemOneResponse) -> MatchedJob:
         matched_job = MatchedJob(job_id=j_id)
+        matched_job.debug = resp.model_dump_json()
 
         raw_tech_score = resp.scores["technical_capability_score"]
         raw_strat_score = resp.scores["strategic_value_score"]
@@ -111,6 +113,5 @@ class ClassifyJobTierJev(Classifier[MatchedJob]):
             matched_job.rejection_reason = "Fails to meet baseline Level 2 (0.50) criteria."
 
         matched_job.suitability_tier = tier
-        matched_job.debug = resp.model_dump_json()
 
         return matched_job
