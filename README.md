@@ -1,6 +1,11 @@
 # Dorker
 > App used to simplify searching and application process
 
+> [!NOTE]
+> Migrated here: https://github.com/dorker-space
+> All further maintenance will appear in that organization.
+> And you can find even more there: frontend, backend, etc.
+
 ## Stage
 **Under an active development**. 
 
